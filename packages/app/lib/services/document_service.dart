@@ -67,9 +67,9 @@ class DocumentService {
     }
 
     final streamed = await request.send().timeout(
-      const Duration(seconds: 120),
+      const Duration(seconds: 300),
       onTimeout: () => throw Exception(
-          'Request timed out. Check your connection or try a smaller file.'),
+          'Request timed out. The server is taking too long to process your file. Please try again.'),
     );
     final response = await http.Response.fromStream(streamed);
 
@@ -80,30 +80,41 @@ class DocumentService {
         throw Exception(data['message'] ?? 'Backend returned ok=false');
       }
 
-      final truncated = data['limits']?['truncated'] == true;
-      final processedPages = data['limits']?['processedPages'] as int? ?? 1;
-      final totalPages = data['limits']?['totalPages'] as int? ?? 1;
+      // Handle new response format (v2 multi-stage pipeline)
+      final newspaper = data['newspaper'] as Map<String, dynamic>?;
+      final articles = data['articles'] as List<dynamic>? ?? [];
+      final limits = data['limits'] as Map<String, dynamic>? ?? {};
+      final subscription = data['subscription'] as Map<String, dynamic>? ?? {};
+
+      final truncated = limits['truncated'] == true;
+      final processedPages = limits['processedPages'] as int? ?? 1;
+      final totalPages = limits['totalPages'] as int? ?? 1;
 
       if (truncated) {
         debugPrint(
             '[UploadService] Warning: truncated — $processedPages/$totalPages pages processed');
       }
 
+      // Use the first article if available, otherwise use newspaper metadata
+      final firstArticle = articles.isNotEmpty ? articles.first as Map<String, dynamic> : null;
+      final title = (firstArticle?['title'] as String?) ?? (newspaper?['title'] as String?) ?? filename;
+      final preview = (firstArticle?['preview'] as String?) ?? '';
+      final audioUrl = (firstArticle?['audioUrl'] as String?) ?? '';
+      final storageUrl = (newspaper?['storageUrl'] as String?) ?? '';
+
       return UploadedArticle(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: (data['title'] as String?)?.isNotEmpty == true
-            ? data['title'] as String
-            : filename,
-        content: (data['summary'] as String?) ?? '',
+        title: title,
+        content: preview,
         source: source,
-        storageUrl: (data['storageUrl'] as String?) ?? '',
-        category: (data['category'] as String?) ?? 'News',
-        audioUrl: '',
+        storageUrl: storageUrl,
+        category: (firstArticle?['section'] as String?) ?? 'News',
+        audioUrl: audioUrl,
         extractedAt: DateTime.now(),
         truncated: truncated,
         totalPages: totalPages,
         processedPages: processedPages,
-        tier: data['subscription']?['tier'] as String? ?? ApiConfig.subscriptionTier,
+        tier: (subscription['tier'] ?? ApiConfig.subscriptionTier) as String,
       );
     } else {
       String message = 'Server error ${response.statusCode}';

@@ -7,7 +7,8 @@ import { env } from "./config/env.js";
 import { subscriptionContext } from "./middleware/subscription.js";
 import { extractAuth } from "./middleware/auth.js";
 import { documentsRouter } from "./routes/documents.js";
-import { articlesRouter } from "./routes/articles.js";
+// Temporarily disabled - requires Node 22 or ws package for Supabase Realtime
+// import { articlesRouter } from "./routes/articles.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -72,7 +73,8 @@ app.get("/health", sendHealth);
 app.get("/api/health", sendHealth);
 
 app.use("/api/documents", documentsRouter);
-app.use("/api/articles", articlesRouter);
+// Temporarily disabled - requires Node 22 or ws package for Supabase Realtime
+// app.use("/api/articles", articlesRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "not_found" });
