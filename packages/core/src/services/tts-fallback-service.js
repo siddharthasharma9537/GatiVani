@@ -1,21 +1,21 @@
 import { generateTeluguAudioDataUrl as azureGenerateAudio } from './azure-tts-service.js';
-import { generateSarvamAudioDataUrl as sarvamGenerateAudio } from './sarvam-tts-service.js';
+import { generateSarvamAudioDataUrl as sarvamGenerateAudio, getTeluguVoices } from './sarvam-tts-service.js';
 
-const TTS_PROVIDER = process.env.TTS_PROVIDER || 'azure'; // 'azure', 'sarvam', or 'fallback'
+const TTS_PROVIDER = process.env.TTS_PROVIDER || 'azure';
 const FALLBACK_ENABLED = process.env.ENABLE_TTS_FALLBACK === 'true';
 
-export async function generateAudioWithFallback(text, language = 'te') {
+export async function generateAudioWithFallback(text, language = 'te', speaker = null) {
   const providers = getTTSProviderOrder();
 
   for (const provider of providers) {
     try {
-      console.log(`[TTS] Attempting ${provider}...`);
+      console.log(`[TTS] Attempting ${provider}${speaker ? ` (${speaker})` : ''}...`);
       let audioUrl;
 
       if (provider === 'azure') {
         audioUrl = await azureGenerateAudio(text, language);
       } else if (provider === 'sarvam') {
-        audioUrl = await sarvamGenerateAudio(text, language);
+        audioUrl = await sarvamGenerateAudio(text, language, speaker);
       }
 
       if (audioUrl) {
@@ -26,13 +26,13 @@ export async function generateAudioWithFallback(text, language = 'te') {
           provider,
           text,
           language,
+          speaker: speaker || 'default',
         };
       }
     } catch (error) {
       console.warn(`[TTS] ${provider} failed:`, error.message);
 
       if (provider === providers[providers.length - 1]) {
-        // Last provider failed
         return {
           success: false,
           audioUrl: null,
@@ -42,7 +42,6 @@ export async function generateAudioWithFallback(text, language = 'te') {
           language,
         };
       }
-      // Try next provider
     }
   }
 
@@ -76,36 +75,6 @@ export function getCurrentTTSProvider() {
   };
 }
 
-export async function testTTSServices() {
-  const testText = 'Test audio generation';
-  const results = {
-    azure: null,
-    sarvam: null,
-  };
-
-  // Test Azure
-  try {
-    await azureGenerateAudio(testText, 'te');
-    results.azure = { status: 'working', timestamp: new Date() };
-    console.log('[TTS Test] Azure: ✓');
-  } catch (error) {
-    results.azure = { status: 'failed', error: error.message, timestamp: new Date() };
-    console.log('[TTS Test] Azure: ✗', error.message);
-  }
-
-  // Test Sarvam
-  try {
-    await sarvamGenerateAudio(testText, 'te');
-    results.sarvam = { status: 'working', timestamp: new Date() };
-    console.log('[TTS Test] Sarvam: ✓');
-  } catch (error) {
-    results.sarvam = { status: 'failed', error: error.message, timestamp: new Date() };
-    console.log('[TTS Test] Sarvam: ✗', error.message);
-  }
-
-  return {
-    currentProvider: getCurrentTTSProvider(),
-    serviceStatus: results,
-    timestamp: new Date(),
-  };
+export function getTeluguTTSVoices() {
+  return getTeluguVoices();
 }

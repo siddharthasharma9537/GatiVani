@@ -5,8 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { maxPagesForTier } from "../lib/subscription-tiers.js";
 import { extractPdfText as extractPdfTextByPageCap } from "../lib/pdf-extractor.js";
-import { generateScript as generateWithGemini } from "../services/gemini-service.js";
-import { generateTeluguAudioDataUrl } from "../services/azure-tts-service.js";
+import { generateAudioWithFallback } from "../services/tts-fallback-service.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import { env } from "../config/env.js";
 import { preprocessDocument, extractArticleContent } from "../services/stage1-preprocessing.js";
@@ -385,8 +384,11 @@ documentsRouter.post(
           failedArticles: failedArticles.length,
           processingTime,
         },
-        // Backward compatibility fields
-        model: env.geminiModel,
+        // Processing models used
+        models: {
+          ocr: "sarvam-ocr",
+          tts: "sarvam-tts",
+        },
         subscription: { tier, active },
         limits: { maxPages: cap, totalPages, processedPages, truncated },
       });
@@ -436,11 +438,19 @@ documentsRouter.post(
         `[synthesize] Generating ${language} audio for ${text.length} chars`
       );
 
-      const audioUrl = await generateTeluguAudioDataUrl(text, language);
+      const result = await generateAudioWithFallback(text, language);
+
+      if (!result.success) {
+        return res.status(500).json({
+          error: "synthesis_failed",
+          message: result.error,
+        });
+      }
 
       return res.json({
         ok: true,
-        audioUrl,
+        audioUrl: result.audioUrl,
+        provider: result.provider,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
