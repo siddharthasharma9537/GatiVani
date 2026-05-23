@@ -1,5 +1,5 @@
 import { env } from "../config/env.js";
-import { generateTeluguAudioDataUrl } from "./azure-tts-service.js";
+import { generateAudioWithFallback } from "./tts-fallback-service.js";
 
 const { GoogleGenerativeAI } = await import("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(env.geminiApiKey);
@@ -131,17 +131,27 @@ export async function generateArticleAudio(text, language = "te-IN") {
   console.log(`[Stage3] Generating audio (${language})...`);
 
   try {
-    // Use Azure TTS to generate natural audio
-    const audioUrl = await generateTeluguAudioDataUrl(text, language);
+    // Use TTS fallback service (tries Azure first, then Sarvam)
+    const languageCode = language.split("-")[0]; // Extract language code (te, hi, en)
+    const result = await generateAudioWithFallback(text, languageCode);
 
-    console.log("[Stage3] Audio generated successfully");
-
-    return {
-      success: true,
-      audioUrl,
-      language,
-      sizeBytes: audioUrl.length, // Approximate size of data URL
-    };
+    if (result.success) {
+      console.log(`[Stage3] Audio generated successfully with ${result.provider}`);
+      return {
+        success: true,
+        audioUrl: result.audioUrl,
+        language: languageCode,
+        provider: result.provider,
+        sizeBytes: result.audioUrl.length,
+      };
+    } else {
+      console.error("[Stage3] All TTS providers failed:", result.error);
+      return {
+        success: false,
+        error: result.error,
+        audioUrl: "",
+      };
+    }
   } catch (error) {
     console.error("[Stage3] Audio generation failed:", error.message);
     return {

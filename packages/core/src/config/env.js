@@ -34,6 +34,11 @@ export const env = {
   // Azure Cognitive Services Speech (TTS)
   azureTtsKey: process.env.AZURE_TTS_KEY || "",
   azureTtsRegion: process.env.AZURE_TTS_REGION || "centralindia",
+  // Sarvam AI services (TTS, Vision, STT) - fallback/alternative
+  sarvamApiKey: process.env.SARVAM_API_KEY || "",
+  ttsProvider: process.env.TTS_PROVIDER || "azure", // 'azure', 'sarvam', or 'fallback'
+  enableTtsFallback: bool("ENABLE_TTS_FALLBACK", false),
+  enableVisionFallback: bool("ENABLE_VISION_FALLBACK", false),
 };
 
 export function assertGeminiConfigured() {
