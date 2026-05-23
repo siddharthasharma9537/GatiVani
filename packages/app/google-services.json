@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "64752746105",
+    "project_id": "gativani-app",
+    "storage_bucket": "gativani-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:64752746105:android:cca6dfe56f789d8d5d9ea8",
+        "android_client_info": {
+          "package_name": "com.gativani.gativani"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAetnU4gqWjZKgiCipIuyBqSZd2UqpfzPk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

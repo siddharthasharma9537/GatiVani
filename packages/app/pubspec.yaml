@@ -1,0 +1,68 @@
+name: gativani_app
+description: "GatiVani - Newspaper audio companion for daily commuters. Listen to your favorite newspapers during your commute."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Core State Management & Navigation
+  provider: ^6.0.0
+  flutter_riverpod: ^2.4.0
+  go_router: ^17.2.3
+
+  # Audio Playback & Media
+  just_audio: ^0.10.5
+  audio_session: ^0.2.3
+
+  # Network & API
+  http: ^1.1.0
+  dio: ^5.3.1
+
+  # Firebase
+  firebase_core: ^4.8.0
+  cloud_firestore: ^6.4.0
+  firebase_storage: ^13.4.0
+  firebase_analytics: ^12.4.0
+  firebase_messaging: ^16.2.1
+
+  # File & Image Handling
+  image_picker: ^1.0.4
+  file_picker: ^11.0.2
+  path_provider: ^2.1.1
+  archive: ^3.4.0
+
+  # Permissions
+  permission_handler: ^12.0.1
+
+  # UI & Design
+  google_fonts: ^8.1.0
+  cached_network_image: ^3.3.0
+
+  # Localization
+  intl: ^0.20.2
+  flutter_localizations:
+    sdk: flutter
+
+  # AI & ML
+  google_generative_ai: ^0.4.0
+
+  # Utility
+  uuid: ^4.0.0
+  async: ^2.11.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

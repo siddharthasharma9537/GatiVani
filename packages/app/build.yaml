@@ -1,0 +1,32 @@
+# Configuration for code generation targets
+targets:
+  $default:
+    sources:
+      exclude:
+        - "test/**"
+    builders:
+      json_serializable:
+        options:
+          create_to_json: true
+          nullable: true
+          explicit_to_json: true
+
+  # Hive adapters generation
+  hive:
+    sources:
+      include:
+        - "lib/models/**"
+    builders:
+      hive_generator:
+        options:
+          output_dir: lib/.generated
+
+  # Drift database generation
+  drift:
+    sources:
+      include:
+        - "lib/database/**"
+    builders:
+      drift_dev:
+        options:
+          generate_moor_query_builder: true

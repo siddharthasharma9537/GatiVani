@@ -1,0 +1,45 @@
+BUILD GATIVANI WITH ZIP EXTRACTION FIX
+======================================
+
+Run these commands in Terminal (one at a time or all together):
+
+cd ~/Projects/gativani-app && \
+flutter clean && \
+rm -rf build .dart_tool && \
+flutter pub get && \
+flutter build apk --debug && \
+adb install -r build/app/outputs/flutter-apk/app-debug.apk && \
+adb logcat -c
+
+Then monitor the OCR logs with:
+
+adb logcat | grep "\[OCR API\]"
+
+WHAT CHANGED:
+=============
+✓ Added ZIP extraction logic to _downloadAndExtractText()
+✓ Added _extractTextFromZip() method to handle ZIP archives
+✓ Added archive: ^3.4.0 dependency to pubspec.yaml
+✓ Fixed hardcoded 'te' language to 'te-IN' (BCP-47 format)
+✓ Presigned URL file upload now works with x-ms-blob-type header
+
+Expected behavior:
+1. Job creation: 202 Accepted
+2. File upload: 201 Created (via presigned URL)
+3. Job start: 202 Accepted
+4. Status polling: Completed in ~20 seconds
+5. Download URLs: 200 OK (gets download URLs)
+6. ZIP extraction: Extracts markdown content from archive
+7. Return extracted text (NOT binary gibberish)
+
+VERIFY IT WORKS:
+================
+Look for this in logs:
+[OCR API] ✓ Downloaded file is a ZIP archive (113152 bytes)
+[OCR API] Extracting text from ZIP archive...
+[OCR API] ZIP contains X file(s)
+[OCR API] ✓ Found markdown file: document.md
+[OCR API] ✓ Extracted XXXX characters from document.md
+
+If you see corrupted text, the ZIP extraction failed.
+If you see readable Telugu/English text, it worked! 🎉

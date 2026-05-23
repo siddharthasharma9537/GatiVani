@@ -1,0 +1,27 @@
+{
+  "projects": {
+    "default": "gativani-prod",
+    "production": "gativani-prod",
+    "staging": "gativani-staging",
+    "development": "gativani-dev"
+  },
+  "targets": {
+    "gativani-prod": {
+      "hosting": {
+        "gativani": [ "gativani-prod" ]
+      },
+      "storage": {
+        "default": [ "gativani-prod.appspot.com" ]
+      }
+    },
+    "gativani-staging": {
+      "hosting": {
+        "gativani-staging": [ "gativani-staging" ]
+      },
+      "storage": {
+        "default": [ "gativani-staging.appspot.com" ]
+      }
+    }
+  },
+  "etags": {}
+}

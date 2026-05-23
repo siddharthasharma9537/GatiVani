@@ -1,0 +1,80 @@
+# Secrets & Environment
+.env
+.env.local
+.env.*.local
+secrets.dart
+!.env.example
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+build/
+flutter_*.png
+local.properties
+GeneratedPluginRegistrant.dart
+
+# iOS
+ios/.symlinks/
+ios/.generated/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Pods
+ios/Podfile.lock
+ios/.obfuscated/
+
+# Android
+android/.gradle
+android/gradle/
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/**/GeneratedPluginRegistrant.java
+android/key.properties
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+.metadata
+
+# Code Coverage
+coverage/
+.coverage/
+*.lcov
+
+# Build outputs
+*.apk
+*.aab
+*.ipa
+*.app
+*.aar
+.gradle/
+
+# Web
+web/.dart_tool/
+web/packages
+
+# Misc
+*.log
+*.pyc
+__pycache__/
+*.iml
+
+# Python (if using news API wrapper)
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/

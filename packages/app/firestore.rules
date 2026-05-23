@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny - everything must be explicitly allowed
+    
+    // Users collection - allow read/write only for authenticated users
+    match /users/{userId} {
+      allow read, write: if request.auth.uid == userId;
+      
+      // Subcollections
+      match /bookmarks/{documentId=**} {
+        allow read, write: if request.auth.uid == userId;
+      }
+      
+      match /history/{documentId=**} {
+        allow read, write: if request.auth.uid == userId;
+      }
+      
+      match /preferences/{documentId=**} {
+        allow read, write: if request.auth.uid == userId;
+      }
+    }
+    
+    // Newspapers collection - public read, authenticated write for admins
+    match /newspapers/{newspaperId} {
+      allow read: if true;
+      allow create, update, delete: if request.auth.token.admin == true;
+      
+      match /articles/{articleId} {
+        allow read: if true;
+        allow create, update, delete: if request.auth.token.admin == true;
+      }
+      
+      match /editions/{editionId} {
+        allow read: if true;
+        allow create, update, delete: if request.auth.token.admin == true;
+      }
+    }
+    
+    // Analytics - only authenticated users can write their own data
+    match /analytics/{documentId=**} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+    
+    // Public metadata
+    match /metadata/{documentId=**} {
+      allow read: if true;
+      allow write: if request.auth.token.admin == true;
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# Default owners for everything
+*       @pothulapatisiddhartha
+
+# CI/CD & deployment
+/.github/                 @pothulapatisiddhartha
+/firebase.json            @pothulapatisiddhartha
+/firestore.rules          @pothulapatisiddhartha
+/storage.rules            @pothulapatisiddhartha
+/distribution/            @pothulapatisiddhartha
+
+# Native
+/android/                 @pothulapatisiddhartha
+/ios/                     @pothulapatisiddhartha
+
+# Core Flutter code
+/lib/services/            @pothulapatisiddhartha
+/lib/config/              @pothulapatisiddhartha

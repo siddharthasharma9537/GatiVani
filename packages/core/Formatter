@@ -1,0 +1,39 @@
+Script started on Wed May 20 17:20:16 2026
+
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+[?1034hbash-3.2$ s.
+bash: s.: command not found
+bash-3.2$           2. Convert shorthand symbols, numbers, and financial indicators to fully spelled  spoken Telugu text (e.g., convert '2026' to 'రెండు వేల ఇరవై ఆరు', '₹' to 'రూపాయలు').
+bash: syntax error near unexpected token `('
+bash-3.2$           3. Clean the text flows so it reads smoothly down columns without cross-column b leeding.
+bash: 3.: command not found
+bash-3.2$           4. Output ONLY the resulting clean Telugu text. Do not append any English meta-c ommentary.
+bash: 4.: command not found
+bash-3.2$         `,
+>         temperature: 0.3
+>       }
+>     });
+> 
+>     if (!response || !response.text) {
+bash: !response: event not found
+>       throw new Error('Google Gemini API returned an empty content generation framework output.'); [A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K;
+>     }
+> 
+>     return response.text;
+>   } catch (error) {
+>     console.error('[gemini-service] Ingestion Pipeline Failed:', error);
+>     throw error;
+>   }
+> }[K
+bash-3.2$ 
+bash-3.2$ 
+bash-3.2$ q
+bash: q: command not found
+bash-3.2$ quit
+bash: quit: command not found
+bash-3.2$ exit
+exit
+
+Script done on Wed May 20 17:20:47 2026

@@ -1,0 +1,9 @@
+# Place in public_html/api/.htaccess when using subdirectory Node mount.
+# Replace USERNAME and NODE_MAJOR with values from cPanel "Setup Node.js App".
+
+PassengerEnabled On
+PassengerAppType node
+PassengerStartupFile src/server.js
+PassengerAppRoot /home/USERNAME/gativani-core
+PassengerBaseURI /api
+PassengerNodejs /home/USERNAME/nodevenv/gativani-core/NODE_MAJOR/bin/node

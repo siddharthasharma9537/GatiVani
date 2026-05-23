@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      ExportOptions for App Store distribution.
+      Used by `xcodebuild -exportArchive` in the CI build-ios job.
+      Override values per-environment by passing a different plist with -exportOptionsPlist.
+    -->
+    <key>method</key>
+    <string>app-store</string>
+
+    <key>destination</key>
+    <string>upload</string>
+
+    <key>uploadSymbols</key>
+    <true/>
+
+    <key>uploadBitcode</key>
+    <false/>
+
+    <key>compileBitcode</key>
+    <false/>
+
+    <key>stripSwiftSymbols</key>
+    <true/>
+
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <key>teamID</key>
+    <string>$(APPLE_TEAM_ID)</string>
+
+    <key>generateAppStoreInformation</key>
+    <true/>
+
+    <!-- Manifest used for Enterprise/AdHoc; harmless for app-store, kept for completeness. -->
+    <key>manifest</key>
+    <dict>
+        <key>appURL</key>
+        <string>https://gativani.app/downloads/gativani.ipa</string>
+        <key>displayImageURL</key>
+        <string>https://gativani.app/icons/icon-57.png</string>
+        <key>fullSizeImageURL</key>
+        <string>https://gativani.app/icons/icon-512.png</string>
+    </dict>
+</dict>
+</plist>

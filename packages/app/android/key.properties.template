@@ -1,0 +1,14 @@
+# Template for Android release signing.
+# Copy to android/key.properties and fill in values. NEVER commit android/key.properties.
+#
+# Generate keystore (one-time, store passwords in a password manager):
+#   keytool -genkey -v -keystore ~/keys/gativani-upload.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+# In CI, the keystore is decoded from secrets.ANDROID_KEYSTORE_BASE64 and this
+# file is generated from CI secrets. See .github/workflows/ci-cd.yml.
+
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=upload
+storeFile=../upload-keystore.jks

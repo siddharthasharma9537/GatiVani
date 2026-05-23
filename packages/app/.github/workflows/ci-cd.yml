@@ -1,0 +1,751 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, staging ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, develop, staging ]
+  workflow_dispatch:
+    inputs:
+      deploy_to:
+        description: 'Deploy to environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  FLUTTER_VERSION: '3.22.0'
+  FLUTTER_CHANNEL: 'stable'
+  JAVA_VERSION: '17'
+  XCODE_VERSION: '15.4'
+  NODE_VERSION: '20'
+
+# Allow only one concurrent deployment per ref; cancel in-progress
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # CODE QUALITY & TESTING
+  # ============================================================================
+
+  analyze:
+    name: Code Analysis & Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Run analyzer
+        run: flutter analyze --fatal-infos --fatal-warnings
+
+      - name: Check for unused dependencies
+        run: |
+          flutter pub global activate dependency_validator
+          dart pub global run dependency_validator || true
+
+  test:
+    name: Unit & Widget Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: analyze
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate code (build_runner)
+        run: |
+          dart run build_runner build --delete-conflicting-outputs || true
+
+      - name: Run tests with coverage
+        run: |
+          flutter test --coverage --reporter expanded \
+            --exclude-tags=integration
+
+      - name: Enforce coverage threshold (80%)
+        run: |
+          sudo apt-get update && sudo apt-get install -y lcov
+          # Strip generated/UI files from coverage
+          lcov --remove coverage/lcov.info \
+            'lib/**/*.g.dart' \
+            'lib/**/*.freezed.dart' \
+            'lib/generated/**' \
+            -o coverage/lcov.cleaned.info
+          COVERAGE=$(lcov --summary coverage/lcov.cleaned.info 2>&1 | grep -oP 'lines\.*: \K[0-9.]+' | head -1)
+          echo "Coverage: ${COVERAGE}%"
+          THRESHOLD=80
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/lcov.cleaned.info
+          flags: flutter
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  # ============================================================================
+  # SECURITY SCANNING
+  # ============================================================================
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: analyze
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Audit Dart dependencies
+        run: |
+          flutter pub outdated --json > outdated.json || true
+          cat outdated.json
+
+      - name: Scan for committed secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ============================================================================
+  # BUILD ARTIFACTS
+  # ============================================================================
+
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [ test, security-scan ]
+
+    strategy:
+      matrix:
+        environment: [ staging, production ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate code
+        run: dart run build_runner build --delete-conflicting-outputs || true
+
+      - name: Write .env file (${{ matrix.environment }})
+        run: |
+          if [ "${{ matrix.environment }}" = "production" ]; then
+            echo "${{ secrets.ENV_PRODUCTION }}" > .env
+          else
+            echo "${{ secrets.ENV_STAGING }}" > .env
+          fi
+
+      - name: Build web release
+        run: |
+          flutter build web \
+            --release \
+            --web-renderer canvaskit \
+            --pwa-strategy offline-first \
+            --source-maps \
+            --tree-shake-icons \
+            --dart-define=ENVIRONMENT=${{ matrix.environment }} \
+            --dart-define=APP_VERSION=${{ github.sha }} \
+            --base-href=/
+
+      - name: Compress assets
+        run: |
+          cd build/web
+          find . -type f \( -name "*.js" -o -name "*.css" -o -name "*.html" -o -name "*.json" -o -name "*.wasm" \) \
+            -exec gzip -9 -k {} \;
+          find . -type f \( -name "*.js" -o -name "*.css" -o -name "*.html" -o -name "*.json" -o -name "*.wasm" \) \
+            -exec brotli -9 -k {} \; || true
+
+      - name: Report bundle size
+        run: |
+          echo "## Web Build Sizes (${{ matrix.environment }})" >> $GITHUB_STEP_SUMMARY
+          du -sh build/web >> $GITHUB_STEP_SUMMARY
+          du -sh build/web/main.dart.js >> $GITHUB_STEP_SUMMARY
+          du -sh build/web/canvaskit/ >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gativani-web-${{ matrix.environment }}
+          path: build/web
+          retention-days: 14
+
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: [ test, security-scan ]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: 'gradle'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate code
+        run: dart run build_runner build --delete-conflicting-outputs || true
+
+      - name: Write .env (production)
+        run: echo "${{ secrets.ENV_PRODUCTION }}" > .env
+
+      - name: Decode google-services.json
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > android/app/google-services.json
+
+      - name: Decode signing keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+
+      - name: Write key.properties
+        run: |
+          cat > android/key.properties << EOF
+          storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          storeFile=upload-keystore.jks
+          EOF
+
+      - name: Build Android App Bundle (AAB)
+        run: |
+          flutter build appbundle \
+            --release \
+            --obfuscate \
+            --split-debug-info=build/symbols/android \
+            --tree-shake-icons \
+            --dart-define=ENVIRONMENT=production
+
+      - name: Build Android APKs (split per ABI)
+        run: |
+          flutter build apk \
+            --release \
+            --split-per-abi \
+            --obfuscate \
+            --split-debug-info=build/symbols/android \
+            --tree-shake-icons \
+            --dart-define=ENVIRONMENT=production
+
+      - name: Report APK sizes
+        run: |
+          echo "## Android Build Sizes" >> $GITHUB_STEP_SUMMARY
+          ls -lh build/app/outputs/bundle/release/ >> $GITHUB_STEP_SUMMARY
+          ls -lh build/app/outputs/flutter-apk/ >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Crashlytics symbols
+        run: |
+          # Upload obfuscation mapping & native symbols to Crashlytics
+          echo "Native symbols at build/symbols/android — upload via Firebase CLI in release job"
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gativani-android
+          path: |
+            build/app/outputs/bundle/release/*.aab
+            build/app/outputs/flutter-apk/*.apk
+            build/symbols/android/
+          retention-days: 30
+
+  build-ios:
+    name: Build iOS
+    runs-on: macos-14
+    timeout-minutes: 60
+    needs: [ test, security-scan ]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate code
+        run: dart run build_runner build --delete-conflicting-outputs || true
+
+      - name: Write .env (production)
+        run: echo "${{ secrets.ENV_PRODUCTION }}" > .env
+
+      - name: Decode GoogleService-Info.plist
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}" | base64 -d > ios/Runner/GoogleService-Info.plist
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod repo update
+          pod install --repo-update
+
+      - name: Import signing certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+
+      - name: Download provisioning profile
+        uses: apple-actions/download-provisioning-profiles@v3
+        with:
+          bundle-id: app.gativani
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+
+      - name: Build iOS (no codesign)
+        run: |
+          flutter build ios \
+            --release \
+            --no-codesign \
+            --obfuscate \
+            --split-debug-info=build/symbols/ios \
+            --tree-shake-icons \
+            --dart-define=ENVIRONMENT=production
+
+      - name: Archive & export IPA
+        run: |
+          cd ios
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -archivePath $RUNNER_TEMP/Runner.xcarchive \
+            -destination 'generic/platform=iOS' \
+            DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
+            archive
+          xcodebuild -exportArchive \
+            -archivePath $RUNNER_TEMP/Runner.xcarchive \
+            -exportPath $RUNNER_TEMP/ipa \
+            -exportOptionsPlist ExportOptions.plist
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gativani-ios
+          path: |
+            ${{ runner.temp }}/ipa/*.ipa
+            build/symbols/ios/
+          retention-days: 30
+
+  # ============================================================================
+  # INTEGRATION TESTS (gated by env protection)
+  # ============================================================================
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-android
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Run integration tests on Firebase Test Lab
+        run: |
+          echo "${{ secrets.GCLOUD_SERVICE_ACCOUNT }}" > $HOME/sa.json
+          gcloud auth activate-service-account --key-file=$HOME/sa.json
+          gcloud config set project ${{ secrets.GCLOUD_PROJECT_ID }}
+          # Replace with actual androidTest build artifact path
+          gcloud firebase test android run \
+            --type instrumentation \
+            --app build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            --test build/app/outputs/flutter-apk/app-arm64-v8a-debug-androidTest.apk \
+            --device model=redfin,version=30,locale=en,orientation=portrait \
+            --timeout 15m || true
+
+  # ============================================================================
+  # DEPLOYMENT
+  # ============================================================================
+
+  deploy-staging-web:
+    name: Deploy Web to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-web
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: https://staging.gativani.app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gativani-web-staging
+          path: build/web
+
+      - name: Deploy to Firebase Hosting (Staging)
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+          projectId: gativani-staging
+          target: gativani-staging
+          channelId: live
+
+  # Manual approval gate before any production deploy.
+  # Reviewers configured under GitHub > Settings > Environments > production-approval.
+  production-approval:
+    name: Production Approval Gate
+    runs-on: ubuntu-latest
+    needs: [ build-web, build-android, build-ios ]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to == 'production')
+    environment:
+      name: production-approval
+    steps:
+      - name: Record approval
+        run: |
+          echo "Production deploy approved by: ${{ github.actor }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+
+  deploy-production-web:
+    name: Deploy Web to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [ build-web, production-approval ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: production
+      url: https://gativani.app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gativani-web-production
+          path: build/web
+
+      - name: Deploy to Firebase Hosting (Production)
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PROD }}
+          projectId: gativani-prod
+          target: gativani
+          channelId: live
+
+      - name: Deploy Firestore rules & indexes
+        run: |
+          npm install -g firebase-tools
+          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT_PROD }}" > $HOME/firebase-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=$HOME/firebase-sa.json
+          firebase deploy --only firestore:rules,firestore:indexes,storage --project gativani-prod --non-interactive
+
+  deploy-android-play:
+    name: Deploy Android to Play Store
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [ build-android, production-approval ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: production-android
+      url: https://play.google.com/store/apps/details?id=app.gativani
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gativani-android
+          path: artifacts/android
+
+      - name: Upload to Play Console (internal track)
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT }}
+          packageName: app.gativani
+          releaseFiles: artifacts/android/*.aab
+          track: internal
+          status: completed
+          mappingFile: artifacts/android/symbols/android/app.android-arm64.symbols
+          whatsNewDirectory: distribution/whatsnew
+
+  deploy-ios-testflight:
+    name: Deploy iOS to TestFlight
+    runs-on: macos-14
+    timeout-minutes: 25
+    needs: [ build-ios, production-approval ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: production-ios
+      url: https://appstoreconnect.apple.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download iOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gativani-ios
+          path: artifacts/ios
+
+      - name: Upload to TestFlight
+        uses: apple-actions/upload-testflight-build@v1
+        with:
+          app-path: artifacts/ios/Runner.ipa
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+
+  # ============================================================================
+  # POST-DEPLOY: Symbols, smoke tests, rollback hooks
+  # ============================================================================
+
+  upload-crashlytics-symbols:
+    name: Upload Crashlytics Symbols
+    runs-on: ubuntu-latest
+    needs: [ deploy-android-play, deploy-ios-testflight ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Android symbols
+        uses: actions/download-artifact@v4
+        with:
+          name: gativani-android
+          path: artifacts/android
+
+      - name: Download iOS symbols
+        uses: actions/download-artifact@v4
+        with:
+          name: gativani-ios
+          path: artifacts/ios
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Authenticate Firebase
+        run: |
+          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT_PROD }}" > $HOME/firebase-sa.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$HOME/firebase-sa.json" >> $GITHUB_ENV
+
+      - name: Upload Android Crashlytics symbols
+        run: |
+          firebase crashlytics:symbols:upload \
+            --app=${{ secrets.FIREBASE_ANDROID_APP_ID }} \
+            artifacts/android/symbols/android/ \
+            --project gativani-prod
+
+      - name: Upload iOS dSYMs
+        run: |
+          firebase crashlytics:symbols:upload \
+            --app=${{ secrets.FIREBASE_IOS_APP_ID }} \
+            artifacts/ios/symbols/ios/ \
+            --project gativani-prod
+
+  smoke-test-web:
+    name: Production Smoke Test (Web)
+    runs-on: ubuntu-latest
+    needs: deploy-production-web
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Health check
+        run: |
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://gativani.app)
+            if [ "$STATUS" = "200" ]; then
+              echo "Production web is healthy"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS, retrying in 10s..."
+            sleep 10
+          done
+          echo "Production web failed health check"
+          exit 1
+
+      - name: PWA manifest check
+        run: curl -fsS https://gativani.app/manifest.json | jq .
+
+  # ============================================================================
+  # RELEASE MANAGEMENT
+  # ============================================================================
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [ deploy-production-web, deploy-android-play, deploy-ios-testflight ]
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD" > CHANGELOG_RELEASE.md
+          else
+            git log --pretty=format:"- %s (%h)" > CHANGELOG_RELEASE.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: GatiVani ${{ github.ref_name }}
+          body_path: CHANGELOG_RELEASE.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
+          files: |
+            artifacts/gativani-android/*.aab
+            artifacts/gativani-android/*.apk
+            artifacts/gativani-ios/*.ipa
+
+  # ============================================================================
+  # NOTIFICATIONS
+  # ============================================================================
+
+  notify-slack:
+    name: Notify Slack
+    runs-on: ubuntu-latest
+    needs: [ analyze, test, build-web ]
+    if: always() && github.event_name == 'push'
+
+    steps:
+      - name: Compute status
+        id: status
+        run: |
+          if [[ "${{ needs.analyze.result }}" == "failure" || \
+                "${{ needs.test.result }}" == "failure" || \
+                "${{ needs.build-web.result }}" == "failure" ]]; then
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "emoji=:x:" >> $GITHUB_OUTPUT
+          else
+            echo "status=passed" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+            echo "emoji=:white_check_mark:" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        if: env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "title": "${{ steps.status.outputs.emoji }} GatiVani CI/CD ${{ steps.status.outputs.status }}",
+                  "text": "*Commit:* `${{ github.sha }}`\n*Branch:* `${{ github.ref_name }}`\n*Author:* ${{ github.actor }}",
+                  "actions": [
+                    { "type": "button", "text": "View Workflow",
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" }
+                  ]
+                }
+              ]
+            }

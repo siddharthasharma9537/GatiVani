@@ -1,0 +1,32 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default deny all
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+    
+    // Public audio files - anyone can read, only admins can write
+    match /audio/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth.token.admin == true;
+    }
+    
+    // Public images - anyone can read, only admins can write
+    match /images/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth.token.admin == true;
+    }
+    
+    // User uploads - only authenticated users can manage their own
+    match /users/{userId}/{allPaths=**} {
+      allow read, write: if request.auth.uid == userId;
+    }
+    
+    // Metadata - public read, admin write
+    match /metadata/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth.token.admin == true;
+    }
+  }
+}

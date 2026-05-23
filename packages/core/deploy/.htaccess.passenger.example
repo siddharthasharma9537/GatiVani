@@ -1,0 +1,11 @@
+# Copy to the directory cPanel serves as the application root (often `public_html/api` or similar).
+# Update paths to match your hosting account. Passenger directives vary slightly by provider.
+
+PassengerEnabled On
+PassengerAppType node
+PassengerStartupFile src/server.js
+
+# Example (replace USER and NODE_MAJOR with your cPanel Node.js selector paths):
+# PassengerAppRoot /home/USER/node-core
+# PassengerBaseURI /
+# PassengerNodejs /home/USER/nodevenv/node-core/NODE_MAJOR/bin/node
