@@ -45,6 +45,9 @@ export const env = {
   ttsProvider: process.env.TTS_PROVIDER || "azure", // 'azure', 'sarvam', or 'fallback'
   enableTtsFallback: bool("ENABLE_TTS_FALLBACK", false),
   enableVisionFallback: bool("ENABLE_VISION_FALLBACK", false),
+  // Supabase database (extracted text storage)
+  supabaseUrl: process.env.SUPABASE_URL || "",
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
 };
 
 export function assertGeminiConfigured() {

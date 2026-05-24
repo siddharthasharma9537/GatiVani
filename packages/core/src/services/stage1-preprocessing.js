@@ -1,9 +1,11 @@
 import { performOCR } from "./sarvam-vision-service.js";
+import { saveExtractedText } from "./supabase-service.js";
 
 /**
  * Stage 1: Pre-Processing
  * - Extract text using Sarvam OCR (optimized for Indian languages)
  * - Fast and cost-effective alternative to Gemini Vision
+ * - Saves extracted text to Supabase database for efficient storage & retrieval
  */
 
 export async function preprocessDocument(fileBuffer, mimeType, filename) {
@@ -33,6 +35,27 @@ export async function preprocessDocument(fileBuffer, mimeType, filename) {
     console.log(
       `[Stage1] Successfully extracted ${ocrResult.text.length} characters`
     );
+
+    // Save extracted text to Supabase database
+    try {
+      const dbResult = await saveExtractedText({
+        filename,
+        text: ocrResult.text,
+        confidence: ocrResult.confidence || 0.8,
+        fileSize: fileBuffer.length,
+        mimeType,
+        language: "te",
+        source: "ocr",
+      });
+
+      if (dbResult.success) {
+        console.log(`[Stage1] Extracted text saved to database → ID: ${dbResult.id}`);
+      } else {
+        console.warn(`[Stage1] Failed to save to database:`, dbResult.error);
+      }
+    } catch (saveError) {
+      console.warn(`[Stage1] Database save error:`, saveError.message);
+    }
 
     return {
       success: true,

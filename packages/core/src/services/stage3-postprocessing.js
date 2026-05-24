@@ -51,9 +51,23 @@ export async function generateArticleAudio(text, language = "te-IN") {
   console.log(`[Stage3] Generating audio (${language})...`);
 
   try {
+    // Limit text to prevent TTS API failures with huge documents
+    const MAX_TTS_LENGTH = 5000; // Characters
+    let textForTTS = text;
+
+    if (text.length > MAX_TTS_LENGTH) {
+      console.log(`[Stage3] Text truncated: ${text.length} → ${MAX_TTS_LENGTH} chars (API limits)`);
+      textForTTS = text.substring(0, MAX_TTS_LENGTH).trim();
+      // Find last complete sentence
+      const lastPeriod = textForTTS.lastIndexOf(".");
+      if (lastPeriod > MAX_TTS_LENGTH * 0.8) {
+        textForTTS = textForTTS.substring(0, lastPeriod + 1);
+      }
+    }
+
     // Use TTS fallback service (tries Azure first, then Sarvam)
     const languageCode = language.split("-")[0]; // Extract language code (te, hi, en)
-    const result = await generateAudioWithFallback(text, languageCode);
+    const result = await generateAudioWithFallback(textForTTS, languageCode);
 
     if (result.success) {
       console.log(`[Stage3] Audio generated successfully with ${result.provider}`);
