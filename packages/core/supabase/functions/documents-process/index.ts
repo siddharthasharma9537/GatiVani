@@ -8,7 +8,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-subscription-tier",
 };
 
-const TIER_MAX_PAGES: Record<string, number> = { free: 5, standard: 50, premium: 500 };
+const TIER_MAX_PAGES: Record<string, number> = {
+  free: 5,
+  standard: 50,
+  premium: 500,
+  super_premium: 1000,
+  super_premium_advanced: 9999,
+};
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -17,24 +23,34 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// ── 18-category detection ────────────────────────────────────────────────────
+
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /రాజకీయ|పార్టీ|ఎన్నిక|ప్రభుత్వ|మంత్రి|cm|chief minister/i, label: "Politics" },
-  { pattern: /క్రికెట్|ఫుట్‌బాల్|ఆటలు|క్రీడ|sports|cricket|ipl/i, label: "Sports" },
-  { pattern: /వ్యాపార|మార్కెట్|సెన్సెక్స్|నిఫ్టీ|economy|stock|market/i, label: "Business" },
-  { pattern: /సినిమా|చిత్రం|నటుడు|నటి|actor|film|tollywood/i, label: "Entertainment" },
-  { pattern: /ఆరోగ్య|వైద్య|వ్యాధి|hospital|health|covid/i, label: "Health" },
-  { pattern: /విద్య|పాఠశాల|కళాశాల|university|education|exam/i, label: "Education" },
+  { pattern: /అంతర్జాతీయ|విదేశ|international|global|UN\b|usa|america|china|europe|world news/i, label: "International" },
+  { pattern: /జాతీయ రాజకీయ|కాంగ్రెస్|బిజెపి|BJP|Congress|prime minister|మోదీ|జాతీయ నాయకుడు/i, label: "National Politics" },
+  { pattern: /రాష్ట్ర రాజకీయ|TRS|BRS|YSRCP|TDP|JSP|Telangana|ముఖ్యమంత్రి|రేవంత్|చంద్రబాబు|జగన్/i, label: "State Politics" },
+  { pattern: /సంపాదకీయ|editorial|opinion\b|views\b|వ్యాఖ్య|ఆలోచన/i, label: "Editorial" },
+  { pattern: /పార్లమెంట్|parliamentary|lok sabha|rajya sabha|అసెంబ్లీ|legislation|చట్టసభ/i, label: "Parliamentary Affairs" },
+  { pattern: /జాతీయ\b|national(?! politics)|central government|భారత ప్రభుత్వం/i, label: "National" },
+  { pattern: /పథకం|scheme|yojana|welfare|సంక్షేమ|రాష్ట్ర పథకాలు|subsidy|భత్యం/i, label: "State Schemes" },
+  { pattern: /ఆరోగ్య|health|medical|hospital|covid|వైద్య|వ్యాధి|వ్యాక్సిన్/i, label: "Health" },
+  { pattern: /పర్యావరణ|environment|climate|green|forest|అడవి|వాతావరణ|pollution/i, label: "Environment" },
+  { pattern: /న్యాయస్థాన|court|judiciary|judge|supreme court|high court|న్యాయ|verdict/i, label: "Judiciary" },
+  { pattern: /విద్య|education|school|college|university|పాఠశాల|కళాశాల|exam|పరీక్ష/i, label: "Education" },
+  { pattern: /మంత్రిత్వ|ministry|minister(?! prime)|department|విభాగ|secretary\b/i, label: "Ministry News" },
+  { pattern: /ప్రముఖ|prominent|personality|celebrity|VIP|నాయకుడు|వ్యక్తి(?!.*విద్య)/i, label: "Prominent Persons" },
+  { pattern: /ట్రెండింగ్|trending|viral|social media|twitter|instagram|facebook/i, label: "Trending News" },
+  { pattern: /వైరల్ వీడియో|viral video|meme/i, label: "Viral News" },
+  { pattern: /సినిమా|entertainment|film|movie|actor|actress|tollywood|బాలీవుడ్|serial/i, label: "Entertainment" },
+  { pattern: /క్రికెట్|football|cricket|IPL|sports\b|game\b|ఆటలు|match\b|player\b|tournament/i, label: "Sports" },
+  { pattern: /వ్యాపార|business|economy|market|stock|finance|banking|trade\b|shares/i, label: "Business" },
 ];
 
 function deriveCategory(text: string): string {
-  for (const { pattern, label } of CATEGORY_PATTERNS) if (pattern.test(text)) return label;
+  for (const { pattern, label } of CATEGORY_PATTERNS) {
+    if (pattern.test(text)) return label;
+  }
   return "News";
-}
-
-function deriveTitle(text: string, fallback: string): string {
-  const firstLine = text.split("\n").map((l) => l.trim()).find((l) => l.length > 0);
-  if (!firstLine) return fallback;
-  return firstLine.length > 80 ? firstLine.slice(0, 77) + "..." : firstLine;
 }
 
 function cleanText(s: string): string {
@@ -46,12 +62,75 @@ function cleanText(s: string): string {
     .trim();
 }
 
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
+// ── Duration estimation (Telugu TTS ~700 chars/min) ──────────────────────────
+
+function estimateDurationSeconds(text: string): number {
+  return Math.max(15, Math.round((text.length / 700) * 60));
 }
+
+// ── Article segmentation ─────────────────────────────────────────────────────
+
+interface ArticleSegment {
+  title: string;
+  content: string;
+}
+
+function segmentArticles(text: string, filename: string): ArticleSegment[] {
+  const articles: ArticleSegment[] = [];
+
+  // Strategy 1: markdown ## or # headers
+  if (/^#{1,3}\s+.+/m.test(text)) {
+    const lines = text.split("\n");
+    let currentTitle = "";
+    let currentLines: string[] = [];
+
+    for (const line of lines) {
+      const headerMatch = line.match(/^(#{1,3})\s+(.+)/);
+      if (headerMatch) {
+        const content = currentLines.join("\n").trim();
+        if (currentTitle && content.length > 80) {
+          articles.push({ title: currentTitle, content });
+        }
+        currentTitle = headerMatch[2].replace(/\*+/g, "").trim().slice(0, 120);
+        currentLines = [];
+      } else {
+        currentLines.push(line);
+      }
+    }
+    const lastContent = currentLines.join("\n").trim();
+    if (currentTitle && lastContent.length > 80) {
+      articles.push({ title: currentTitle, content: lastContent });
+    }
+  }
+
+  // Strategy 2: blank-line paragraph segmentation
+  if (articles.length < 2) {
+    articles.length = 0;
+    const paragraphs = text.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 100);
+    for (const para of paragraphs) {
+      const lines = para.split("\n").filter((l) => l.trim());
+      if (!lines.length) continue;
+      const firstLine = lines[0].replace(/^#+\s*/, "").trim();
+      const rest = lines.slice(1).join("\n").trim();
+      if (rest.length > 80) {
+        articles.push({ title: firstLine.slice(0, 120), content: rest });
+      } else {
+        articles.push({ title: firstLine.slice(0, 120), content: para });
+      }
+    }
+  }
+
+  // Fallback: whole text as one article
+  if (articles.length === 0) {
+    const fallbackTitle = text.split("\n").find((l) => l.trim().length > 5)
+      ?.replace(/^#+\s*/, "").trim() ?? filename.replace(/\.[^.]+$/, "");
+    articles.push({ title: fallbackTitle.slice(0, 120), content: text });
+  }
+
+  return articles.slice(0, 15);
+}
+
+// ── OCR result extraction ─────────────────────────────────────────────────────
 
 async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unknown>): Promise<string> {
   let best = "";
@@ -66,7 +145,6 @@ async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unkno
       if (!resp.ok) continue;
 
       if (filename.endsWith(".zip")) {
-        // Stream-extract the zip and pick the longest .md/.txt/.html entry
         const { ZipReader, BlobReader, TextWriter } = await import("https://deno.land/x/zipjs@v2.7.45/index.js");
         const zipReader = new ZipReader(new BlobReader(await resp.blob()));
         const entries = await zipReader.getEntries();
@@ -87,6 +165,8 @@ async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unkno
   }
   return best;
 }
+
+// ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -122,7 +202,7 @@ Deno.serve(async (req) => {
     const safeName = `${ts}_${originalName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
     const buffer = new Uint8Array(await file.arrayBuffer());
 
-    // Persist original to Supabase Storage (uploads bucket)
+    // ── Upload original to Supabase Storage ────────────────────────────────
     let storageUrl = "";
     {
       const { error } = await supabase.storage
@@ -136,7 +216,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Stage 1: Sarvam OCR ─────────────────────────────────────────
+    // ── Stage 1: Sarvam OCR ────────────────────────────────────────────────
     let extractedText = "";
     const tempPath = `/tmp/sarvam_${ts}_${safeName}`;
     try {
@@ -154,7 +234,7 @@ Deno.serve(async (req) => {
       await (job as { start: () => Promise<unknown> }).start();
       await Promise.race([
         (job as { waitUntilComplete: () => Promise<unknown> }).waitUntilComplete(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("OCR timeout")), 45_000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("OCR timeout")), 55_000)),
       ]);
 
       const links = await (job as { getDownloadLinks: () => Promise<{ download_urls?: Record<string, unknown> }> }).getDownloadLinks();
@@ -171,56 +251,30 @@ Deno.serve(async (req) => {
       extractedText = `Document: ${originalName}`;
     }
 
-    // ── Stage 2: Cleaning ──────────────────────────────────────────
+    // ── Stage 2: Clean ─────────────────────────────────────────────────────
     const cleaned = cleanText(extractedText);
 
-    // ── Stage 3: TTS via Sarvam ────────────────────────────────────
-    let audioUrl = "";
-    const textForTTS = cleaned.slice(0, 2000).trim();
-    if (textForTTS.length > 0) {
-      try {
-        // Call Sarvam TTS REST API directly (skips SDK to avoid Node-compat edge cases)
-        const sarvamResp = await fetch("https://api.sarvam.ai/text-to-speech", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "api-subscription-key": SARVAM,
-          },
-          body: JSON.stringify({
-            text: textForTTS,
-            target_language_code: "te-IN",
-            speaker: "shubh",
-            pace: 1.1,
-            speech_sample_rate: 48000,
-            enable_preprocessing: true,
-            model: "bulbul:v3",
-          }),
-        });
+    // ── Stage 3: Segment into articles ─────────────────────────────────────
+    const segments = segmentArticles(cleaned, originalName);
 
-        if (!sarvamResp.ok) {
-          console.warn(`[tts] sarvam ${sarvamResp.status}: ${(await sarvamResp.text()).slice(0, 200)}`);
-        } else {
-          const ttsJson = await sarvamResp.json() as { audios?: string[] };
-          const audioB64 = ttsJson?.audios?.[0];
-          if (audioB64) {
-            const audioBytes = base64ToBytes(audioB64);
-            const audioName = `${ts}_audio.mp3`;
-            const { error: audioErr } = await supabase.storage
-              .from("audio")
-              .upload(audioName, audioBytes, { contentType: "audio/mpeg" });
-            if (audioErr) {
-              console.warn("[tts] storage error:", audioErr.message);
-            } else {
-              audioUrl = supabase.storage.from("audio").getPublicUrl(audioName).data.publicUrl;
-            }
-          }
-        }
-      } catch (e) {
-        console.error("[tts] exception:", (e as Error).message);
-      }
-    }
+    const articles = segments.map((seg, i) => {
+      const categoryInput = seg.title + " " + seg.content.slice(0, 300);
+      const category = deriveCategory(categoryInput);
+      const preview = seg.content.replace(/\n/g, " ").trim().slice(0, 200);
+      const duration = estimateDurationSeconds(seg.content);
+      return {
+        id: `article_${ts}_${i + 1}`,
+        title: seg.title,
+        content: seg.content,
+        preview,
+        category,
+        estimatedDurationSeconds: duration,
+        audioUrl: null,
+        page: 1,
+      };
+    });
 
-    // ── Persist extracted text to DB ───────────────────────────────
+    // ── Persist extracted text to DB ───────────────────────────────────────
     await supabase.from("extracted_texts").insert({
       filename: originalName,
       mime_type: file.type || null,
@@ -233,37 +287,22 @@ Deno.serve(async (req) => {
       if (error) console.warn("[db] insert error:", error.message);
     });
 
-    // ── Build response (matches Flutter DocumentService shape) ─────
-    const title = deriveTitle(cleaned, originalName);
-    const section = deriveCategory(cleaned);
-    const preview = cleaned.slice(0, 200);
     const processingTime = Math.round((Date.now() - startedAt) / 1000);
 
     return json({
       ok: true,
       newspaper: {
         id: `newspaper_${ts}`,
-        title: originalName,
+        title: originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim(),
         date: new Date().toISOString().split("T")[0],
         storageUrl,
       },
-      articles: [{
-        id: "article_1",
-        title,
-        section,
-        preview,
-        audioUrl,
-        qualityScore: audioUrl ? 85 : 40,
-        status: audioUrl ? "completed" : "failed",
-        page: 1,
-      }],
+      articles,
       summary: {
-        totalArticles: 1,
-        processedArticles: audioUrl ? 1 : 0,
-        failedArticles: audioUrl ? 0 : 1,
+        totalArticles: articles.length,
         processingTime,
       },
-      models: { ocr: "sarvam-ocr", tts: "sarvam-tts" },
+      models: { ocr: "sarvam-ocr" },
       subscription: { tier, active: true },
       limits: { maxPages: cap, totalPages: 1, processedPages: 1, truncated: false },
     });

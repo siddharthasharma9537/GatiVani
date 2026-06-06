@@ -4,7 +4,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../design/app_theme.dart';
 import '../services/document_service.dart';
-import 'review_screen.dart';
+import '../config/api_config.dart';
+import 'newspaper_browse_screen.dart';
 
 class UploadContentScreen extends StatefulWidget {
   const UploadContentScreen({Key? key}) : super(key: key);
@@ -48,11 +49,11 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       await Future.delayed(const Duration(milliseconds: 400));
       if (mounted) setState(() => _processingStep = 'extracting');
 
-      final article = await _uploadService.processUploadedContent(
+      final newspaper = await _uploadService.processNewspaper(
         filePath: image.path,
-        source: source,
         filename: filename,
         fileBytes: bytes,
+        tier: ApiConfig.subscriptionTier,
       );
 
       if (mounted) {
@@ -61,7 +62,12 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
         Navigator.pop(context); // dismiss dialog
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => ReviewScreen(article: article)),
+          MaterialPageRoute(
+            builder: (_) => NewspaperBrowseScreen(
+              newspaper: newspaper,
+              tier: ApiConfig.subscriptionTier,
+            ),
+          ),
         );
       }
     } catch (e) {
@@ -290,9 +296,9 @@ class _ProcessingDialog extends StatelessWidget {
       case 'uploading':
         return 'Uploading file...';
       case 'extracting':
-        return 'AI is reading your document...';
+        return 'AI is reading and categorising your newspaper...';
       case 'complete':
-        return 'Preparing your review...';
+        return 'Preparing article list...';
       default:
         return 'Please wait';
     }
