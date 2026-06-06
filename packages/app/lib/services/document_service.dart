@@ -18,6 +18,7 @@ class DocumentService {
     String tier = 'free',
   }) async {
     final request = http.MultipartRequest('POST', Uri.parse(_endpoint));
+    request.headers.addAll(ApiConfig.authHeaders);
     request.headers['X-Subscription-Tier'] = tier;
 
     await _attachFile(request, filePath, filename, fileBytes);
@@ -75,6 +76,7 @@ class DocumentService {
     Uint8List? fileBytes,
   }) async {
     final request = http.MultipartRequest('POST', Uri.parse(_endpoint));
+    request.headers.addAll(ApiConfig.authHeaders);
     request.headers['X-Subscription-Tier'] = ApiConfig.subscriptionTier;
 
     await _attachFile(request, filePath, filename, fileBytes);

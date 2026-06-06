@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
-import '../config/api_config.dart';
+import '../config/api_config.dart' show ApiConfig;
 import '../design/app_theme.dart';
 import '../models/newspaper_article.dart';
 
@@ -68,7 +68,10 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
     try {
       final resp = await http.post(
         Uri.parse(ApiConfig.documentsSynthesizeUrl),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          ...ApiConfig.authHeaders,
+          'Content-Type': 'application/json',
+        },
         body: jsonEncode({'text': _articles[index].content}),
       ).timeout(const Duration(seconds: 120));
 
