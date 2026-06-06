@@ -112,6 +112,29 @@ export async function generateSarvamAudioDataUrl(text, language = "te", speaker 
   return `data:audio/mpeg;base64,${audioBase64}`;
 }
 
+export async function generateAudio(text, language = "te", speaker = null) {
+  try {
+    const audioUrl = await generateSarvamAudioDataUrl(text, language, speaker);
+    return {
+      success: true,
+      audioUrl,
+      provider: "sarvam",
+      text,
+      language,
+      speaker: speaker || LANGUAGE_CONFIG[language]?.defaultVoice || "shubh",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      audioUrl: null,
+      provider: "sarvam",
+      error: error.message,
+      text,
+      language,
+    };
+  }
+}
+
 // Get all available voices for a language
 export function getAvailableVoices(language = "te") {
   const config = LANGUAGE_CONFIG[language] || LANGUAGE_CONFIG.te;

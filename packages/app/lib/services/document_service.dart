@@ -5,7 +5,7 @@ import 'package:http_parser/http_parser.dart';
 import '../config/api_config.dart';
 import '../models/article.dart';
 
-/// Sends a document to gativani-core for Gemini processing.
+/// Sends a document to gativani-core for OCR + audio processing.
 ///
 /// Backend response shape (v2):
 /// {

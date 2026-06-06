@@ -288,7 +288,7 @@ class _ProcessingDialog extends StatelessWidget {
   String get _subtitle {
     switch (step) {
       case 'uploading':
-        return 'Sending file to Gemini...';
+        return 'Uploading file...';
       case 'extracting':
         return 'AI is reading your document...';
       case 'complete':

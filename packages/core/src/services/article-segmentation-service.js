@@ -1,7 +1,7 @@
 /**
  * Article Segmentation Service
- * Simplified to disable Gemini Vision and use pattern-based classification only.
- * For newspaper documents, falls back to single-article mode.
+ * Pattern-based section classification. For newspaper documents, falls
+ * back to single-article mode (the whole document treated as one article).
  */
 
 const SECTION_PATTERNS = {
@@ -16,13 +16,12 @@ const SECTION_PATTERNS = {
 const DEFAULT_SECTION = "General";
 
 export async function segmentArticles(documentBuffer, metadata = {}) {
-  console.log("[ArticleSegmentation] Gemini segmentation disabled. Using fallback single-article mode...");
+  console.log("[ArticleSegmentation] Falling back to single-article mode...");
 
-  // Return fallback: treat entire document as single article
-  // This triggers the single-article processing mode in documents.js
+  // Triggers the single-article processing path in documents.js
   return {
     success: false,
-    error: "Gemini segmentation disabled - using fallback",
+    error: "segmentation_not_available",
     segmentation: {
       articlesFound: 1,
       articles: [
@@ -47,7 +46,6 @@ export async function segmentArticles(documentBuffer, metadata = {}) {
 }
 
 export function classifyArticleSectionSync(content) {
-  // Pattern-based classification (no Gemini needed)
   for (const [section, pattern] of Object.entries(SECTION_PATTERNS)) {
     if (pattern.test(content)) {
       return section;

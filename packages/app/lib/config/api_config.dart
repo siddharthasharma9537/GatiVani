@@ -2,41 +2,35 @@ import 'package:http/http.dart' as http;
 
 /// Backend connection config for GatiVani.
 ///
-/// Override at build/run time with --dart-define:
-///   flutter run --dart-define=BACKEND_API_BASE=http://192.168.1.x:8788/api
-///   flutter run --dart-define=PUBLIC_ORIGIN=http://192.168.1.x:8788
+/// The backend lives in Supabase Edge Functions.
+///   Health    → GET  /functions/v1/health
+///   Process   → POST /functions/v1/documents-process  (multipart)
+///   Synthesize→ POST /functions/v1/documents-synthesize (JSON)
+///
+/// Override at build/run time with:
+///   flutter run --dart-define=SUPABASE_FUNCTIONS_URL=https://<ref>.supabase.co/functions/v1
 class ApiConfig {
   ApiConfig._();
 
-  static const String baseUrl = String.fromEnvironment(
-    'BACKEND_API_BASE',
-    defaultValue: 'http://localhost:8788/api',
+  static const String functionsUrl = String.fromEnvironment(
+    'SUPABASE_FUNCTIONS_URL',
+    defaultValue: 'https://jjoxowdvzmlchtfarpbs.supabase.co/functions/v1',
   );
 
-  static const String publicOrigin = String.fromEnvironment(
-    'PUBLIC_ORIGIN',
-    defaultValue: 'http://localhost:8788',
-  );
+  static String get documentsProcessUrl => '$functionsUrl/documents-process';
+  static String get documentsSynthesizeUrl => '$functionsUrl/documents-synthesize';
+  static String get healthUrl => '$functionsUrl/health';
 
-  // ── Endpoints ────────────────────────────────────────────────────────────
-
-  static String get documentsProcessUrl => '$baseUrl/documents/process';
-  static String get healthUrl => '$publicOrigin/health';
-
-  // ── Subscription tier header ──────────────────────────────────────────────
-  // Accepted by the backend only when TRUST_CLIENT_TIER_HEADERS=true (dev).
-  // Replace with JWT once auth is wired up.
+  /// Dev-only header; backend ignores unless TRUST_CLIENT_TIER_HEADERS=true.
+  /// Replace with JWT once auth is wired up.
   static const String subscriptionTier = 'premium';
-
-  // ── Health check ─────────────────────────────────────────────────────────
 
   /// Returns true if the backend responds with ok=true within [timeout].
   static Future<bool> isBackendReachable({
     Duration timeout = const Duration(seconds: 6),
   }) async {
     try {
-      final response =
-          await http.get(Uri.parse(healthUrl)).timeout(timeout);
+      final response = await http.get(Uri.parse(healthUrl)).timeout(timeout);
       return response.statusCode == 200 &&
           (response.body.contains('"ok":true') ||
               response.body.contains('"ok": true'));

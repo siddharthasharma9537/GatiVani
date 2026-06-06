@@ -63,13 +63,8 @@ export async function stage2ProcessComplete(stage1Result) {
   try {
     const { rawBuffer, analysis: stage1Analysis, extractedText } = stage1Result;
 
-    // Process image (simplified - no Gemini)
     const imageResult = await processArticleImage(rawBuffer, stage1Analysis.quality);
-
-    // Clean text
     const cleanResult = await cleanArticleText(extractedText || "");
-
-    // Enhance for readability (simplified - no Gemini)
     const enhanceResult = cleanResult.success
       ? await enhanceTextForReadability(cleanResult.articleText)
       : cleanResult;

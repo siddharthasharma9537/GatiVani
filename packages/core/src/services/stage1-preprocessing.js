@@ -4,8 +4,7 @@ import { saveExtractedText } from "./supabase-service.js";
 /**
  * Stage 1: Pre-Processing
  * - Extract text using Sarvam OCR (optimized for Indian languages)
- * - Fast and cost-effective alternative to Gemini Vision
- * - Saves extracted text to Supabase database for efficient storage & retrieval
+ * - Persists extracted text to Supabase for retrieval
  */
 
 export async function preprocessDocument(fileBuffer, mimeType, filename) {

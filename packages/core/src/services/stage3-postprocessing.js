@@ -1,15 +1,14 @@
-import { generateAudioWithFallback } from "./tts-fallback-service.js";
+import { generateAudio } from "./sarvam-tts-service.js";
 
 /**
  * Stage 3: Post-Processing & Audio Generation
- * - TTS audio generation (using Azure or Sarvam)
- * - Skip expensive Gemini verification
+ * - TTS audio generation via Sarvam
  */
 
 export async function verifyTextQuality(text) {
   console.log("[Stage3] Text quality check...");
 
-  // Simple heuristic-based verification (no Gemini)
+  // Heuristic-based verification
   const isComplete = text.length > 100;
   const hasGarbledText = /[^\w\sఀ-౿ऀ-ॿ]/g.test(text.slice(0, 500));
 
@@ -28,7 +27,7 @@ export async function verifyTextQuality(text) {
 export async function verifyImageQuality(imageBuffer) {
   console.log("[Stage3] Image quality check...");
 
-  // Simple heuristic-based verification (no Gemini)
+  // Heuristic-based verification
   const sizeBytes = imageBuffer.length;
   const sizeOK = sizeBytes < 10 * 1024 * 1024; // Less than 10MB
 
@@ -65,9 +64,8 @@ export async function generateArticleAudio(text, language = "te-IN") {
       }
     }
 
-    // Use TTS fallback service (tries Azure first, then Sarvam)
-    const languageCode = language.split("-")[0]; // Extract language code (te, hi, en)
-    const result = await generateAudioWithFallback(textForTTS, languageCode);
+    const languageCode = language.split("-")[0];
+    const result = await generateAudio(textForTTS, languageCode);
 
     if (result.success) {
       console.log(`[Stage3] Audio generated successfully with ${result.provider}`);
@@ -79,7 +77,7 @@ export async function generateArticleAudio(text, language = "te-IN") {
         sizeBytes: result.audioUrl.length,
       };
     } else {
-      console.error("[Stage3] All TTS providers failed:", result.error);
+      console.error("[Stage3] TTS failed:", result.error);
       return {
         success: false,
         error: result.error,

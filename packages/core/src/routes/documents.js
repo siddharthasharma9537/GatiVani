@@ -5,7 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { maxPagesForTier } from "../lib/subscription-tiers.js";
 import { extractPdfText as extractPdfTextByPageCap } from "../lib/pdf-extractor.js";
-import { generateAudioWithFallback } from "../services/tts-fallback-service.js";
+import { generateAudio } from "../services/sarvam-tts-service.js";
 import { requireActiveSubscription } from "../middleware/subscription.js";
 import { env } from "../config/env.js";
 import { preprocessDocument, extractArticleContent } from "../services/stage1-preprocessing.js";
@@ -438,7 +438,7 @@ documentsRouter.post(
         `[synthesize] Generating ${language} audio for ${text.length} chars`
       );
 
-      const result = await generateAudioWithFallback(text, language);
+      const result = await generateAudio(text, language);
 
       if (!result.success) {
         return res.status(500).json({
