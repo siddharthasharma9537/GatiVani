@@ -158,7 +158,9 @@ async function synthesizeWithGemini(
 ): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
   const voiceName = geminiVoice(speaker);
   const GEMINI_SAMPLE_RATE = 24000;
-  const ttsInput = styledText(text, readingStyle);
+  // Gemini TTS works best with natural content — don't inject English instructions
+  // into Telugu text. Style is handled via Sarvam pace instead.
+  const ttsInput = text;
 
   console.log(`[gemini-tts] ${text.length} chars, voice=${voiceName}, style=${readingStyle ?? "default"}`);
 

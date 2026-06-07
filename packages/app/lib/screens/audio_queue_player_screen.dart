@@ -108,6 +108,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
         headers: {
           ...ApiConfig.authHeaders,
           'Content-Type': 'application/json',
+          'x-subscription-tier': ApiConfig.subscriptionTier,
         },
         body: jsonEncode({
           'text': '${_articles[index].title}\n\n${_articles[index].content}',
@@ -115,7 +116,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
           'speaker': _selectedVoice,
           'readingStyle': _articles[index].readingStyle,
         }),
-      ).timeout(const Duration(seconds: 120));
+      ).timeout(const Duration(seconds: 180));
 
       if (resp.statusCode != 200) throw Exception('TTS HTTP ${resp.statusCode}');
 
