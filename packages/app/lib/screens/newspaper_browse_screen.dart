@@ -339,6 +339,48 @@ class _ArticleList extends StatelessWidget {
   }
 }
 
+// ── Smart thumbnail: image if available, category icon otherwise ──────────────
+
+class _ArticleThumb extends StatelessWidget {
+  final NewspaperArticle article;
+  const _ArticleThumb({required this.article});
+
+  @override
+  Widget build(BuildContext context) {
+    if (article.hasImage) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(GVRadius.md),
+        child: SizedBox(
+          width: 52,
+          child: Image.network(
+            article.imageUrl,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _CategoryThumb(category: article.category),
+            loadingBuilder: (_, child, progress) {
+              if (progress == null) return child;
+              return Container(
+                width: 52,
+                color: GVColors.bgTertiary(context),
+                child: Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: GVColors.accent(context),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
+    return _CategoryThumb(category: article.category);
+  }
+}
+
 // ── Category thumbnail ────────────────────────────────────────────────────────
 
 class _CategoryThumb extends StatelessWidget {
@@ -434,8 +476,8 @@ class _ArticleCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ── Category thumbnail ──────────────────────────────────────
-                _CategoryThumb(category: article.category),
+                // ── Thumbnail: image if available, else category icon ───────
+                _ArticleThumb(article: article),
                 const SizedBox(width: 12),
 
                 // ── Article content ─────────────────────────────────────────

@@ -9,6 +9,16 @@ class NewspaperArticle {
   final int estimatedDurationSeconds;
   final int page;
 
+  /// Type detected by Gemini: "newspaper" | "sloka" | "mantra" | "book" | "other"
+  final String documentType;
+
+  /// TTS reading style: "news_anchor" | "devotional_slow" | "mantra_clear" | "normal"
+  final String readingStyle;
+
+  /// URL of the source document image (used as album art / thumbnail).
+  /// For image uploads this is the actual photo; for PDFs it is empty.
+  final String imageUrl;
+
   String? audioUrl;
   ArticleAudioStatus audioStatus;
   bool isDownloaded;
@@ -22,6 +32,9 @@ class NewspaperArticle {
     required this.category,
     required this.estimatedDurationSeconds,
     this.page = 1,
+    this.documentType = 'newspaper',
+    this.readingStyle = 'news_anchor',
+    this.imageUrl = '',
     this.audioUrl,
     this.audioStatus = ArticleAudioStatus.none,
     this.isDownloaded = false,
@@ -40,7 +53,21 @@ class NewspaperArticle {
     return '${m}m ${s}s';
   }
 
-  factory NewspaperArticle.fromJson(Map<String, dynamic> json) {
+  /// Returns true if imageUrl points to a displayable image (not a PDF).
+  bool get hasImage {
+    if (imageUrl.isEmpty) return false;
+    final lower = imageUrl.toLowerCase();
+    return lower.contains('.jpg') ||
+        lower.contains('.jpeg') ||
+        lower.contains('.png') ||
+        lower.contains('.webp') ||
+        lower.contains('.gif');
+  }
+
+  factory NewspaperArticle.fromJson(
+    Map<String, dynamic> json, {
+    String imageUrl = '',
+  }) {
     final content = json['content'] as String? ?? '';
     return NewspaperArticle(
       id: json['id'] as String? ?? '',
@@ -55,6 +82,9 @@ class NewspaperArticle {
       estimatedDurationSeconds:
           json['estimatedDurationSeconds'] as int? ?? estimateDuration(content),
       page: json['page'] as int? ?? 1,
+      documentType: json['documentType'] as String? ?? 'newspaper',
+      readingStyle: json['readingStyle'] as String? ?? 'news_anchor',
+      imageUrl: json['imageUrl'] as String? ?? imageUrl,
       audioUrl: json['audioUrl'] as String?,
     );
   }
@@ -64,6 +94,9 @@ class NewspaperArticle {
     String? audioUrl,
     bool? isDownloaded,
     bool? isSelected,
+    String? documentType,
+    String? readingStyle,
+    String? imageUrl,
   }) =>
       NewspaperArticle(
         id: id,
@@ -73,6 +106,9 @@ class NewspaperArticle {
         category: category,
         estimatedDurationSeconds: estimatedDurationSeconds,
         page: page,
+        documentType: documentType ?? this.documentType,
+        readingStyle: readingStyle ?? this.readingStyle,
+        imageUrl: imageUrl ?? this.imageUrl,
         audioUrl: audioUrl ?? this.audioUrl,
         audioStatus: audioStatus ?? this.audioStatus,
         isDownloaded: isDownloaded ?? this.isDownloaded,

@@ -50,8 +50,12 @@ class DocumentService {
     final limits = data['limits'] as Map<String, dynamic>? ?? {};
     final subscription = data['subscription'] as Map<String, dynamic>? ?? {};
 
+    final storageUrlForArticles = newspaper['storageUrl'] as String? ?? '';
     final articles = rawArticles
-        .map((a) => NewspaperArticle.fromJson(a as Map<String, dynamic>))
+        .map((a) => NewspaperArticle.fromJson(
+              a as Map<String, dynamic>,
+              imageUrl: storageUrlForArticles,
+            ))
         .toList();
 
     return NewspaperResult(

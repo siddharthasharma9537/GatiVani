@@ -113,6 +113,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
           'text': '${_articles[index].title}\n\n${_articles[index].content}',
           'language': 'te-IN',
           'speaker': _selectedVoice,
+          'readingStyle': _articles[index].readingStyle,
         }),
       ).timeout(const Duration(seconds: 120));
 
@@ -195,6 +196,18 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
       }
     });
     _loadArticle(_currentIndex);
+  }
+
+  void _showTranscript(NewspaperArticle article) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: GVColors.bgPrimary(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _TranscriptSheet(article: article, player: _player),
+    );
   }
 
   void _showVoicePicker() {
@@ -490,6 +503,13 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
             tooltip: 'Change voice ($_selectedVoice)',
             onPressed: _showVoicePicker,
           ),
+          // Transcript / lyrics
+          IconButton(
+            icon: const Icon(Icons.lyrics_outlined),
+            color: GVColors.textSecondary(context),
+            tooltip: 'Transcript',
+            onPressed: () => _showTranscript(current),
+          ),
           // Toggle article text
           IconButton(
             icon: Icon(
@@ -511,6 +531,37 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── Album art (image uploads only) ─────────────────────
+                  if (current.hasImage) ...[
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(GVRadius.lg),
+                      child: Image.network(
+                        current.imageUrl,
+                        width: double.infinity,
+                        height: 200,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                        loadingBuilder: (_, child, progress) {
+                          if (progress == null) return child;
+                          return Container(
+                            height: 200,
+                            decoration: BoxDecoration(
+                              color: GVColors.bgTertiary(context),
+                              borderRadius: BorderRadius.circular(GVRadius.lg),
+                            ),
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: GVColors.accent(context),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
                   // Category chip
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1002,6 +1053,185 @@ class _ControlButton extends StatelessWidget {
       ),
       iconSize: size,
       onPressed: enabled ? onTap : null,
+    );
+  }
+}
+
+// ── Transcript / Lyrics sheet ─────────────────────────────────────────────────
+
+class _TranscriptSheet extends StatefulWidget {
+  final NewspaperArticle article;
+  final AudioPlayer player;
+
+  const _TranscriptSheet({required this.article, required this.player});
+
+  @override
+  State<_TranscriptSheet> createState() => _TranscriptSheetState();
+}
+
+class _TranscriptSheetState extends State<_TranscriptSheet> {
+  late final List<String> _sentences;
+  final Map<int, GlobalKey> _keys = {};
+  int _activeIdx = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _sentences = _split(widget.article.content);
+  }
+
+  List<String> _split(String text) => text
+      .split(RegExp(r'(?<=[।.!?\n])\s+'))
+      .map((s) => s.trim())
+      .where((s) => s.length > 5)
+      .toList();
+
+  int _indexAt(Duration pos, Duration? dur) {
+    if (dur == null || dur.inMilliseconds == 0 || _sentences.isEmpty) return 0;
+    final totalChars = _sentences.fold(0, (s, e) => s + e.length);
+    if (totalChars == 0) return 0;
+    final ratio = (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0);
+    int cum = 0;
+    for (int i = 0; i < _sentences.length; i++) {
+      cum += _sentences[i].length;
+      if (cum / totalChars >= ratio) return i;
+    }
+    return _sentences.length - 1;
+  }
+
+  void _scrollTo(int idx) {
+    final ctx = _keys[idx]?.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+        alignment: 0.35,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.87,
+      maxChildSize: 0.95,
+      minChildSize: 0.45,
+      expand: false,
+      builder: (_, scrollCtrl) {
+        return StreamBuilder<Duration>(
+          stream: widget.player.positionStream,
+          builder: (_, posSnap) {
+            return StreamBuilder<Duration?>(
+              stream: widget.player.durationStream,
+              builder: (_, durSnap) {
+                final pos = posSnap.data ?? Duration.zero;
+                final dur = durSnap.data;
+                final newIdx = _indexAt(pos, dur);
+                if (newIdx != _activeIdx) {
+                  _activeIdx = newIdx;
+                  WidgetsBinding.instance.addPostFrameCallback((_) => _scrollTo(newIdx));
+                }
+
+                return Column(
+                  children: [
+                    // Handle bar
+                    Container(
+                      margin: const EdgeInsets.only(top: 12, bottom: 4),
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: GVColors.borderSecondary(context),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                      child: Row(
+                        children: [
+                          Icon(Icons.lyrics_outlined,
+                              size: 16, color: GVColors.accent(context)),
+                          const SizedBox(width: 8),
+                          Text('Transcript',
+                              style: GVTypography.heading(context)),
+                          const Spacer(),
+                          Text(
+                            widget.article.title,
+                            style: GVTypography.small(context),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView.builder(
+                        controller: scrollCtrl,
+                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+                        itemCount: _sentences.length,
+                        itemBuilder: (ctx, i) {
+                          _keys[i] ??= GlobalKey();
+                          final isActive = i == _activeIdx;
+                          final isPast = i < _activeIdx;
+                          return GestureDetector(
+                            onTap: () {
+                              // Seek to approximate position on tap
+                              final dur = widget.player.duration;
+                              if (dur != null) {
+                                final totalChars = _sentences.fold(0, (s, e) => s + e.length);
+                                int cum = 0;
+                                for (int j = 0; j < i; j++) cum += _sentences[j].length;
+                                final ratio = totalChars > 0 ? cum / totalChars : 0.0;
+                                widget.player.seek(
+                                  Duration(milliseconds: (dur.inMilliseconds * ratio).round()),
+                                );
+                              }
+                            },
+                            child: Container(
+                              key: _keys[i],
+                              margin: const EdgeInsets.only(bottom: 18),
+                              padding: isActive
+                                  ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
+                                  : EdgeInsets.zero,
+                              decoration: isActive
+                                  ? BoxDecoration(
+                                      color: GVColors.accentBg(context),
+                                      borderRadius: BorderRadius.circular(GVRadius.sm),
+                                      border: Border(
+                                        left: BorderSide(
+                                          color: GVColors.accent(context),
+                                          width: 3,
+                                        ),
+                                      ),
+                                    )
+                                  : null,
+                              child: Text(
+                                _sentences[i],
+                                style: GVTypography.reader(context).copyWith(
+                                  fontSize: isActive ? 17 : 15,
+                                  fontWeight: isActive
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                  color: isActive
+                                      ? GVColors.textPrimary(context)
+                                      : isPast
+                                          ? GVColors.textTertiary(context)
+                                          : GVColors.textSecondary(context),
+                                  height: 1.65,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 }

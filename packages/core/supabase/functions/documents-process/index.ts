@@ -23,7 +23,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// ── 18-category detection ────────────────────────────────────────────────────
+// ── Category detection (regex fallback) ──────────────────────────────────────
 
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /అంతర్జాతీయ|విదేశ|international|global|UN\b|usa|america|china|europe|world news/i, label: "International" },
@@ -78,12 +78,10 @@ interface ArticleSegment {
 function segmentArticles(text: string, filename: string): ArticleSegment[] {
   const articles: ArticleSegment[] = [];
 
-  // Strategy 1: markdown ## or # headers
   if (/^#{1,3}\s+.+/m.test(text)) {
     const lines = text.split("\n");
     let currentTitle = "";
     let currentLines: string[] = [];
-
     for (const line of lines) {
       const headerMatch = line.match(/^(#{1,3})\s+(.+)/);
       if (headerMatch) {
@@ -103,7 +101,6 @@ function segmentArticles(text: string, filename: string): ArticleSegment[] {
     }
   }
 
-  // Strategy 2: blank-line paragraph segmentation
   if (articles.length < 2) {
     articles.length = 0;
     const paragraphs = text.split(/\n\n+/).map((p) => p.trim()).filter((p) => p.length > 100);
@@ -120,7 +117,6 @@ function segmentArticles(text: string, filename: string): ArticleSegment[] {
     }
   }
 
-  // Fallback: whole text as one article
   if (articles.length === 0) {
     const fallbackTitle = text.split("\n").find((l) => l.trim().length > 5)
       ?.replace(/^#+\s*/, "").trim() ?? filename.replace(/\.[^.]+$/, "");
@@ -166,6 +162,93 @@ async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unkno
   return best;
 }
 
+// ── Gemini refinement: OCR correction + document classification ───────────────
+
+interface GeminiRefinement {
+  documentType: string;
+  language: string;
+  readingStyle: string;
+  correctedText: string;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+async function refineWithGemini(
+  ocrText: string,
+  fileBuffer: Uint8Array,
+  mimeType: string,
+  geminiKey: string,
+): Promise<GeminiRefinement> {
+  const isDisplayable = mimeType.startsWith("image/") || mimeType === "application/pdf";
+  const parts: unknown[] = [];
+
+  // Include the original file as vision context if it's reasonably sized
+  if (isDisplayable && fileBuffer.length < 15 * 1024 * 1024) {
+    parts.push({ inlineData: { mimeType, data: bytesToBase64(fileBuffer) } });
+  }
+
+  const prompt = `You are analyzing a document${parts.length > 0 ? " (image/PDF provided above)" : ""} and its OCR-extracted text.
+
+Perform these tasks:
+1. Classify the document type. Choose ONE: "newspaper", "sloka", "mantra", "book", "invitation", "certificate", "letter", or "other"
+2. Detect the primary language: "te" (Telugu), "sa" (Sanskrit), "hi" (Hindi), "en" (English), or "mixed"
+3. Choose reading style for text-to-speech. Choose ONE:
+   - "news_anchor"     → for news, articles, general content
+   - "devotional_slow" → for slokas, stotras, bhajans, devotional poetry
+   - "mantra_clear"    → for mantras, Vedic text, Sanskrit ritual text
+   - "normal"          → for books, letters, certificates, other
+4. Fix OCR errors in the text below (misrecognized Telugu/Sanskrit/Hindi characters, broken words from column splits, stray numbers/symbols that should be letters). Return the full corrected text — do NOT summarize or shorten it.
+
+OCR Text (may contain errors):
+${ocrText.slice(0, 8000)}
+
+Return ONLY valid JSON with no markdown fences:
+{
+  "documentType": "newspaper",
+  "language": "te",
+  "readingStyle": "news_anchor",
+  "correctedText": "..."
+}`;
+
+  parts.push({ text: prompt });
+
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+          maxOutputTokens: 8192,
+        },
+      }),
+      signal: AbortSignal.timeout(45_000),
+    },
+  );
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Gemini HTTP ${resp.status}: ${errText.slice(0, 100)}`);
+  }
+
+  const data = await resp.json() as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  console.log(`[stage2] Gemini result: type=${JSON.parse(raw).documentType ?? "?"} style=${JSON.parse(raw).readingStyle ?? "?"}`);
+  return JSON.parse(raw) as GeminiRefinement;
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -177,6 +260,8 @@ Deno.serve(async (req) => {
   try {
     const SARVAM = Deno.env.get("SARVAM_API_KEY");
     if (!SARVAM) return json({ error: "config_missing", message: "SARVAM_API_KEY not configured" }, 500);
+
+    const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -251,11 +336,30 @@ Deno.serve(async (req) => {
       extractedText = `Document: ${originalName}`;
     }
 
-    // ── Stage 2: Clean ─────────────────────────────────────────────────────
-    const cleaned = cleanText(extractedText);
+    // ── Stage 2: Gemini — OCR correction + document classification ─────────
+    let documentType = "newspaper";
+    let readingStyle = "news_anchor";
+    let refinedText = cleanText(extractedText);
+
+    if (GEMINI_KEY && extractedText.length > 20) {
+      try {
+        console.log("[stage2] Refining with Gemini...");
+        const result = await refineWithGemini(extractedText, buffer, file.type || "image/jpeg", GEMINI_KEY);
+        documentType = result.documentType || "newspaper";
+        readingStyle = result.readingStyle || "news_anchor";
+        if (result.correctedText && result.correctedText.length > 50) {
+          refinedText = cleanText(result.correctedText);
+          console.log(`[stage2] Corrected: ${extractedText.length} → ${refinedText.length} chars`);
+        }
+      } catch (e) {
+        console.warn("[stage2] Gemini refinement failed, using raw OCR:", (e as Error).message);
+      }
+    } else {
+      console.log("[stage2] Skipping Gemini (no key or too short)");
+    }
 
     // ── Stage 3: Segment into articles ─────────────────────────────────────
-    const segments = segmentArticles(cleaned, originalName);
+    const segments = segmentArticles(refinedText, originalName);
 
     const articles = segments.map((seg, i) => {
       const categoryInput = seg.title + " " + seg.content.slice(0, 300);
@@ -268,26 +372,29 @@ Deno.serve(async (req) => {
         content: seg.content,
         preview,
         category,
+        documentType,
+        readingStyle,
         estimatedDurationSeconds: duration,
         audioUrl: null,
         page: 1,
       };
     });
 
-    // ── Persist extracted text to DB ───────────────────────────────────────
+    // ── Persist to DB ───────────────────────────────────────────────────────
     await supabase.from("extracted_texts").insert({
       filename: originalName,
       mime_type: file.type || null,
       file_size: file.size,
-      text: cleaned,
+      text: refinedText,
       language: "te",
       source: "ocr",
-      confidence: 0.8,
+      confidence: GEMINI_KEY ? 0.95 : 0.8,
     }).then(({ error }) => {
       if (error) console.warn("[db] insert error:", error.message);
     });
 
     const processingTime = Math.round((Date.now() - startedAt) / 1000);
+    console.log(`[done] ${articles.length} articles, type=${documentType}, style=${readingStyle}, ${processingTime}s`);
 
     return json({
       ok: true,
@@ -301,8 +408,10 @@ Deno.serve(async (req) => {
       summary: {
         totalArticles: articles.length,
         processingTime,
+        documentType,
+        readingStyle,
       },
-      models: { ocr: "sarvam-ocr" },
+      models: { ocr: "sarvam-ocr", refinement: GEMINI_KEY ? "gemini-2.5-flash" : "none" },
       subscription: { tier, active: true },
       limits: { maxPages: cap, totalPages: 1, processedPages: 1, truncated: false },
     });

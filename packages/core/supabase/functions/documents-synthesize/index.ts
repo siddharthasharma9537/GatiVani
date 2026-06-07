@@ -132,6 +132,21 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
+// ── Reading-style prompt wrapper ──────────────────────────────────────────────
+
+function styledText(text: string, readingStyle?: string): string {
+  switch (readingStyle) {
+    case "news_anchor":
+      return `Read the following as a professional Telugu news anchor. Speak clearly and at an engaging pace:\n\n${text}`;
+    case "devotional_slow":
+      return `Read the following devotional content with reverence and calm. Speak slowly and clearly, pausing naturally between sentences:\n\n${text}`;
+    case "mantra_clear":
+      return `Read the following Sanskrit text very slowly and clearly. Pronounce each syllable distinctly with proper pausing between words:\n\n${text}`;
+    default:
+      return text;
+  }
+}
+
 // ── Gemini 2.5 Flash TTS ──────────────────────────────────────────────────────
 // Returns raw PCM int16 LE at 24 kHz mono — no chunking needed.
 
@@ -139,11 +154,13 @@ async function synthesizeWithGemini(
   text: string,
   speaker: string,
   geminiKey: string,
+  readingStyle?: string,
 ): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
   const voiceName = geminiVoice(speaker);
   const GEMINI_SAMPLE_RATE = 24000;
+  const ttsInput = styledText(text, readingStyle);
 
-  console.log(`[gemini-tts] ${text.length} chars, voice=${voiceName}`);
+  console.log(`[gemini-tts] ${text.length} chars, voice=${voiceName}, style=${readingStyle ?? "default"}`);
 
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${geminiKey}`,
@@ -151,7 +168,7 @@ async function synthesizeWithGemini(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text }] }],
+        contents: [{ parts: [{ text: ttsInput }] }],
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: {
@@ -196,7 +213,11 @@ async function synthesizeWithSarvam(
   langCode: string,
   sampleRate: number,
   sarvamKey: string,
+  readingStyle?: string,
 ): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
+  const pace = readingStyle === "devotional_slow" ? 0.85
+    : readingStyle === "mantra_clear" ? 0.75
+    : 1.1;
   const sarvam = new SarvamAIClient({ apiSubscriptionKey: sarvamKey });
   const chunks = chunkText(text);
   console.log(`[sarvam-tts] ${text.length} chars → ${chunks.length} chunk(s), voice=${speaker}`);
@@ -209,7 +230,7 @@ async function synthesizeWithSarvam(
       text: chunk,
       target_language_code: langCode,
       speaker,
-      pace: 1.1,
+      pace,
       speech_sample_rate: sampleRate,
       enable_preprocessing: true,
       model: "bulbul:v3",
@@ -258,6 +279,7 @@ Deno.serve(async (req) => {
     const langKey = (body.language || "te-IN").split("-")[0];
     const cfg = LANGUAGE_CONFIG[langKey] ?? LANGUAGE_CONFIG.te;
     const speaker = (body.speaker as string | undefined) || cfg.speaker;
+    const readingStyle = (body.readingStyle as string | undefined) || undefined;
 
     // Determine provider from tier header; default "free" → Gemini 2.5
     const tier = (req.headers.get("x-subscription-tier") || "free").toLowerCase();
@@ -283,10 +305,10 @@ Deno.serve(async (req) => {
     let chunks: number;
 
     if (effectiveProvider === "gemini-2.5") {
-      ({ wavBytes, durationSec, chunks } = await synthesizeWithGemini(text, speaker, GEMINI_KEY!));
+      ({ wavBytes, durationSec, chunks } = await synthesizeWithGemini(text, speaker, GEMINI_KEY!, readingStyle));
     } else {
       ({ wavBytes, durationSec, chunks } = await synthesizeWithSarvam(
-        text, speaker, cfg.code, cfg.sampleRate, SARVAM_KEY!,
+        text, speaker, cfg.code, cfg.sampleRate, SARVAM_KEY!, readingStyle,
       ));
     }
 
