@@ -339,6 +339,52 @@ class _ArticleList extends StatelessWidget {
   }
 }
 
+// ── Category thumbnail ────────────────────────────────────────────────────────
+
+class _CategoryThumb extends StatelessWidget {
+  final String category;
+  const _CategoryThumb({required this.category});
+
+  static IconData _icon(String cat) {
+    switch (cat.toLowerCase()) {
+      case 'sports':                return Icons.sports_cricket_outlined;
+      case 'business':              return Icons.trending_up_outlined;
+      case 'entertainment':         return Icons.movie_outlined;
+      case 'health':                return Icons.health_and_safety_outlined;
+      case 'education':             return Icons.school_outlined;
+      case 'editorial':             return Icons.edit_note_outlined;
+      case 'environment':           return Icons.park_outlined;
+      case 'judiciary':             return Icons.balance_outlined;
+      case 'international':         return Icons.public_outlined;
+      case 'national politics':     return Icons.account_balance_outlined;
+      case 'state politics':        return Icons.how_to_vote_outlined;
+      case 'parliamentary affairs': return Icons.gavel_outlined;
+      case 'state schemes':         return Icons.card_giftcard_outlined;
+      case 'ministry news':         return Icons.domain_outlined;
+      case 'trending news':         return Icons.trending_up_outlined;
+      case 'viral news':            return Icons.share_outlined;
+      case 'prominent persons':     return Icons.person_outline_rounded;
+      case 'government':            return Icons.account_balance_outlined;
+      default:                      return Icons.article_outlined;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = GVCategory.color(category);
+    return Container(
+      width: 48,
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(GVRadius.md),
+      ),
+      child: Center(
+        child: Icon(_icon(category), size: 22, color: color),
+      ),
+    );
+  }
+}
+
 // ── Single article card ───────────────────────────────────────────────────────
 
 class _ArticleCard extends StatelessWidget {
@@ -362,149 +408,184 @@ class _ArticleCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final catColor = GVCategory.color(article.category);
     final isSelected = article.isSelected;
+    final dimmed = wouldExceed && !isSelected;
 
     return InkWell(
-      onTap: wouldExceed && !isSelected ? null : onToggle,
+      onTap: dimmed ? null : onToggle,
       borderRadius: BorderRadius.circular(GVRadius.lg),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isSelected ? GVColors.accentBg(context) : GVColors.bgPrimary(context),
+          color: isSelected
+              ? GVColors.accentBg(context)
+              : GVColors.bgPrimary(context),
           border: Border.all(
-            color: isSelected ? GVColors.accent(context) : GVColors.borderTertiary(context),
+            color: isSelected
+                ? GVColors.accent(context)
+                : GVColors.borderTertiary(context),
             width: isSelected ? 1.5 : 0.5,
           ),
           borderRadius: BorderRadius.circular(GVRadius.lg),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Category accent bar
-            Container(
-              width: 4,
-              height: 80,
-              margin: const EdgeInsets.only(left: 0),
-              decoration: BoxDecoration(
-                color: catColor,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(GVRadius.lg),
-                  bottomLeft: Radius.circular(GVRadius.lg),
-                ),
-              ),
-            ),
-            // Checkbox
-            Padding(
-              padding: const EdgeInsets.only(left: 6, top: 10, right: 0),
-              child: Checkbox(
-                value: isSelected,
-                onChanged: (wouldExceed && !isSelected) ? null : (_) => onToggle(),
-                activeColor: GVColors.accent(context),
-                side: BorderSide(color: GVColors.borderSecondary(context)),
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
-            // Content
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 12, 4, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Category chip
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: catColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(GVRadius.sm),
-                      ),
-                      child: Text(
-                        article.category,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: catColor,
-                          letterSpacing: 0.2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    // Title
-                    Text(
-                      article.title,
-                      style: GVTypography.body(context).copyWith(
-                        fontWeight: FontWeight.w500,
-                        color: isSelected
-                            ? GVColors.accent(context)
-                            : GVColors.textPrimary(context),
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    // Preview
-                    Text(
-                      article.preview,
-                      style: GVTypography.small(context),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 6),
-                    // Duration + exceed warning
-                    Row(
-                      children: [
-                        Icon(Icons.access_time_rounded,
-                            size: 12, color: GVColors.textTertiary(context)),
-                        const SizedBox(width: 3),
-                        Text(
-                          formatSeconds(article.estimatedDurationSeconds),
-                          style: GVTypography.label(context),
-                        ),
-                        if (wouldExceed && !isSelected) ...[
-                          const SizedBox(width: 8),
-                          Icon(Icons.warning_amber_rounded,
-                              size: 12, color: GVColors.warning(context)),
+        child: Opacity(
+          opacity: dimmed ? 0.45 : 1.0,
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── Category thumbnail ──────────────────────────────────────
+                _CategoryThumb(category: article.category),
+                const SizedBox(width: 12),
+
+                // ── Article content ─────────────────────────────────────────
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Category chip + duration row
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: catColor.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(GVRadius.sm),
+                            ),
+                            child: Text(
+                              article.category,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: catColor,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(Icons.access_time_rounded,
+                              size: 11,
+                              color: GVColors.textTertiary(context)),
                           const SizedBox(width: 3),
                           Text(
-                            'Exceeds limit',
+                            formatSeconds(article.estimatedDurationSeconds),
                             style: GVTypography.label(context)
-                                .copyWith(color: GVColors.warning(context)),
+                                .copyWith(fontSize: 11),
                           ),
+                          if (wouldExceed && !isSelected) ...[
+                            const SizedBox(width: 6),
+                            Icon(Icons.warning_amber_rounded,
+                                size: 12, color: GVColors.warning(context)),
+                          ],
                         ],
+                      ),
+                      const SizedBox(height: 5),
+
+                      // Title
+                      Text(
+                        article.title,
+                        style: GVTypography.body(context).copyWith(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          height: 1.4,
+                          color: isSelected
+                              ? GVColors.accent(context)
+                              : GVColors.textPrimary(context),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+
+                      // Preview
+                      Text(
+                        article.preview,
+                        style: GVTypography.small(context)
+                            .copyWith(height: 1.4),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+
+                      // Downloaded badge
+                      if (article.isDownloaded) ...[
+                        const SizedBox(height: 5),
+                        Row(
+                          children: [
+                            Icon(Icons.offline_pin_rounded,
+                                size: 11,
+                                color: GVColors.success(context)),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Saved offline',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: GVColors.success(context),
+                                  fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
                       ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // ── Right controls ──────────────────────────────────────────
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Select toggle
+                    GestureDetector(
+                      onTap: dimmed ? null : onToggle,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 130),
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isSelected
+                              ? GVColors.accent(context)
+                              : Colors.transparent,
+                          border: Border.all(
+                            color: isSelected
+                                ? GVColors.accent(context)
+                                : GVColors.borderSecondary(context),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: isSelected
+                            ? const Icon(Icons.check_rounded,
+                                size: 14, color: Colors.white)
+                            : null,
+                      ),
                     ),
+                    // Download button
+                    isDownloading
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: GVColors.accent(context),
+                            ),
+                          )
+                        : GestureDetector(
+                            onTap: article.isDownloaded ? null : onDownload,
+                            child: Icon(
+                              article.isDownloaded
+                                  ? Icons.download_done_rounded
+                                  : Icons.download_outlined,
+                              size: 18,
+                              color: article.isDownloaded
+                                  ? GVColors.success(context)
+                                  : GVColors.textTertiary(context),
+                            ),
+                          ),
                   ],
                 ),
-              ),
+              ],
             ),
-            // Per-article download button
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 12, 10, 0),
-              child: isDownloading
-                  ? SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: GVColors.accent(context),
-                      ),
-                    )
-                  : IconButton(
-                      icon: Icon(
-                        article.isDownloaded
-                            ? Icons.download_done_rounded
-                            : Icons.download_outlined,
-                        size: 18,
-                        color: article.isDownloaded
-                            ? GVColors.success(context)
-                            : GVColors.textTertiary(context),
-                      ),
-                      tooltip: article.isDownloaded ? 'Saved offline' : 'Download',
-                      onPressed: article.isDownloaded ? null : onDownload,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-            ),
-          ],
+          ),
         ),
       ),
     );

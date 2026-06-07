@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// GatiVani design system — Claude-aligned
 /// Flat, adaptive light/dark, no gradients, no glow
@@ -384,6 +385,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
+      fontFamily: GoogleFonts.notoSansTelugu().fontFamily,
       colorScheme: colorScheme,
       scaffoldBackgroundColor:
           isDark ? const Color(0xFF1A1A18) : const Color(0xFFF5F4F0),

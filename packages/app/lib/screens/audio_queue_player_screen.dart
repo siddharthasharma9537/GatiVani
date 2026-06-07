@@ -245,14 +245,93 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
   // ── Controls ────────────────────────────────────────────────────────────────
 
   void _seekBack() {
-    final target = _player.position - const Duration(seconds: 10);
+    final target = _player.position - const Duration(seconds: 15);
     _player.seek(target < Duration.zero ? Duration.zero : target);
   }
 
   void _seekForward() {
     final dur = _player.duration ?? Duration.zero;
-    final target = _player.position + const Duration(seconds: 30);
+    final target = _player.position + const Duration(seconds: 15);
     _player.seek(target > dur ? dur : target);
+  }
+
+  // ── Summary bullets ─────────────────────────────────────────────────────────
+
+  List<String> _summaryBullets(String preview) {
+    if (preview.trim().isEmpty) return [];
+    final parts = preview
+        .trim()
+        .split(RegExp(r'[।\.!?]+\s+'))
+        .map((s) => s.trim())
+        .where((s) => s.length > 15)
+        .take(3)
+        .toList();
+    return parts.isNotEmpty ? parts : [preview.trim()];
+  }
+
+  Widget _buildSummaryCard(NewspaperArticle article) {
+    final bullets = _summaryBullets(article.preview);
+    if (bullets.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: GVColors.accentBg(context),
+        borderRadius: BorderRadius.circular(GVRadius.lg),
+        border: Border.all(
+          color: GVColors.accent(context).withOpacity(0.25),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded,
+                  size: 13, color: GVColors.accent(context)),
+              const SizedBox(width: 6),
+              Text(
+                'ముఖ్య అంశాలు',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: GVColors.accent(context),
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...bullets.map(
+            (b) => Padding(
+              padding: const EdgeInsets.only(bottom: 5),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('• ',
+                      style: TextStyle(
+                          color: GVColors.accent(context),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13)),
+                  Expanded(
+                    child: Text(
+                      b,
+                      style: GVTypography.body(context).copyWith(
+                        fontSize: 13,
+                        height: 1.5,
+                        color: GVColors.textPrimary(context),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _previous() {
@@ -388,9 +467,10 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
                     onNext: _currentIndex + 1 < _articles.length ? _advance : null,
                   ),
 
-                  // ── Full article text ───────────────────────────────────────
+                  // ── Summary card + full article text ───────────────────────
                   if (_showText) ...[
                     const SizedBox(height: 20),
+                    _buildSummaryCard(current),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
@@ -687,20 +767,20 @@ class _PlayerCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              IconButton(
-                icon: Icon(Icons.skip_previous_rounded,
-                    color: onPrevious != null
-                        ? GVColors.textPrimary(context)
-                        : GVColors.textTertiary(context)),
-                iconSize: 28,
-                onPressed: onPrevious,
+              // Prev article
+              _ControlButton(
+                icon: Icons.skip_previous_rounded,
+                size: 26,
+                enabled: onPrevious != null,
+                onTap: onPrevious ?? () {},
               ),
-              IconButton(
-                icon: Icon(Icons.replay_10_rounded,
-                    color: GVColors.textPrimary(context)),
-                iconSize: 28,
-                onPressed: onSeekBack,
+              // Skip back 15s
+              _SkipButton(
+                icon: Icons.replay_rounded,
+                label: '15s',
+                onTap: onSeekBack,
               ),
+              // Play / pause
               StreamBuilder<PlayerState>(
                 stream: player.playerStateStream,
                 builder: (_, snap) {
@@ -711,17 +791,17 @@ class _PlayerCard extends StatelessWidget {
                               ProcessingState.buffering ||
                           status == ArticleAudioStatus.loading;
                   return Container(
-                    width: 56,
-                    height: 56,
+                    width: 60,
+                    height: 60,
                     decoration: BoxDecoration(
                       color: GVColors.accent(context),
                       shape: BoxShape.circle,
                     ),
                     child: loading
                         ? const Padding(
-                            padding: EdgeInsets.all(16),
+                            padding: EdgeInsets.all(18),
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
+                                strokeWidth: 2.5, color: Colors.white),
                           )
                         : IconButton(
                             icon: Icon(
@@ -730,31 +810,96 @@ class _PlayerCard extends StatelessWidget {
                                   : Icons.play_arrow_rounded,
                               color: Colors.white,
                             ),
-                            iconSize: 28,
+                            iconSize: 30,
                             onPressed: () =>
                                 playing ? player.pause() : player.play(),
                           ),
                   );
                 },
               ),
-              IconButton(
-                icon: Icon(Icons.forward_30_rounded,
-                    color: GVColors.textPrimary(context)),
-                iconSize: 28,
-                onPressed: onSeekForward,
+              // Skip forward 15s
+              _SkipButton(
+                icon: Icons.forward_rounded,
+                label: '15s',
+                onTap: onSeekForward,
               ),
-              IconButton(
-                icon: Icon(Icons.skip_next_rounded,
-                    color: onNext != null
-                        ? GVColors.textPrimary(context)
-                        : GVColors.textTertiary(context)),
-                iconSize: 28,
-                onPressed: onNext,
+              // Next article
+              _ControlButton(
+                icon: Icons.skip_next_rounded,
+                size: 26,
+                enabled: onNext != null,
+                onTap: onNext ?? () {},
               ),
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Player control buttons ────────────────────────────────────────────────────
+
+class _SkipButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _SkipButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = GVColors.textPrimary(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 28, color: color),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: color,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ControlButton extends StatelessWidget {
+  final IconData icon;
+  final double size;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _ControlButton({
+    required this.icon,
+    required this.size,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(
+        icon,
+        color: enabled
+            ? GVColors.textPrimary(context)
+            : GVColors.textTertiary(context),
+      ),
+      iconSize: size,
+      onPressed: enabled ? onTap : null,
     );
   }
 }
