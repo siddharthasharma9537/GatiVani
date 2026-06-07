@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../design/app_theme.dart';
 import '../models/newspaper_article.dart';
+import '../services/audio_download_service.dart';
 import 'audio_queue_player_screen.dart';
 
 class NewspaperBrowseScreen extends StatefulWidget {
@@ -22,6 +24,7 @@ class _NewspaperBrowseScreenState extends State<NewspaperBrowseScreen>
   late TabController _tabController;
   late List<String> _categories;
   late List<NewspaperArticle> _articles;
+  final Set<String> _downloadingIds = {};
 
   int get _selectedSeconds =>
       _articles.where((a) => a.isSelected).fold(0, (s, a) => s + a.estimatedDurationSeconds);
@@ -81,15 +84,26 @@ class _NewspaperBrowseScreenState extends State<NewspaperBrowseScreen>
   }
 
   void _downloadAll() {
+    if (kIsWeb) {
+      _snack('Downloads are not supported in the web version.');
+      return;
+    }
+    final toDownload = _selected.where((a) => !a.isDownloaded).toList();
+    if (toDownload.isEmpty) {
+      _snack('All selected articles are already downloaded.');
+      return;
+    }
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GVColors.bgPrimary(context),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(GVRadius.xl)),
-        title: Text('Download selected articles', style: GVTypography.heading(context)),
+        title: Text('Download ${toDownload.length} article${toDownload.length == 1 ? '' : 's'}',
+            style: GVTypography.heading(context)),
         content: Text(
-          'This will generate audio for ${_selected.length} article${_selected.length == 1 ? '' : 's'} '
-          '(${_formatSeconds(_selectedSeconds)}). Downloads work over WiFi and mobile data.',
+          'Audio will be generated and saved offline '
+          '(${_formatSeconds(toDownload.fold(0, (s, a) => s + a.estimatedDurationSeconds))}). '
+          'This uses your data connection.',
           style: GVTypography.bodySecondary(context),
         ),
         actions: [
@@ -100,13 +114,66 @@ class _NewspaperBrowseScreenState extends State<NewspaperBrowseScreen>
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              _snack('Download queued for ${_selected.length} articles.');
+              _runDownloads(toDownload);
             },
             child: Text('Download', style: TextStyle(color: GVColors.accent(context))),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _downloadArticle(NewspaperArticle article) async {
+    if (kIsWeb) {
+      _snack('Downloads are not supported in the web version.');
+      return;
+    }
+    if (article.isDownloaded || _downloadingIds.contains(article.id)) return;
+    setState(() => _downloadingIds.add(article.id));
+    try {
+      final uri = await AudioDownloadService().downloadArticle(article, 'priya');
+      final idx = _articles.indexWhere((a) => a.id == article.id);
+      if (idx >= 0 && mounted) {
+        setState(() {
+          _articles[idx] = _articles[idx].copyWith(
+            audioUrl: uri,
+            isDownloaded: true,
+            audioStatus: ArticleAudioStatus.ready,
+          );
+        });
+      }
+    } catch (e) {
+      if (mounted) _snack('Download failed: ${article.title}');
+    } finally {
+      if (mounted) setState(() => _downloadingIds.remove(article.id));
+    }
+  }
+
+  Future<void> _runDownloads(List<NewspaperArticle> articles) async {
+    setState(() {
+      for (final a in articles) _downloadingIds.add(a.id);
+    });
+    int success = 0;
+    await Future.wait(articles.map((article) async {
+      try {
+        final uri = await AudioDownloadService().downloadArticle(article, 'priya');
+        final idx = _articles.indexWhere((a) => a.id == article.id);
+        if (idx >= 0 && mounted) {
+          setState(() {
+            _articles[idx] = _articles[idx].copyWith(
+              audioUrl: uri,
+              isDownloaded: true,
+              audioStatus: ArticleAudioStatus.ready,
+            );
+            _downloadingIds.remove(article.id);
+          });
+          success++;
+        }
+      } catch (_) {
+        if (mounted) setState(() => _downloadingIds.remove(article.id));
+      }
+    }));
+    if (mounted) _snack('Downloaded $success of ${articles.length} articles.');
   }
 
   void _snack(String msg) {
@@ -193,8 +260,8 @@ class _NewspaperBrowseScreenState extends State<NewspaperBrowseScreen>
                   selectedSeconds: _selectedSeconds,
                   isUnlimited: TierConfig.isUnlimited(widget.tier),
                   formatSeconds: _formatSeconds,
-                  onDownload: (article) =>
-                      _snack('Download queued: ${article.title}'),
+                  onDownload: _downloadArticle,
+                  downloadingIds: _downloadingIds,
                 );
               }).toList(),
             ),
@@ -222,6 +289,7 @@ class _ArticleList extends StatelessWidget {
   final List<NewspaperArticle> allArticles;
   final void Function(NewspaperArticle) onToggle;
   final void Function(NewspaperArticle) onDownload;
+  final Set<String> downloadingIds;
   final int tierLimitSeconds;
   final int selectedSeconds;
   final bool isUnlimited;
@@ -232,6 +300,7 @@ class _ArticleList extends StatelessWidget {
     required this.allArticles,
     required this.onToggle,
     required this.onDownload,
+    required this.downloadingIds,
     required this.tierLimitSeconds,
     required this.selectedSeconds,
     required this.isUnlimited,
@@ -260,6 +329,7 @@ class _ArticleList extends StatelessWidget {
         return _ArticleCard(
           article: article,
           wouldExceed: wouldExceed,
+          isDownloading: downloadingIds.contains(article.id),
           onToggle: () => onToggle(article),
           onDownload: () => onDownload(article),
           formatSeconds: formatSeconds,
@@ -274,6 +344,7 @@ class _ArticleList extends StatelessWidget {
 class _ArticleCard extends StatelessWidget {
   final NewspaperArticle article;
   final bool wouldExceed;
+  final bool isDownloading;
   final VoidCallback onToggle;
   final VoidCallback onDownload;
   final String Function(int) formatSeconds;
@@ -281,6 +352,7 @@ class _ArticleCard extends StatelessWidget {
   const _ArticleCard({
     required this.article,
     required this.wouldExceed,
+    required this.isDownloading,
     required this.onToggle,
     required this.onDownload,
     required this.formatSeconds,
@@ -405,20 +477,32 @@ class _ArticleCard extends StatelessWidget {
               ),
             ),
             // Per-article download button
-            IconButton(
-              icon: Icon(
-                article.isDownloaded
-                    ? Icons.download_done_rounded
-                    : Icons.download_outlined,
-                size: 18,
-                color: article.isDownloaded
-                    ? GVColors.success(context)
-                    : GVColors.textTertiary(context),
-              ),
-              tooltip: article.isDownloaded ? 'Downloaded' : 'Download',
-              onPressed: article.isDownloaded ? null : onDownload,
+            Padding(
               padding: const EdgeInsets.fromLTRB(4, 12, 10, 0),
-              constraints: const BoxConstraints(),
+              child: isDownloading
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: GVColors.accent(context),
+                      ),
+                    )
+                  : IconButton(
+                      icon: Icon(
+                        article.isDownloaded
+                            ? Icons.download_done_rounded
+                            : Icons.download_outlined,
+                        size: 18,
+                        color: article.isDownloaded
+                            ? GVColors.success(context)
+                            : GVColors.textTertiary(context),
+                      ),
+                      tooltip: article.isDownloaded ? 'Saved offline' : 'Download',
+                      onPressed: article.isDownloaded ? null : onDownload,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
             ),
           ],
         ),

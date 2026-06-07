@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import '../design/app_theme.dart';
 import '../config/api_config.dart';
 import 'upload_content_screen.dart';
-import 'player_screen.dart';
-import '../models/article.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -150,7 +149,10 @@ class _HomeTab extends StatelessWidget {
           const SizedBox(width: 4),
           _IconBtn(
             icon: Icons.settings_outlined,
-            onTap: () {},
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
           ),
         ],
       ),

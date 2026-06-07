@@ -6,9 +6,37 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 import '../config/api_config.dart' show ApiConfig;
 import '../design/app_theme.dart';
 import '../models/newspaper_article.dart';
+import '../services/settings_provider.dart';
+
+// ── Voice catalogue ───────────────────────────────────────────────────────────
+
+class _Voice {
+  final String id;
+  final String label;
+  final String gender;
+  const _Voice(this.id, this.label, this.gender);
+}
+
+const _sarvamVoices = [
+  _Voice('priya',    'Priya',    'Female'),
+  _Voice('neha',     'Neha',     'Female'),
+  _Voice('kavya',    'Kavya',    'Female'),
+  _Voice('shreya',   'Shreya',   'Female'),
+  _Voice('suhani',   'Suhani',   'Female'),
+  _Voice('kavitha',  'Kavitha',  'Female'),
+  _Voice('shubh',    'Shubh',    'Male'),
+  _Voice('aditya',   'Aditya',   'Male'),
+  _Voice('rahul',    'Rahul',    'Male'),
+  _Voice('anand',    'Anand',    'Male'),
+  _Voice('gokul',    'Gokul',    'Male'),
+  _Voice('varun',    'Varun',    'Male'),
+];
+
+// ── Screen ────────────────────────────────────────────────────────────────────
 
 class AudioQueuePlayerScreen extends StatefulWidget {
   final List<NewspaperArticle> articles;
@@ -29,15 +57,19 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
   late final List<NewspaperArticle> _articles;
 
   int _currentIndex = 0;
-  bool _showTranscript = false;
+  bool _showText = true;
   bool _prefetchTriggered = false;
+  String _selectedVoice = 'priya'; // overridden in initState from settings
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<PlayerState>? _stateSub;
 
   @override
   void initState() {
     super.initState();
+    final settings = context.read<SettingsProvider>();
+    _selectedVoice = settings.defaultVoice;
     _player = AudioPlayer();
+    _player.setSpeed(settings.playbackSpeed);
     _articles = List<NewspaperArticle>.from(
       widget.articles.map((a) => a.copyWith()),
     );
@@ -72,7 +104,11 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
           ...ApiConfig.authHeaders,
           'Content-Type': 'application/json',
         },
-        body: jsonEncode({'text': _articles[index].content}),
+        body: jsonEncode({
+          'text': '${_articles[index].title}\n\n${_articles[index].content}',
+          'language': 'te-IN',
+          'speaker': _selectedVoice,
+        }),
       ).timeout(const Duration(seconds: 120));
 
       if (resp.statusCode != 200) throw Exception('TTS HTTP ${resp.statusCode}');
@@ -83,7 +119,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
       final rawUrl = data['audioUrl'] as String?;
       if (rawUrl == null || rawUrl.isEmpty) throw Exception('No audioUrl in response');
 
-      final playableUrl = await _resolveAudioUrl(rawUrl);
+      final playableUrl = await _resolveAudioUrl(rawUrl, index);
 
       setState(() {
         _articles[index] = _articles[index].copyWith(
@@ -92,7 +128,6 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
         );
       });
 
-      // If this is the current article, start playing immediately
       if (index == _currentIndex) {
         await _play(index);
       }
@@ -104,8 +139,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
     }
   }
 
-  /// Converts a data: URL to a file:// path on mobile, passes through on web.
-  Future<String> _resolveAudioUrl(String url) async {
+  Future<String> _resolveAudioUrl(String url, int index) async {
     if (kIsWeb) return url;
     if (!url.startsWith('data:')) return url;
 
@@ -115,7 +149,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
     final bytes = base64Decode(b64);
 
     final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/gativani_article_$_currentIndex.mp3');
+    final file = File('${dir.path}/gativani_article_${index}_$_selectedVoice.wav');
     await file.writeAsBytes(bytes);
     return file.uri.toString();
   }
@@ -130,6 +164,49 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
     } catch (e) {
       debugPrint('[Player] play error: $e');
     }
+  }
+
+  // ── Voice switching ─────────────────────────────────────────────────────────
+
+  void _onVoiceSelected(String voice) {
+    if (voice == _selectedVoice) return;
+    _player.stop();
+    setState(() {
+      _selectedVoice = voice;
+      // Reset all articles so they regenerate with the new voice
+      for (int i = 0; i < _articles.length; i++) {
+        _articles[i] = NewspaperArticle(
+          id: _articles[i].id,
+          title: _articles[i].title,
+          content: _articles[i].content,
+          preview: _articles[i].preview,
+          category: _articles[i].category,
+          estimatedDurationSeconds: _articles[i].estimatedDurationSeconds,
+          page: _articles[i].page,
+          audioStatus: ArticleAudioStatus.none,
+          isDownloaded: _articles[i].isDownloaded,
+          isSelected: _articles[i].isSelected,
+        );
+      }
+    });
+    _loadArticle(_currentIndex);
+  }
+
+  void _showVoicePicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: GVColors.bgPrimary(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _VoicePickerSheet(
+        selectedVoice: _selectedVoice,
+        onVoiceSelected: (v) {
+          Navigator.pop(context);
+          _onVoiceSelected(v);
+        },
+      ),
+    );
   }
 
   // ── Playback events ─────────────────────────────────────────────────────────
@@ -225,13 +302,23 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
         ),
         centerTitle: true,
         actions: [
+          // Voice picker
+          IconButton(
+            icon: const Icon(Icons.record_voice_over_outlined),
+            color: GVColors.textSecondary(context),
+            tooltip: 'Change voice ($_selectedVoice)',
+            onPressed: _showVoicePicker,
+          ),
+          // Toggle article text
           IconButton(
             icon: Icon(
-              _showTranscript ? Icons.subtitles : Icons.subtitles_outlined,
-              color: _showTranscript ? GVColors.accent(context) : GVColors.textSecondary(context),
+              _showText ? Icons.article_rounded : Icons.article_outlined,
+              color: _showText
+                  ? GVColors.accent(context)
+                  : GVColors.textSecondary(context),
             ),
-            tooltip: 'Toggle transcript',
-            onPressed: () => setState(() => _showTranscript = !_showTranscript),
+            tooltip: _showText ? 'Hide article text' : 'Show article text',
+            onPressed: () => setState(() => _showText = !_showText),
           ),
         ],
       ),
@@ -252,20 +339,45 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
                     ),
                     child: Text(
                       current.category,
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: catColor),
+                      style: TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600, color: catColor),
                     ),
                   ),
                   const SizedBox(height: 10),
-                  // Article title
                   Text(current.title, style: GVTypography.title(context)),
                   const SizedBox(height: 6),
-                  Text(
-                    current.estimatedDurationFormatted,
-                    style: GVTypography.small(context),
+                  Row(
+                    children: [
+                      Text(current.estimatedDurationFormatted,
+                          style: GVTypography.small(context)),
+                      const SizedBox(width: 8),
+                      // Active voice badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: GVColors.bgTertiary(context),
+                          borderRadius: BorderRadius.circular(GVRadius.sm),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.record_voice_over_outlined,
+                                size: 11,
+                                color: GVColors.textSecondary(context)),
+                            const SizedBox(width: 3),
+                            Text(
+                              _selectedVoice,
+                              style: GVTypography.label(context)
+                                  .copyWith(fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 24),
 
-                  // ── Player card ───────────────────────────────────────────
+                  // ── Player card ─────────────────────────────────────────────
                   _PlayerCard(
                     player: _player,
                     status: current.audioStatus,
@@ -276,22 +388,26 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
                     onNext: _currentIndex + 1 < _articles.length ? _advance : null,
                   ),
 
-                  // ── Transcript ────────────────────────────────────────────
-                  if (_showTranscript) ...[
+                  // ── Full article text ───────────────────────────────────────
+                  if (_showText) ...[
                     const SizedBox(height: 20),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         color: GVColors.bgPrimary(context),
-                        border: Border.all(color: GVColors.borderTertiary(context), width: 0.5),
+                        border: Border.all(
+                            color: GVColors.borderTertiary(context), width: 0.5),
                         borderRadius: BorderRadius.circular(GVRadius.lg),
                       ),
-                      child: Text(current.content, style: GVTypography.reader(context)),
+                      child: Text(
+                        current.content,
+                        style: GVTypography.reader(context),
+                      ),
                     ),
                   ],
 
-                  // ── Up next ───────────────────────────────────────────────
+                  // ── Up next ─────────────────────────────────────────────────
                   if (upNext.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     Text('Up Next', style: GVTypography.heading(context)),
@@ -305,6 +421,143 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Voice picker sheet ────────────────────────────────────────────────────────
+
+class _VoicePickerSheet extends StatelessWidget {
+  final String selectedVoice;
+  final ValueChanged<String> onVoiceSelected;
+
+  const _VoicePickerSheet({
+    required this.selectedVoice,
+    required this.onVoiceSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final female = _sarvamVoices.where((v) => v.gender == 'Female').toList();
+    final male   = _sarvamVoices.where((v) => v.gender == 'Male').toList();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Handle bar
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: GVColors.borderSecondary(context),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text('Voice', style: GVTypography.heading(context)),
+          Text(
+            'Sarvam Bulbul:v3 · Telugu',
+            style: GVTypography.small(context),
+          ),
+          const SizedBox(height: 20),
+
+          _VoiceGroup(
+            label: 'Female',
+            voices: female,
+            selected: selectedVoice,
+            onSelect: onVoiceSelected,
+          ),
+          const SizedBox(height: 16),
+          _VoiceGroup(
+            label: 'Male',
+            voices: male,
+            selected: selectedVoice,
+            onSelect: onVoiceSelected,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoiceGroup extends StatelessWidget {
+  final String label;
+  final List<_Voice> voices;
+  final String selected;
+  final ValueChanged<String> onSelect;
+
+  const _VoiceGroup({
+    required this.label,
+    required this.voices,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GVTypography.label(context)
+              .copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.5),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: voices.map((v) {
+            final isSelected = v.id == selected;
+            return GestureDetector(
+              onTap: () => onSelect(v.id),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? GVColors.accent(context)
+                      : GVColors.bgSecondary(context),
+                  border: Border.all(
+                    color: isSelected
+                        ? GVColors.accent(context)
+                        : GVColors.borderSecondary(context),
+                    width: isSelected ? 1.5 : 1,
+                  ),
+                  borderRadius: BorderRadius.circular(GVRadius.md),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isSelected) ...[
+                      Icon(Icons.check_rounded,
+                          size: 14, color: Colors.white),
+                      const SizedBox(width: 4),
+                    ],
+                    Text(
+                      v.label,
+                      style: GVTypography.body(context).copyWith(
+                        fontSize: 14,
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        color: isSelected
+                            ? Colors.white
+                            : GVColors.textPrimary(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
 }
@@ -336,12 +589,12 @@ class _PlayerCard extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: GVColors.bgPrimary(context),
-        border: Border.all(color: GVColors.borderTertiary(context), width: 0.5),
+        border:
+            Border.all(color: GVColors.borderTertiary(context), width: 0.5),
         borderRadius: BorderRadius.circular(GVRadius.xl),
       ),
       child: Column(
         children: [
-          // Loading / failed state
           if (status == ArticleAudioStatus.loading)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
@@ -365,9 +618,11 @@ class _PlayerCard extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.error_outline, size: 16, color: GVColors.danger(context)),
+                  Icon(Icons.error_outline,
+                      size: 16, color: GVColors.danger(context)),
                   const SizedBox(width: 8),
-                  Text('Audio generation failed', style: GVTypography.small(context)),
+                  Text('Audio generation failed',
+                      style: GVTypography.small(context)),
                 ],
               ),
             ),
@@ -382,24 +637,30 @@ class _PlayerCard extends StatelessWidget {
                 builder: (_, durSnap) {
                   final dur = durSnap.data ?? Duration.zero;
                   final progress = dur.inMilliseconds > 0
-                      ? (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0)
+                      ? (pos.inMilliseconds / dur.inMilliseconds)
+                          .clamp(0.0, 1.0)
                       : 0.0;
                   return Column(
                     children: [
                       SliderTheme(
                         data: SliderThemeData(
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                          thumbShape:
+                              const RoundSliderThumbShape(enabledThumbRadius: 6),
+                          overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 12),
                           trackHeight: 3,
                           activeTrackColor: GVColors.accent(context),
                           inactiveTrackColor: GVColors.bgTertiary(context),
                           thumbColor: GVColors.accent(context),
-                          overlayColor: GVColors.accent(context).withOpacity(0.2),
+                          overlayColor:
+                              GVColors.accent(context).withOpacity(0.2),
                         ),
                         child: Slider(
                           value: progress,
                           onChanged: (v) => player.seek(
-                            Duration(milliseconds: (v * dur.inMilliseconds).round()),
+                            Duration(
+                                milliseconds:
+                                    (v * dur.inMilliseconds).round()),
                           ),
                         ),
                       ),
@@ -435,7 +696,8 @@ class _PlayerCard extends StatelessWidget {
                 onPressed: onPrevious,
               ),
               IconButton(
-                icon: Icon(Icons.replay_10_rounded, color: GVColors.textPrimary(context)),
+                icon: Icon(Icons.replay_10_rounded,
+                    color: GVColors.textPrimary(context)),
                 iconSize: 28,
                 onPressed: onSeekBack,
               ),
@@ -443,9 +705,11 @@ class _PlayerCard extends StatelessWidget {
                 stream: player.playerStateStream,
                 builder: (_, snap) {
                   final playing = snap.data?.playing ?? false;
-                  final loading = snap.data?.processingState == ProcessingState.loading ||
-                      snap.data?.processingState == ProcessingState.buffering ||
-                      status == ArticleAudioStatus.loading;
+                  final loading =
+                      snap.data?.processingState == ProcessingState.loading ||
+                          snap.data?.processingState ==
+                              ProcessingState.buffering ||
+                          status == ArticleAudioStatus.loading;
                   return Container(
                     width: 56,
                     height: 56,
@@ -454,14 +718,16 @@ class _PlayerCard extends StatelessWidget {
                       shape: BoxShape.circle,
                     ),
                     child: loading
-                        ? Padding(
-                            padding: const EdgeInsets.all(16),
+                        ? const Padding(
+                            padding: EdgeInsets.all(16),
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: Colors.white),
                           )
                         : IconButton(
                             icon: Icon(
-                              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                              playing
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
                               color: Colors.white,
                             ),
                             iconSize: 28,
@@ -472,7 +738,8 @@ class _PlayerCard extends StatelessWidget {
                 },
               ),
               IconButton(
-                icon: Icon(Icons.forward_30_rounded, color: GVColors.textPrimary(context)),
+                icon: Icon(Icons.forward_30_rounded,
+                    color: GVColors.textPrimary(context)),
                 iconSize: 28,
                 onPressed: onSeekForward,
               ),
@@ -506,7 +773,8 @@ class _UpNextTile extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: GVColors.bgPrimary(context),
-        border: Border.all(color: GVColors.borderTertiary(context), width: 0.5),
+        border:
+            Border.all(color: GVColors.borderTertiary(context), width: 0.5),
         borderRadius: BorderRadius.circular(GVRadius.md),
       ),
       child: Row(
@@ -546,7 +814,8 @@ class _UpNextTile extends StatelessWidget {
                   strokeWidth: 1.5, color: GVColors.accent(context)),
             ),
           if (article.audioStatus == ArticleAudioStatus.ready)
-            Icon(Icons.check_circle_rounded, size: 14, color: GVColors.success(context)),
+            Icon(Icons.check_circle_rounded,
+                size: 14, color: GVColors.success(context)),
         ],
       ),
     );
