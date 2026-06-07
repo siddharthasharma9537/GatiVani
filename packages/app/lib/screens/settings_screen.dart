@@ -171,7 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _InfoRow(
                 icon: Icons.document_scanner_outlined,
                 label: 'OCR engine',
-                value: 'Gemini 3.1 Flash-Lite',
+                value: 'Sarvam Document Intelligence',
               ),
             ],
           ),
