@@ -63,6 +63,10 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<PlayerState>? _stateSub;
 
+  // ── Summary state ─────────────────────────────────────────────────────────
+  final Map<String, List<String>?> _summaryCache = {};
+  final Set<String> _summaryLoading = {};
+
   @override
   void initState() {
     super.initState();
@@ -74,6 +78,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
       widget.articles.map((a) => a.copyWith()),
     );
     _loadArticle(0);
+    _fetchSummary(_articles[0]);
     _positionSub = _player.positionStream.listen(_onPosition);
     _stateSub = _player.playerStateStream.listen(_onPlayerState);
   }
@@ -235,6 +240,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
       _prefetchTriggered = false;
     });
     final next = _articles[_currentIndex];
+    _fetchSummary(next);
     if (next.audioStatus == ArticleAudioStatus.ready) {
       _play(_currentIndex);
     } else {
@@ -255,23 +261,105 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
     _player.seek(target > dur ? dur : target);
   }
 
-  // ── Summary bullets ─────────────────────────────────────────────────────────
+  // ── AI Summary ───────────────────────────────────────────────────────────────
 
-  List<String> _summaryBullets(String preview) {
-    if (preview.trim().isEmpty) return [];
-    final parts = preview
-        .trim()
-        .split(RegExp(r'[।\.!?]+\s+'))
-        .map((s) => s.trim())
-        .where((s) => s.length > 15)
-        .take(3)
-        .toList();
-    return parts.isNotEmpty ? parts : [preview.trim()];
+  Future<void> _fetchSummary(NewspaperArticle article) async {
+    final id = article.id;
+    if (_summaryCache.containsKey(id) || _summaryLoading.contains(id)) return;
+    if (!mounted) return;
+
+    setState(() => _summaryLoading.add(id));
+
+    try {
+      final resp = await http.post(
+        Uri.parse(ApiConfig.documentsSummarizeUrl),
+        headers: {
+          ...ApiConfig.authHeaders,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'text': '${article.title}\n\n${article.content}',
+          'language': 'te-IN',
+        }),
+      ).timeout(const Duration(seconds: 30));
+
+      List<String>? bullets;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final raw = data['bullets'];
+        if (raw is List) {
+          bullets = raw
+              .map((b) => b.toString().trim())
+              .where((b) => b.length > 5)
+              .take(3)
+              .toList();
+          if (bullets.isEmpty) bullets = null;
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _summaryCache[id] = bullets;
+          _summaryLoading.remove(id);
+        });
+      }
+    } catch (e) {
+      debugPrint('[Summary] Failed for ${article.id}: $e');
+      if (mounted) {
+        setState(() {
+          _summaryLoading.remove(id);
+          _summaryCache[id] = null; // mark as attempted so we don't retry
+        });
+      }
+    }
   }
 
   Widget _buildSummaryCard(NewspaperArticle article) {
-    final bullets = _summaryBullets(article.preview);
-    if (bullets.isEmpty) return const SizedBox.shrink();
+    final id = article.id;
+    final isLoading = _summaryLoading.contains(id);
+    final bullets = _summaryCache[id];
+
+    // Loading state
+    if (isLoading) {
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: GVColors.accentBg(context),
+          borderRadius: BorderRadius.circular(GVRadius.lg),
+          border: Border.all(
+            color: GVColors.accent(context).withOpacity(0.25),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: GVColors.accent(context),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'ముఖ్య అంశాలు తయారవుతున్నాయి...',
+              style: TextStyle(
+                fontSize: 12,
+                color: GVColors.accent(context),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // No summary or failed
+    if (bullets == null || bullets.isEmpty) return const SizedBox.shrink();
+
+    // Show real AI bullets
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 16),
@@ -301,6 +389,16 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
                   letterSpacing: 0.2,
                 ),
               ),
+              const Spacer(),
+              Text(
+                'AI',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: GVColors.accent(context).withOpacity(0.6),
+                  letterSpacing: 0.5,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -310,11 +408,14 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('• ',
-                      style: TextStyle(
-                          color: GVColors.accent(context),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13)),
+                  Text(
+                    '• ',
+                    style: TextStyle(
+                      color: GVColors.accent(context),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
                   Expanded(
                     child: Text(
                       b,
@@ -341,6 +442,7 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
       _prefetchTriggered = false;
     });
     final prev = _articles[_currentIndex];
+    _fetchSummary(prev);
     if (prev.audioStatus == ArticleAudioStatus.ready) {
       _play(_currentIndex);
     } else {

@@ -24,6 +24,7 @@ class ApiConfig {
 
   static String get documentsProcessUrl => '$functionsUrl/documents-process';
   static String get documentsSynthesizeUrl => '$functionsUrl/documents-synthesize';
+  static String get documentsSummarizeUrl => '$functionsUrl/documents-summarize';
   static String get healthUrl => '$functionsUrl/health';
 
   static Map<String, String> get authHeaders => {
@@ -33,7 +34,7 @@ class ApiConfig {
 
   /// Dev-only header; backend ignores unless TRUST_CLIENT_TIER_HEADERS=true.
   /// Replace with JWT once auth is wired up.
-  static const String subscriptionTier = 'premium';
+  static const String subscriptionTier = 'standard';
 
   /// Returns true if the backend responds with ok=true within [timeout].
   static Future<bool> isBackendReachable({
