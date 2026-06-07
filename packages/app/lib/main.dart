@@ -1,12 +1,22 @@
 import "package:flutter/material.dart";
+import "package:provider/provider.dart";
 import "screens/home_screen.dart";
 import "design/app_theme.dart";
+import "services/settings_provider.dart";
 import "ssl_override_stub.dart"
     if (dart.library.io) "ssl_override_io.dart";
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   installSslOverride();
-  runApp(const GatiVaniApp());
+  final settings = SettingsProvider();
+  await settings.load();
+  runApp(
+    ChangeNotifierProvider.value(
+      value: settings,
+      child: const GatiVaniApp(),
+    ),
+  );
 }
 
 class GatiVaniApp extends StatelessWidget {
@@ -14,16 +24,18 @@ class GatiVaniApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeMode = context.select<SettingsProvider, ThemeMode>(
+      (s) => s.themeMode,
+    );
     return MaterialApp(
       title: "GatiVani",
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.system,
+      themeMode: themeMode,
       home: const HomeScreen(),
       routes: {
         '/article-list': (context) {
-          // This route should not be accessed directly; use push instead
           return const HomeScreen();
         },
       },

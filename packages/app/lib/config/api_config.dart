@@ -17,9 +17,19 @@ class ApiConfig {
     defaultValue: 'https://jjoxowdvzmlchtfarpbs.supabase.co/functions/v1',
   );
 
+  static const String anonKey = String.fromEnvironment(
+    'SUPABASE_ANON_KEY',
+    defaultValue: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impqb3hvd2R2em1sY2h0ZmFycGJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1MTQ2MDEsImV4cCI6MjA5NTA5MDYwMX0.45oi82WrFqF8eQHbXjQ5hjcONXa8xkYROvgoGVMqsNI',
+  );
+
   static String get documentsProcessUrl => '$functionsUrl/documents-process';
   static String get documentsSynthesizeUrl => '$functionsUrl/documents-synthesize';
   static String get healthUrl => '$functionsUrl/health';
+
+  static Map<String, String> get authHeaders => {
+    'Authorization': 'Bearer $anonKey',
+    'apikey': anonKey,
+  };
 
   /// Dev-only header; backend ignores unless TRUST_CLIENT_TIER_HEADERS=true.
   /// Replace with JWT once auth is wired up.

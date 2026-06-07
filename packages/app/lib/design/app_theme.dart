@@ -249,6 +249,87 @@ class GVBorder {
       );
 }
 
+// ── Category colors (18 categories) ─────────────────────────────────────────
+
+class GVCategory {
+  GVCategory._();
+
+  static Color color(String category) {
+    switch (category.toLowerCase()) {
+      case 'international':       return const Color(0xFF1565C0);
+      case 'national politics':   return const Color(0xFFBF360C);
+      case 'state politics':      return const Color(0xFF6A1B9A);
+      case 'editorial':           return const Color(0xFF37474F);
+      case 'parliamentary affairs': return const Color(0xFF1B5E20);
+      case 'national':            return const Color(0xFF0277BD);
+      case 'state schemes':       return const Color(0xFF558B2F);
+      case 'health':              return const Color(0xFFC62828);
+      case 'environment':         return const Color(0xFF2E7D32);
+      case 'judiciary':           return const Color(0xFF4527A0);
+      case 'education':           return const Color(0xFFE65100);
+      case 'ministry news':       return const Color(0xFF00695C);
+      case 'prominent persons':   return const Color(0xFF4E342E);
+      case 'trending news':       return const Color(0xFFAD1457);
+      case 'viral news':          return const Color(0xFFFF6F00);
+      case 'entertainment':       return const Color(0xFF7B1FA2);
+      case 'sports':              return const Color(0xFF1565C0);
+      case 'business':            return const Color(0xFF1B5E20);
+      case 'politics':            return const Color(0xFFBF360C);
+      case 'government':          return const Color(0xFF1B5E20);
+      case 'news':                return const Color(0xFF7F77DD);
+      default:                    return const Color(0xFF546E7A);
+    }
+  }
+
+  static Color bg(String category) => color(category).withOpacity(0.12);
+
+  static const List<String> all = [
+    'International', 'National Politics', 'State Politics', 'Editorial',
+    'Parliamentary Affairs', 'National', 'State Schemes', 'Health',
+    'Environment', 'Judiciary', 'Education', 'Ministry News',
+    'Prominent Persons', 'Trending News', 'Viral News',
+    'Entertainment', 'Sports', 'Business',
+  ];
+}
+
+// ── Tier subscription config ─────────────────────────────────────────────────
+
+class TierConfig {
+  TierConfig._();
+
+  static const Map<String, int> _limitSeconds = {
+    'free':                     5 * 60,
+    'standard':                60 * 60,
+    'premium':                 90 * 60,
+    'super_premium':          120 * 60,
+    'super_premium_advanced': 999 * 60, // effectively unlimited
+  };
+
+  static const Map<String, String> displayName = {
+    'free':                     'Free',
+    'standard':                 'Standard',
+    'premium':                  'Premium',
+    'super_premium':            'Super Premium',
+    'super_premium_advanced':   'Super Premium Advanced',
+  };
+
+  static int limitSeconds(String tier) =>
+      _limitSeconds[tier.toLowerCase()] ?? _limitSeconds['free']!;
+
+  static String limitFormatted(String tier) {
+    final mins = limitSeconds(tier) ~/ 60;
+    if (mins >= 60) {
+      final h = mins ~/ 60;
+      final m = mins % 60;
+      return m == 0 ? '${h}h' : '${h}h ${m}m';
+    }
+    return '${mins} min';
+  }
+
+  static bool isUnlimited(String tier) =>
+      tier.toLowerCase() == 'super_premium_advanced';
+}
+
 // ── AppTheme ──────────────────────────────────────────────────────────────────
 
 class AppTheme {

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../design/app_theme.dart';
 import '../services/document_service.dart';
-import 'review_screen.dart';
+import '../config/api_config.dart';
+import 'newspaper_browse_screen.dart';
 
 class UploadContentScreen extends StatefulWidget {
   const UploadContentScreen({Key? key}) : super(key: key);
@@ -31,7 +33,8 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     return status.isGranted;
   }
 
-  Future<void> _processImage(XFile image, String source) async {
+  // Shared processing entry point — called by all three upload sources
+  Future<void> _processBytes(Uint8List bytes, String filename, String source) async {
     try {
       setState(() {
         _isProcessing = true;
@@ -39,29 +42,28 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       });
       _showProcessingDialog();
 
-      final bytes = await image.readAsBytes();
-      final extension = image.name.split('.').last;
-      final cleanExtension = extension.length <= 4 ? extension : 'jpg';
-      final filename =
-          'document_${DateTime.now().millisecondsSinceEpoch}.$cleanExtension';
-
-      await Future.delayed(const Duration(milliseconds: 400));
+      await Future.delayed(const Duration(milliseconds: 300));
       if (mounted) setState(() => _processingStep = 'extracting');
 
-      final article = await _uploadService.processUploadedContent(
-        filePath: image.path,
-        source: source,
+      final newspaper = await _uploadService.processNewspaper(
+        filePath: '',
         filename: filename,
         fileBytes: bytes,
+        tier: ApiConfig.subscriptionTier,
       );
 
       if (mounted) {
         setState(() => _processingStep = 'complete');
-        await Future.delayed(const Duration(milliseconds: 500));
+        await Future.delayed(const Duration(milliseconds: 400));
         Navigator.pop(context); // dismiss dialog
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => ReviewScreen(article: article)),
+          MaterialPageRoute(
+            builder: (_) => NewspaperBrowseScreen(
+              newspaper: newspaper,
+              tier: ApiConfig.subscriptionTier,
+            ),
+          ),
         );
       }
     } catch (e) {
@@ -82,9 +84,12 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
   Future<void> _uploadFromCamera() async {
     final hasPermission = await _requestPermission(Permission.camera);
     if (!hasPermission) return _showError('Camera permission denied');
-    final photo = await _picker.pickImage(
-        source: ImageSource.camera, imageQuality: 90);
-    if (photo != null) await _processImage(photo, 'camera');
+    final photo = await _picker.pickImage(source: ImageSource.camera, imageQuality: 90);
+    if (photo == null) return;
+    final bytes = await photo.readAsBytes();
+    final ext = photo.name.split('.').last;
+    final filename = 'scan_${DateTime.now().millisecondsSinceEpoch}.${ext.length <= 4 ? ext : 'jpg'}';
+    await _processBytes(bytes, filename, 'camera');
   }
 
   Future<void> _uploadFromGallery() async {
@@ -95,30 +100,31 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
         if (!storage) return _showError('Storage permission denied');
       }
     }
-    final image = await _picker.pickImage(
-        source: ImageSource.gallery, imageQuality: 90);
-    if (image != null) await _processImage(image, 'gallery');
+    final image = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
+    if (image == null) return;
+    final bytes = await image.readAsBytes();
+    final ext = image.name.split('.').last;
+    final filename = 'image_${DateTime.now().millisecondsSinceEpoch}.${ext.length <= 4 ? ext : 'jpg'}';
+    await _processBytes(bytes, filename, 'gallery');
   }
 
-  /// Import PDF from gallery
-  /// Note: Currently uses image picker. For native file browser support, use file_picker plugin
-  /// with proper platform-specific configuration when API is stable
   Future<void> _uploadPDF() async {
-    final hasPermission = await _requestPermission(Permission.photos);
-    if (!hasPermission) {
-      final storage = await _requestPermission(Permission.storage);
-      if (!storage) return _showError('Storage permission denied');
-    }
-
-    // For now, pick from gallery (works for both images and PDFs on Android)
-    final file = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 90,
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      withData: true,
     );
+    if (result == null || result.files.isEmpty) return;
 
-    if (file != null) {
-      await _processImage(file, 'pdf_import');
+    final file = result.files.first;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      return _showError('Could not read PDF. Please try again.');
     }
+    final filename = file.name.isNotEmpty
+        ? file.name
+        : 'document_${DateTime.now().millisecondsSinceEpoch}.pdf';
+    await _processBytes(bytes, filename, 'pdf_import');
   }
 
   void _showError(String message) {
@@ -187,7 +193,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
               _SourceCard(
                 icon: Icons.picture_as_pdf_outlined,
                 title: 'Import PDF',
-                subtitle: 'Upload a PDF document',
+                subtitle: 'Pick a .pdf file from your device',
                 enabled: !_isProcessing,
                 onTap: _uploadPDF,
               ),
@@ -290,9 +296,9 @@ class _ProcessingDialog extends StatelessWidget {
       case 'uploading':
         return 'Uploading file...';
       case 'extracting':
-        return 'AI is reading your document...';
+        return 'AI is reading and categorising your newspaper...';
       case 'complete':
-        return 'Preparing your review...';
+        return 'Preparing article list...';
       default:
         return 'Please wait';
     }
