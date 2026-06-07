@@ -15,6 +15,11 @@ class NewspaperArticle {
   /// TTS reading style: "news_anchor" | "devotional_slow" | "mantra_clear" | "normal"
   final String readingStyle;
 
+  /// Voice model suggested by the backend for this document type.
+  /// e.g. "priya" for news, "kavitha" for slokas, "shubh" for mantras.
+  /// Empty string means fall back to the user's selected voice.
+  final String suggestedSpeaker;
+
   /// URL of the source document image (used as album art / thumbnail).
   /// For image uploads this is the actual photo; for PDFs it is empty.
   final String imageUrl;
@@ -34,6 +39,7 @@ class NewspaperArticle {
     this.page = 1,
     this.documentType = 'newspaper',
     this.readingStyle = 'news_anchor',
+    this.suggestedSpeaker = '',
     this.imageUrl = '',
     this.audioUrl,
     this.audioStatus = ArticleAudioStatus.none,
@@ -84,6 +90,7 @@ class NewspaperArticle {
       page: json['page'] as int? ?? 1,
       documentType: json['documentType'] as String? ?? 'newspaper',
       readingStyle: json['readingStyle'] as String? ?? 'news_anchor',
+      suggestedSpeaker: json['suggestedSpeaker'] as String? ?? '',
       imageUrl: json['imageUrl'] as String? ?? imageUrl,
       audioUrl: json['audioUrl'] as String?,
     );
@@ -96,6 +103,7 @@ class NewspaperArticle {
     bool? isSelected,
     String? documentType,
     String? readingStyle,
+    String? suggestedSpeaker,
     String? imageUrl,
   }) =>
       NewspaperArticle(
@@ -108,6 +116,7 @@ class NewspaperArticle {
         page: page,
         documentType: documentType ?? this.documentType,
         readingStyle: readingStyle ?? this.readingStyle,
+        suggestedSpeaker: suggestedSpeaker ?? this.suggestedSpeaker,
         imageUrl: imageUrl ?? this.imageUrl,
         audioUrl: audioUrl ?? this.audioUrl,
         audioStatus: audioStatus ?? this.audioStatus,

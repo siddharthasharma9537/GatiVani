@@ -71,7 +71,11 @@ class _AudioQueuePlayerScreenState extends State<AudioQueuePlayerScreen> {
   void initState() {
     super.initState();
     final settings = context.read<SettingsProvider>();
-    _selectedVoice = settings.defaultVoice;
+    // Seed voice from document type suggestion; user can still override via picker
+    final suggested = widget.articles.isNotEmpty
+        ? widget.articles.first.suggestedSpeaker
+        : '';
+    _selectedVoice = suggested.isNotEmpty ? suggested : settings.defaultVoice;
     _player = AudioPlayer();
     _player.setSpeed(settings.playbackSpeed);
     _articles = List<NewspaperArticle>.from(

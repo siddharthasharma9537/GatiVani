@@ -42,6 +42,22 @@ function categoryForDocumentType(documentType: string): string {
   }
 }
 
+// ── Voice model selection by document type ────────────────────────────────────
+// Returns a Sarvam speaker name; the synthesize function maps it to the correct
+// Gemini voice (female → Kore, male → Puck) automatically.
+
+function speakerForDocumentType(documentType: string): string {
+  switch (documentType) {
+    case "newspaper":   return "priya";   // clear professional Telugu female
+    case "sloka":
+    case "stotra":
+    case "stotram":     return "kavitha"; // devotional female voice
+    case "mantra":      return "shubh";   // male, deeper — suits Sanskrit recitation
+    case "book":        return "neha";    // natural relaxed reading
+    default:            return "priya";
+  }
+}
+
 // ── Category detection (regex fallback) ──────────────────────────────────────
 
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
@@ -402,6 +418,8 @@ Deno.serve(async (req) => {
       console.log(`[stage3] Segmented → ${segments.length} articles`);
     }
 
+    const suggestedSpeaker = speakerForDocumentType(documentType);
+
     const articles = segments.map((seg, i) => {
       // Category: use document-type override first, then regex fallback
       const dtCategory = categoryForDocumentType(documentType);
@@ -416,6 +434,7 @@ Deno.serve(async (req) => {
         category,
         documentType,
         readingStyle,
+        suggestedSpeaker,
         estimatedDurationSeconds: duration,
         audioUrl: null,
         page: 1,
