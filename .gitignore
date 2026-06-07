@@ -54,3 +54,4 @@ supabase/.temp/
 # OS
 Thumbs.db
 .DS_Store
+API_TEST_REPORT.txt
