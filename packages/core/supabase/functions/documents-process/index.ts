@@ -23,6 +23,25 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// ── Document types that must stay as one unified article ─────────────────────
+// (never split slokas / mantras into separate "articles")
+
+const UNIFIED_DOCUMENT_TYPES = new Set(["sloka", "mantra", "stotra", "stotram"]);
+
+function categoryForDocumentType(documentType: string): string {
+  switch (documentType) {
+    case "sloka":
+    case "stotra":
+    case "stotram":   return "Devotional";
+    case "mantra":    return "Mantra";
+    case "book":      return "Book";
+    case "letter":    return "Letter";
+    case "invitation":return "Invitation";
+    case "certificate":return "Certificate";
+    default:          return "";   // fall through to regex patterns
+  }
+}
+
 // ── Category detection (regex fallback) ──────────────────────────────────────
 
 const CATEGORY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
@@ -166,6 +185,7 @@ async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unkno
 
 interface GeminiRefinement {
   documentType: string;
+  documentTitle: string;   // formal name, e.g. "Shiva Manasa Pooja Stotram"; empty for newspapers
   language: string;
   readingStyle: string;
   correctedText: string;
@@ -198,13 +218,14 @@ async function refineWithGemini(
 
 Perform these tasks:
 1. Classify the document type. Choose ONE: "newspaper", "sloka", "mantra", "book", "invitation", "certificate", "letter", or "other"
-2. Detect the primary language: "te" (Telugu), "sa" (Sanskrit), "hi" (Hindi), "en" (English), or "mixed"
-3. Choose reading style for text-to-speech. Choose ONE:
+2. If the document is a named devotional/literary work (stotram, mantra, kavyam, book chapter, etc.), set "documentTitle" to its recognized name in the source language (e.g. "శివ మానస పూజా స్తోత్రం" or "Shiva Manasa Pooja Stotram"). For newspapers/letters/certificates, leave "documentTitle" as an empty string "".
+3. Detect the primary language: "te" (Telugu), "sa" (Sanskrit), "hi" (Hindi), "en" (English), or "mixed"
+4. Choose reading style for text-to-speech. Choose ONE:
    - "news_anchor"     → for news, articles, general content
    - "devotional_slow" → for slokas, stotras, bhajans, devotional poetry
    - "mantra_clear"    → for mantras, Vedic text, Sanskrit ritual text
    - "normal"          → for books, letters, certificates, other
-4. Fix OCR errors in the text below (misrecognized Telugu/Sanskrit/Hindi characters, broken words from column splits, stray numbers/symbols that should be letters). Return the full corrected text — do NOT summarize or shorten it.
+5. Fix OCR errors in the text below (misrecognized Telugu/Sanskrit/Hindi characters, broken words from column splits, stray numbers/symbols that should be letters). Return the full corrected text — do NOT summarize or shorten it.
 
 OCR Text (may contain errors):
 ${ocrText.slice(0, 8000)}
@@ -212,6 +233,7 @@ ${ocrText.slice(0, 8000)}
 Return ONLY valid JSON with no markdown fences:
 {
   "documentType": "newspaper",
+  "documentTitle": "",
   "language": "te",
   "readingStyle": "news_anchor",
   "correctedText": "..."
@@ -245,8 +267,9 @@ Return ONLY valid JSON with no markdown fences:
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
-  console.log(`[stage2] Gemini result: type=${JSON.parse(raw).documentType ?? "?"} style=${JSON.parse(raw).readingStyle ?? "?"}`);
-  return JSON.parse(raw) as GeminiRefinement;
+  const parsed = JSON.parse(raw) as GeminiRefinement;
+  console.log(`[stage2] Gemini result: type=${parsed.documentType ?? "?"} title="${parsed.documentTitle ?? ""}" style=${parsed.readingStyle ?? "?"}`);
+  return parsed;
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -338,6 +361,7 @@ Deno.serve(async (req) => {
 
     // ── Stage 2: Gemini — OCR correction + document classification ─────────
     let documentType = "newspaper";
+    let documentTitle = "";   // stotram / book name identified by Gemini
     let readingStyle = "news_anchor";
     let refinedText = cleanText(extractedText);
 
@@ -346,6 +370,7 @@ Deno.serve(async (req) => {
         console.log("[stage2] Refining with Gemini...");
         const result = await refineWithGemini(extractedText, buffer, file.type || "image/jpeg", GEMINI_KEY);
         documentType = result.documentType || "newspaper";
+        documentTitle = (result.documentTitle || "").trim();
         readingStyle = result.readingStyle || "news_anchor";
         if (result.correctedText && result.correctedText.length > 50) {
           refinedText = cleanText(result.correctedText);
@@ -358,12 +383,29 @@ Deno.serve(async (req) => {
       console.log("[stage2] Skipping Gemini (no key or too short)");
     }
 
-    // ── Stage 3: Segment into articles ─────────────────────────────────────
-    const segments = segmentArticles(refinedText, originalName);
+    // ── Stage 3: Build articles ─────────────────────────────────────────────
+    // Unified document types (sloka, mantra, stotram) → single article with all text.
+    // Newspapers and other multi-section documents → segment as before.
+
+    const isUnified = UNIFIED_DOCUMENT_TYPES.has(documentType);
+
+    let segments: ArticleSegment[];
+    if (isUnified) {
+      // One article: title = Gemini-identified name, content = full corrected text
+      const titleForUnified = documentTitle
+        || refinedText.split("\n").find((l) => l.trim().length > 3)?.trim().slice(0, 120)
+        || originalName.replace(/\.[^.]+$/, "").trim();
+      segments = [{ title: titleForUnified, content: refinedText }];
+      console.log(`[stage3] Unified document (${documentType}) → 1 article: "${titleForUnified}"`);
+    } else {
+      segments = segmentArticles(refinedText, originalName);
+      console.log(`[stage3] Segmented → ${segments.length} articles`);
+    }
 
     const articles = segments.map((seg, i) => {
-      const categoryInput = seg.title + " " + seg.content.slice(0, 300);
-      const category = deriveCategory(categoryInput);
+      // Category: use document-type override first, then regex fallback
+      const dtCategory = categoryForDocumentType(documentType);
+      const category = dtCategory || deriveCategory(seg.title + " " + seg.content.slice(0, 300));
       const preview = seg.content.replace(/\n/g, " ").trim().slice(0, 200);
       const duration = estimateDurationSeconds(seg.content);
       return {
@@ -380,6 +422,10 @@ Deno.serve(async (req) => {
       };
     });
 
+    // Effective newspaper/document title: Gemini-identified name or filename
+    const effectiveDocumentTitle = documentTitle
+      || originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+
     // ── Persist to DB ───────────────────────────────────────────────────────
     await supabase.from("extracted_texts").insert({
       filename: originalName,
@@ -394,13 +440,13 @@ Deno.serve(async (req) => {
     });
 
     const processingTime = Math.round((Date.now() - startedAt) / 1000);
-    console.log(`[done] ${articles.length} articles, type=${documentType}, style=${readingStyle}, ${processingTime}s`);
+    console.log(`[done] ${articles.length} article(s), type=${documentType}, title="${effectiveDocumentTitle}", style=${readingStyle}, ${processingTime}s`);
 
     return json({
       ok: true,
       newspaper: {
         id: `newspaper_${ts}`,
-        title: originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim(),
+        title: effectiveDocumentTitle,
         date: new Date().toISOString().split("T")[0],
         storageUrl,
       },
