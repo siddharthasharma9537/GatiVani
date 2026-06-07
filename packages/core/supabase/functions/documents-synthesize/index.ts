@@ -305,9 +305,26 @@ Deno.serve(async (req) => {
     let wavBytes: Uint8Array;
     let durationSec: number;
     let chunks: number;
+    let usedProvider = effectiveProvider;
 
     if (effectiveProvider === "gemini-2.5") {
-      ({ wavBytes, durationSec, chunks } = await synthesizeWithGemini(text, speaker, GEMINI_KEY!, readingStyle));
+      try {
+        ({ wavBytes, durationSec, chunks } = await synthesizeWithGemini(text, speaker, GEMINI_KEY!, readingStyle));
+      } catch (geminiErr) {
+        const errMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+        console.warn(`[synthesize] Gemini failed: ${errMsg.slice(0, 100)}`);
+
+        // Fall back to Sarvam if available (handles rate limits, content blocks, quota exhaustion)
+        if (SARVAM_KEY) {
+          console.log("[synthesize] Falling back to Sarvam TTS");
+          usedProvider = "sarvam";
+          ({ wavBytes, durationSec, chunks } = await synthesizeWithSarvam(
+            text, speaker, cfg.code, cfg.sampleRate, SARVAM_KEY, readingStyle,
+          ));
+        } else {
+          throw geminiErr;
+        }
+      }
     } else {
       ({ wavBytes, durationSec, chunks } = await synthesizeWithSarvam(
         text, speaker, cfg.code, cfg.sampleRate, SARVAM_KEY!, readingStyle,
@@ -315,12 +332,12 @@ Deno.serve(async (req) => {
     }
 
     const audioB64 = bytesToBase64(wavBytes);
-    console.log(`[synthesize] done: ${Math.round(wavBytes.length / 1024)} KB ~${durationSec}s via ${effectiveProvider}`);
+    console.log(`[synthesize] done: ${Math.round(wavBytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
 
     return json({
       ok: true,
       audioUrl: `data:audio/wav;base64,${audioB64}`,
-      provider: effectiveProvider,
+      provider: usedProvider,
       language: langKey,
       speaker,
       chunks,
