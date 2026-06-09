@@ -5,8 +5,24 @@ tests/
 *.log
 .DS_Store
 
-# Flutter app — not part of the Vercel deployment
-packages/app/
+# Flutter app — keep only packages/app/build/web/ (pre-built output)
+packages/app/android/
+packages/app/ios/
+packages/app/lib/
+packages/app/test/
+packages/app/.dart_tool/
+packages/app/.flutter-plugins-dependencies
+packages/app/.flutter-plugins
+packages/app/.github/
+packages/app/.idea/
+packages/app/distribution/
+packages/app/docs/
+packages/app/scripts/
+packages/app/build/app/
+packages/app/build/ios/
+packages/app/build/linux/
+packages/app/build/macos/
+packages/app/build/windows/
 
 # Uploads (large binary assets)
 packages/uploads/
