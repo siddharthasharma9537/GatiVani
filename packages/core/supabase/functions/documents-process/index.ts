@@ -215,6 +215,161 @@ function segmentArticles(text: string, filename: string): ArticleSegment[] {
   return articles.slice(0, 15);
 }
 
+// ── HTML → ArticleSegment extractor (layout-aware, column-safe) ──────────────
+// Parses Sarvam's HTML output (outputFormat:"html"), which encodes the page
+// as .multi-column-row > .column-block divs.  Each column-block is processed
+// independently so text from adjacent newspaper columns never mixes.
+//
+// Block handling:
+//   h2.headline           → always starts a new article
+//   h2.section-title      → starts a new article only if followed by paragraphs
+//   h3.sub-headline       → sub-section within current article
+//   p.paragraph           → body text; <br/> line-breaks are rejoined
+//   figure.image          → skipped (base64 blobs + auto-generated captions)
+//   div.advertisement     → skipped
+//   div.table / table     → skipped (numbers, schedules — not suitable for TTS)
+//   p.page-number         → skipped
+//   header.header         → skipped (newspaper masthead)
+
+function stripHtmlTags(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, " ")   // line-breaks become spaces
+    .replace(/<[^>]+>/g, "")         // remove all other tags
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ").replace(/&#\d+;/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function joinColumnText(raw: string): string {
+  // Telugu words are often split mid-word at column edges.
+  // Heuristic: if a line ends without punctuation and the next starts with
+  // a lowercase-equivalent Telugu character, concatenate directly.
+  // For now we just normalise whitespace — Gemini fixes the rest.
+  return raw.replace(/\n/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
+  const articles: ArticleSegment[] = [];
+
+  // Remove <style> block, base64 image data, and figure/img/table/ad blocks entirely
+  let cleaned = html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/src="data:image[^"]*"/gi, 'src=""')       // scrub base64 blobs
+    .replace(/<figure[^>]*>[\s\S]*?<\/figure>/gi, "")   // remove image+caption blocks
+    .replace(/<div[^>]*class="[^"]*advertisement[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "")
+    .replace(/<div[^>]*class="[^"]*table[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "")
+    .replace(/<p[^>]*class="[^"]*page-number[^"]*"[^>]*>[\s\S]*?<\/p>/gi, "")
+    .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "");
+
+  let currentTitle = "";
+  let currentLines: string[] = [];
+  let pendingSectionTitle = "";  // section-title held until we know if body follows
+
+  function flushArticle() {
+    if (!currentTitle) return;
+    const content = currentLines.join("\n\n").trim();
+    if (content.length > 60) {
+      articles.push({ title: currentTitle, content });
+    }
+    currentTitle = "";
+    currentLines = [];
+  }
+
+  function processColumnContent(colHtml: string) {
+    // Walk through headline and paragraph elements in order
+    const elementRe = /<(h[1-4]|p)[^>]*class="([^"]*)"[^>]*>([\s\S]*?)<\/\1>/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = elementRe.exec(colHtml)) !== null) {
+      const tag = match[1];
+      const cls = match[2];
+      const inner = match[3];
+      const text = joinColumnText(stripHtmlTags(inner));
+      if (!text) continue;
+
+      const isHeadline = tag.startsWith("h") && cls.includes("headline");
+      const isSectionTitle = tag.startsWith("h") && cls.includes("section-title");
+      const isParagraph = tag === "p" && cls.includes("paragraph");
+
+      if (isHeadline) {
+        // Flush pending section-title that had no body
+        if (pendingSectionTitle && currentLines.length === 0 && currentTitle) {
+          // it was just an image caption, discard it
+        } else if (pendingSectionTitle) {
+          // section-title had body → it was a real sub-article, flush
+          flushArticle();
+        }
+        pendingSectionTitle = "";
+        flushArticle();
+        currentTitle = text.slice(0, 120);
+      } else if (isSectionTitle) {
+        // Hold it: if next thing is a paragraph it's a sub-article, else a caption
+        if (pendingSectionTitle && currentLines.length > 0) {
+          // previous pending section-title had body → flush it
+          flushArticle();
+          currentTitle = pendingSectionTitle;
+        }
+        pendingSectionTitle = text.slice(0, 120);
+      } else if (isParagraph) {
+        if (pendingSectionTitle) {
+          // Now we know the section-title has body — treat it as article boundary
+          if (currentLines.length > 0) flushArticle();
+          if (!currentTitle) currentTitle = pendingSectionTitle;
+          else currentLines.push(""); // just append under current article
+          pendingSectionTitle = "";
+        }
+        if (!currentTitle) currentTitle = text.slice(0, 120);
+        else currentLines.push(text);
+      }
+    }
+  }
+
+  // Process entire document column by column
+  // Strategy: split on multi-column-row boundaries, then process each column-block
+  const rowRe = /<div[^>]*class="multi-column-row[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?=<div[^>]*class="multi-column-row|<\/div>\s*<\/body>|$)/gi;
+  let rowMatch: RegExpExecArray | null;
+
+  while ((rowMatch = rowRe.exec(cleaned)) !== null) {
+    const rowHtml = rowMatch[1];
+    // Extract column-blocks sorted by grid-column number
+    const colRe = /<div[^>]*class="column-block"[^>]*style="[^"]*grid-column:\s*(\d+)[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="column-block"|$)/gi;
+    const cols: Array<{ col: number; html: string }> = [];
+    let colMatch: RegExpExecArray | null;
+    while ((colMatch = colRe.exec(rowHtml)) !== null) {
+      cols.push({ col: parseInt(colMatch[1]), html: colMatch[2] });
+    }
+    cols.sort((a, b) => a.col - b.col);
+    for (const { html: colHtml } of cols) {
+      processColumnContent(colHtml);
+    }
+  }
+
+  // Flush the last article
+  if (pendingSectionTitle && currentLines.length > 0) {
+    if (!currentTitle) currentTitle = pendingSectionTitle;
+  }
+  flushArticle();
+
+  // Fallback: if nothing parsed, return raw text from whole document
+  if (articles.length === 0) {
+    const fallbackText = stripHtmlTags(cleaned).replace(/\s+/g, " ").trim();
+    const fallbackTitle = filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+    articles.push({ title: fallbackTitle, content: fallbackText });
+  }
+
+  // Deduplicate: remove articles whose title duplicates a previous one
+  const seen = new Set<string>();
+  return articles
+    .filter((a) => {
+      const key = a.title.slice(0, 40).toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 20);
+}
+
 // ── OCR result extraction ─────────────────────────────────────────────────────
 
 async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unknown>): Promise<string> {
@@ -397,6 +552,7 @@ Deno.serve(async (req) => {
     // ── Stage 1: Sarvam OCR ────────────────────────────────────────────────
     let extractedText = "";
     const tempPath = `/tmp/sarvam_${ts}_${safeName}`;
+    let rawOcrHtml = "";   // raw HTML from Sarvam (outputFormat:"html"), used for column-aware parsing
     try {
       await Deno.writeFile(tempPath, buffer);
       const sarvam = new SarvamAIClient({ apiSubscriptionKey: SARVAM });
@@ -404,7 +560,7 @@ Deno.serve(async (req) => {
       console.log("[stage1] Creating Sarvam document intelligence job...");
       const job = await sarvam.documentIntelligence.createJob({
         language: "te-IN",
-        outputFormat: "md",
+        outputFormat: "html",
       });
       console.log(`[stage1] Job: ${(job as { jobId?: string }).jobId}`);
 
@@ -417,7 +573,11 @@ Deno.serve(async (req) => {
 
       const links = await (job as { getDownloadLinks: () => Promise<{ download_urls?: Record<string, unknown> }> }).getDownloadLinks();
       if (links?.download_urls) {
-        extractedText = await extractTextFromSarvamDownloads(links.download_urls);
+        rawOcrHtml = await extractTextFromSarvamDownloads(links.download_urls);
+        // For the Gemini refinement path, strip HTML tags → plain text → filter
+        extractedText = rawOcrHtml.startsWith("<")
+          ? stripHtmlTags(rawOcrHtml)
+          : rawOcrHtml;
       }
     } catch (e) {
       console.error("[stage1] OCR failed:", (e as Error).message);
@@ -473,6 +633,15 @@ Deno.serve(async (req) => {
         || originalName.replace(/\.[^.]+$/, "").trim();
       segments = [{ title: titleForUnified, content: refinedText }];
       console.log(`[stage3] Unified document (${documentType}) → 1 article: "${titleForUnified}"`);
+    } else if (documentType === "newspaper" && rawOcrHtml.length > 100) {
+      // Use layout-aware HTML parser: preserves column boundaries, prevents cross-column bleed
+      segments = parseHtmlToArticles(rawOcrHtml, originalName);
+      console.log(`[stage3] HTML column-aware parse → ${segments.length} articles`);
+      // Fallback: if HTML parse returns nothing useful, use Gemini-corrected text
+      if (segments.length === 0) {
+        segments = segmentArticles(refinedText, originalName);
+        console.log(`[stage3] Fallback to text segmentation → ${segments.length} articles`);
+      }
     } else {
       segments = segmentArticles(refinedText, originalName);
       console.log(`[stage3] Segmented → ${segments.length} articles`);
