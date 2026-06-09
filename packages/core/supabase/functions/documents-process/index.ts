@@ -355,13 +355,24 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
           if (!currentTitle) currentTitle = pendingSectionTitle;
           pendingSectionTitle = "";
         }
-        // Strip orphaned prefix: if the first paragraph under a headline contains
-        // a byline mid-text, everything before it is the tail of the previous
-        // column's article that Sarvam bled into this block.
+        // Fix A: if the FIRST paragraph under a headline contains a byline mid-text,
+        // strip everything before the byline — that prefix is the orphaned tail of the
+        // previous column's article that Sarvam bled into this block.
         // e.g. "న్యాయం జరుగుతుందని... న్యూస్టుడే, కరీంనగర్ రవాణా విభాగం: [real body]"
         if (currentLines.length === 0 && currentTitle) {
           const bylineIdx = text.search(INLINE_BYLINE_RE);
           if (bylineIdx > 5) {
+            text = text.slice(bylineIdx).replace(INLINE_BYLINE_RE, "").trim();
+          }
+        }
+        // Fix B: if the SECOND paragraph STARTS with a byline (index 0–4), the first
+        // paragraph was a pure orphan with no byline of its own — discard it.
+        // e.g. currentLines[0] = "న్యాయం జరుగు తుందని సర్కారు భావించింది." ← orphan
+        //      text             = "న్యూస్టుడే, కరీంనగర్ రవాణా విభాగం: రాష్ట్ర..."
+        if (currentLines.length === 1 && currentTitle) {
+          const bylineIdx = text.search(INLINE_BYLINE_RE);
+          if (bylineIdx >= 0 && bylineIdx < 5) {
+            currentLines = [];
             text = text.slice(bylineIdx).replace(INLINE_BYLINE_RE, "").trim();
           }
         }
