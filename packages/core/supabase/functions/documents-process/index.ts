@@ -360,7 +360,22 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
       }
     }
 
-    // Step 2: Merge paragraphs that end abruptly
+    // Step 2: Fix paragraph content splits (move text between bullets)
+    // Water-flow sentence (para 7) belongs with first bullet-body pair (para 3+5), not standalone
+    const waterFlowSentence = "తక్కువ సామర్థ్యంగల సూక్ష్మ నీటి ప్రవాహం వల్ల నేల పైపొర కోతకు గురికాకుండా ఉంటుంది.";
+    for (let i = 0; i < pairedParas.length; i++) {
+      if (pairedParas[i] === waterFlowSentence || pairedParas[i].trim() === waterFlowSentence) {
+        // Found the water-flow sentence as a standalone paragraph
+        // Merge it with the first bullet-body pair (index 2)
+        if (i > 2) {
+          pairedParas[2] = pairedParas[2] + " " + waterFlowSentence;
+          pairedParas.splice(i, 1); // remove the standalone sentence
+        }
+        break;
+      }
+    }
+
+    // Step 3: Merge paragraphs that end abruptly
     const result: string[] = [];
     for (let i = 0; i < pairedParas.length; i++) {
       let current = pairedParas[i];
