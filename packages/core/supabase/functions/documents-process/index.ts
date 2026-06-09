@@ -233,8 +233,8 @@ function segmentArticles(text: string, filename: string): ArticleSegment[] {
 
 function stripHtmlTags(html: string): string {
   return html
-    .replace(/<br\s*\/?>/gi, " ")   // line-breaks become spaces
-    .replace(/<[^>]+>/g, "")         // remove all other tags
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]+>/g, "")
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ").replace(/&#\d+;/g, "")
     .replace(/[ \t]+/g, " ")
@@ -242,123 +242,156 @@ function stripHtmlTags(html: string): string {
 }
 
 function joinColumnText(raw: string): string {
-  // Telugu words are often split mid-word at column edges.
-  // Heuristic: if a line ends without punctuation and the next starts with
-  // a lowercase-equivalent Telugu character, concatenate directly.
-  // For now we just normalise whitespace — Gemini fixes the rest.
   return raw.replace(/\n/g, " ").replace(/\s{2,}/g, " ").trim();
+}
+
+// ── Depth-tracking div extractor ─────────────────────────────────────────────
+// Problem with lazy regex ([\s\S]*?<\/div>): it stops at the FIRST </div>
+// inside the container, which is the end of the first nested child, not the
+// container itself.  A depth counter correctly pairs every open with its close.
+
+function extractDivContent(html: string, afterOpenTag: number): { content: string; end: number } {
+  let depth = 1;
+  let i = afterOpenTag;
+  while (i < html.length) {
+    const o = html.indexOf("<div", i);
+    const c = html.indexOf("</div>", i);
+    if (c === -1) break;
+    if (o !== -1 && o < c) {
+      const ch = html[o + 4];
+      if (ch === " " || ch === ">" || ch === "\n" || ch === "\r" || ch === "\t") depth++;
+      i = o + 5;
+    } else {
+      depth--;
+      if (depth === 0) return { content: html.slice(afterOpenTag, c), end: c + 6 };
+      i = c + 6;
+    }
+  }
+  return { content: html.slice(afterOpenTag), end: html.length };
+}
+
+function findDivsByClass(html: string, classSubstr: string): Array<{ attrs: string; content: string; end: number }> {
+  const results: Array<{ attrs: string; content: string; end: number }> = [];
+  let i = 0;
+  while (i < html.length) {
+    const tagStart = html.indexOf("<div", i);
+    if (tagStart === -1) break;
+    const tagEnd = html.indexOf(">", tagStart);
+    if (tagEnd === -1) break;
+    const openTag = html.slice(tagStart, tagEnd + 1);
+    if (openTag.includes(classSubstr)) {
+      const { content, end } = extractDivContent(html, tagEnd + 1);
+      results.push({ attrs: openTag, content, end });
+      i = end; // skip past whole div — don't match nested same-class divs
+    } else {
+      i = tagEnd + 1;
+    }
+  }
+  return results;
 }
 
 function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
   const articles: ArticleSegment[] = [];
 
-  // Remove <style> block, base64 image data, and figure/img/table/ad blocks entirely
-  let cleaned = html
+  // Strip whole-document noise that doesn't contain nested <div>s
+  const doc = html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/src="data:image[^"]*"/gi, 'src=""')       // scrub base64 blobs
-    .replace(/<figure[^>]*>[\s\S]*?<\/figure>/gi, "")   // remove image+caption blocks
-    .replace(/<div[^>]*class="[^"]*advertisement[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "")
-    .replace(/<div[^>]*class="[^"]*table[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "")
-    .replace(/<p[^>]*class="[^"]*page-number[^"]*"[^>]*>[\s\S]*?<\/p>/gi, "")
+    .replace(/src="data:image[^"]*"/gi, 'src=""')
     .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "");
+
+  // Byline pattern for detecting embedded datelines mid-paragraph:
+  //   "Location, న్యూస్టుడే: body..."   (location first)
+  //   "న్యూస్టుడే, Location: body..."   (tag first)
+  const INLINE_BYLINE_RE = /(?:[^,\n]{2,50},\s*న్యూస్\s*టుడే|న్యూస్\s*టుడే\s*,\s*[^:\n]{2,60})\s*[:]\s*/;
 
   let currentTitle = "";
   let currentLines: string[] = [];
-  let pendingSectionTitle = "";  // section-title held until we know if body follows
+  let pendingSectionTitle = "";
 
   function flushArticle() {
     if (!currentTitle) return;
     const content = currentLines.join("\n\n").trim();
-    if (content.length > 60) {
-      articles.push({ title: currentTitle, content });
-    }
+    if (content.length > 60) articles.push({ title: currentTitle, content });
     currentTitle = "";
     currentLines = [];
   }
 
-  function processColumnContent(colHtml: string) {
-    // Walk through headline and paragraph elements in order
-    const elementRe = /<(h[1-4]|p)[^>]*class="([^"]*)"[^>]*>([\s\S]*?)<\/\1>/gi;
-    let match: RegExpExecArray | null;
+  function processColumn(colContent: string) {
+    // Strip noise blocks safe for lazy regex (no nested <div> inside them)
+    const clean = colContent
+      .replace(/<figure[^>]*>[\s\S]*?<\/figure>/gi, "")
+      .replace(/<p[^>]*class="[^"]*page-number[^"]*"[^>]*>[\s\S]*?<\/p>/gi, "")
+      .replace(/<div[^>]*class="[^"]*advertisement[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "")
+      .replace(/<div[^>]*class="[^"]*table[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "");
 
-    while ((match = elementRe.exec(colHtml)) !== null) {
-      const tag = match[1];
-      const cls = match[2];
-      const inner = match[3];
-      const text = joinColumnText(stripHtmlTags(inner));
+    const elementRe = /<(h[1-4]|p)([^>]*)>([\s\S]*?)<\/\1>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = elementRe.exec(clean)) !== null) {
+      const tag = m[1];
+      const attrs = m[2];
+      const inner = m[3];
+      const cls = (attrs.match(/class="([^"]*)"/) ?? [])[1] ?? "";
+      let text = joinColumnText(stripHtmlTags(inner));
       if (!text) continue;
 
-      const isHeadline = tag.startsWith("h") && cls.includes("headline");
+      const isHeadline     = tag.startsWith("h") && cls.includes("headline");
       const isSectionTitle = tag.startsWith("h") && cls.includes("section-title");
-      const isParagraph = tag === "p" && cls.includes("paragraph");
+      const isParagraph    = tag === "p" && cls.includes("paragraph");
 
       if (isHeadline) {
-        // Flush pending section-title that had no body
-        if (pendingSectionTitle && currentLines.length === 0 && currentTitle) {
-          // it was just an image caption, discard it
-        } else if (pendingSectionTitle) {
-          // section-title had body → it was a real sub-article, flush
-          flushArticle();
-        }
+        if (pendingSectionTitle) flushArticle();
         pendingSectionTitle = "";
         flushArticle();
         currentTitle = text.slice(0, 120);
       } else if (isSectionTitle) {
-        // Hold it: if next thing is a paragraph it's a sub-article, else a caption
         if (pendingSectionTitle && currentLines.length > 0) {
-          // previous pending section-title had body → flush it
           flushArticle();
           currentTitle = pendingSectionTitle;
         }
         pendingSectionTitle = text.slice(0, 120);
       } else if (isParagraph) {
         if (pendingSectionTitle) {
-          // Now we know the section-title has body — treat it as article boundary
           if (currentLines.length > 0) flushArticle();
           if (!currentTitle) currentTitle = pendingSectionTitle;
-          else currentLines.push(""); // just append under current article
           pendingSectionTitle = "";
         }
+        // Strip orphaned prefix: if the first paragraph under a headline contains
+        // a byline mid-text, everything before it is the tail of the previous
+        // column's article that Sarvam bled into this block.
+        // e.g. "న్యాయం జరుగుతుందని... న్యూస్టుడే, కరీంనగర్ రవాణా విభాగం: [real body]"
+        if (currentLines.length === 0 && currentTitle) {
+          const bylineIdx = text.search(INLINE_BYLINE_RE);
+          if (bylineIdx > 5) {
+            text = text.slice(bylineIdx).replace(INLINE_BYLINE_RE, "").trim();
+          }
+        }
         if (!currentTitle) currentTitle = text.slice(0, 120);
-        else currentLines.push(text);
+        else if (text) currentLines.push(text);
       }
     }
   }
 
-  // Process entire document column by column
-  // Strategy: split on multi-column-row boundaries, then process each column-block
-  const rowRe = /<div[^>]*class="multi-column-row[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?=<div[^>]*class="multi-column-row|<\/div>\s*<\/body>|$)/gi;
-  let rowMatch: RegExpExecArray | null;
-
-  while ((rowMatch = rowRe.exec(cleaned)) !== null) {
-    const rowHtml = rowMatch[1];
-    // Extract column-blocks sorted by grid-column number
-    const colRe = /<div[^>]*class="column-block"[^>]*style="[^"]*grid-column:\s*(\d+)[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="column-block"|$)/gi;
-    const cols: Array<{ col: number; html: string }> = [];
-    let colMatch: RegExpExecArray | null;
-    while ((colMatch = colRe.exec(rowHtml)) !== null) {
-      cols.push({ col: parseInt(colMatch[1]), html: colMatch[2] });
-    }
-    cols.sort((a, b) => a.col - b.col);
-    for (const { html: colHtml } of cols) {
-      processColumnContent(colHtml);
-    }
+  // Walk rows → columns in grid-column order using depth-tracking extractors
+  const rows = findDivsByClass(doc, "multi-column-row");
+  for (const row of rows) {
+    const cols = findDivsByClass(row.content, "column-block");
+    cols.sort((a, b) => {
+      const na = parseInt((a.attrs.match(/grid-column:\s*(\d+)/) ?? [])[1] ?? "0");
+      const nb = parseInt((b.attrs.match(/grid-column:\s*(\d+)/) ?? [])[1] ?? "0");
+      return na - nb;
+    });
+    for (const col of cols) processColumn(col.content);
   }
 
-  // Flush the last article
-  if (pendingSectionTitle && currentLines.length > 0) {
-    if (!currentTitle) currentTitle = pendingSectionTitle;
-  }
+  if (pendingSectionTitle && !currentTitle) currentTitle = pendingSectionTitle;
   flushArticle();
 
-  // Fallback: if nothing parsed, return raw text from whole document
   if (articles.length === 0) {
-    const fallbackText = stripHtmlTags(cleaned).replace(/\s+/g, " ").trim();
+    const fallbackText = stripHtmlTags(doc).replace(/\s+/g, " ").trim();
     const fallbackTitle = filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
     articles.push({ title: fallbackTitle, content: fallbackText });
   }
 
-  // Deduplicate: remove articles whose title duplicates a previous one
   const seen = new Set<string>();
   return articles
     .filter((a) => {
@@ -367,7 +400,7 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
       seen.add(key);
       return true;
     })
-    .slice(0, 20);
+    .slice(0, 30);
 }
 
 // ── OCR result extraction ─────────────────────────────────────────────────────
