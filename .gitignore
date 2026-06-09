@@ -35,6 +35,22 @@ out/
 .dart_tool/
 pubspec.lock
 
+# Flutter build artifacts
+packages/app/build/
+packages/app/.dart_tool/
+packages/app/.flutter-plugins-dependencies
+
+# Archives and compiled bundles (use npm install / flutter build instead)
+*.tar.gz
+packages/core/*.zip
+packages/core/deploy/cpanel-upload/
+
+# Test artifacts
+packages/core/*.pdf
+packages/core/extracted_output*.txt
+packages/core/demo*.txt
+packages/core/test-doc*.txt
+
 # Temporary files
 *.tmp
 .tmp/
@@ -49,9 +65,12 @@ temp/
 uploads/
 
 # Supabase
+/supabase/
 supabase/.temp/
+packages/core/supabase/.temp/
 
 # OS
 Thumbs.db
 .DS_Store
 API_TEST_REPORT.txt
+.vercel

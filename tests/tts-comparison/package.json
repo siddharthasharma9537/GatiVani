@@ -1,0 +1,13 @@
+{
+  "name": "tts-comparison",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "sarvamai": "^1.1.7"
+  }
+}
