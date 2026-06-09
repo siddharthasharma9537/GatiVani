@@ -80,6 +80,12 @@ app.use((_req, res) => {
   res.status(404).json({ error: "not_found" });
 });
 
-app.listen(env.port, () => {
-  console.log(`[voxnews-node-core] listening on port ${env.port}`);
-});
+// Local dev: start HTTP listener. Vercel ignores this and uses the export below.
+if (process.env.VERCEL !== "1") {
+  app.listen(env.port, () => {
+    console.log(`[voxnews-node-core] listening on port ${env.port}`);
+  });
+}
+
+// Vercel serverless handler
+export default app;
