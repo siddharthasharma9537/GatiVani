@@ -1,0 +1,21 @@
+node_modules/
+tests/
+.flutter/
+.pub-cache/
+*.log
+.DS_Store
+
+# Flutter app — not part of the Vercel deployment
+packages/app/
+
+# Uploads (large binary assets)
+packages/uploads/
+
+# Supabase temp/branch state
+supabase/.branches/
+supabase/.temp/
+packages/core/supabase/.branches/
+packages/core/supabase/.temp/
+
+# Core deploy artifacts (compiled output — source is in src/)
+packages/core/deploy/
