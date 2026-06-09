@@ -414,6 +414,60 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
     .slice(0, 30);
 }
 
+// ── Gemini content correction for HTML-parsed articles ───────────────────────
+// parseHtmlToArticles() uses the raw Sarvam HTML which contains OCR errors
+// (e.g. "రైతు ఓదెల ళిక చేసుకున్నా" instead of "రైతు ఓదెల రాజు").
+// Gemini's correctedText has those errors fixed, but it's a flat string with no
+// column structure.  We get the best of both worlds by:
+//   1. Using HTML parsing for article boundary detection (titles, order)
+//   2. Replacing each article's body with the matching section from Gemini text
+//
+// The match is anchored on the article title's first 20 chars — headlines OCR
+// cleanly because they are set in larger/bolder type on the printed page.
+
+function applyGeminiCorrections(
+  htmlSegs: ArticleSegment[],
+  geminiText: string,
+): ArticleSegment[] {
+  if (!geminiText || htmlSegs.length === 0) return htmlSegs;
+
+  const result: ArticleSegment[] = [];
+
+  for (let i = 0; i < htmlSegs.length; i++) {
+    const seg = htmlSegs[i];
+
+    // Use first 20 chars as anchor — short enough to survive minor OCR differences
+    const searchKey = seg.title.slice(0, 20).trim();
+    if (searchKey.length < 5) { result.push(seg); continue; }
+
+    const titleIdx = geminiText.indexOf(searchKey);
+    if (titleIdx === -1) { result.push(seg); continue; }
+
+    // Skip past the title line
+    const titleLineEnd = geminiText.indexOf("\n", titleIdx);
+    if (titleLineEnd === -1) { result.push(seg); continue; }
+
+    // Find where the next article starts in the Gemini text
+    let endIdx = geminiText.length;
+    for (let j = i + 1; j < htmlSegs.length; j++) {
+      const nextKey = htmlSegs[j].title.slice(0, 20).trim();
+      if (nextKey.length < 5) continue;
+      const nextIdx = geminiText.indexOf(nextKey, titleLineEnd);
+      if (nextIdx !== -1) { endIdx = nextIdx; break; }
+    }
+
+    const correctedContent = geminiText.slice(titleLineEnd + 1, endIdx).trim();
+    if (correctedContent.length > 50) {
+      console.log(`[gemini-merge] ✓ article ${i + 1} "${seg.title.slice(0, 30)}" — replaced ${seg.content.length} → ${correctedContent.length} chars`);
+      result.push({ title: seg.title, content: correctedContent });
+    } else {
+      result.push(seg);
+    }
+  }
+
+  return result;
+}
+
 // ── OCR result extraction ─────────────────────────────────────────────────────
 
 async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unknown>): Promise<string> {
@@ -681,6 +735,13 @@ Deno.serve(async (req) => {
       // Use layout-aware HTML parser: preserves column boundaries, prevents cross-column bleed
       segments = parseHtmlToArticles(rawOcrHtml, originalName);
       console.log(`[stage3] HTML column-aware parse → ${segments.length} articles`);
+      // Overlay Gemini-corrected text onto the HTML-parsed articles.
+      // The HTML parser gives us correct article boundaries (titles/order);
+      // Gemini gives us OCR-error-free body text.  Merging gets us both.
+      if (segments.length > 0 && refinedText.length > 100) {
+        segments = applyGeminiCorrections(segments, refinedText);
+        console.log(`[stage3] Gemini corrections applied to article content`);
+      }
       // Fallback: if HTML parse returns nothing useful, use Gemini-corrected text
       if (segments.length === 0) {
         segments = segmentArticles(refinedText, originalName);
