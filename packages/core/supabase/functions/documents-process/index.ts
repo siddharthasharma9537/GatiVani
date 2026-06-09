@@ -136,6 +136,13 @@ function filterOcrMarkdown(md: string): string {
       // Markdown bare URLs (image CDN links with no text)
       if (/^https?:\/\/\S+\.(jpg|jpeg|png|webp|gif|svg)/i.test(t)) return false;
 
+      // Sarvam Vision auto-generated image descriptions (italic Telugu/English)
+      // e.g. "*ఈ చిత్రంలో నీలిరంగు డ్రమ్ములు కనిపిస్తున్నాయి*"
+      // These describe photo contents — not article text, never spoken.
+      if (/^\*ఈ చిత్రంలో|^\*In this image|^\*This image shows/i.test(t)) return false;
+      // Catch any fully-italic line that is a visual description (starts & ends with *)
+      if (/^\*[^*]{20,}\*$/.test(t) && /చిత్రం|image|photo|figure|diagram|గ్రాఫ్|పటం/i.test(t)) return false;
+
       return true;
     })
     .join("\n")
