@@ -675,6 +675,7 @@ Deno.serve(async (req) => {
       || originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 
     // ── Persist to DB ───────────────────────────────────────────────────────
+    // 1. Raw OCR text (kept for audit / re-processing)
     await supabase.from("extracted_texts").insert({
       filename: originalName,
       mime_type: file.type || null,
@@ -684,21 +685,74 @@ Deno.serve(async (req) => {
       source: "ocr",
       confidence: GEMINI_KEY ? 0.95 : 0.8,
     }).then(({ error }) => {
-      if (error) console.warn("[db] insert error:", error.message);
+      if (error) console.warn("[db] extracted_texts insert error:", error.message);
     });
+
+    // 2. Newspaper row → get UUID back
+    const pubDate = new Date().toISOString().split("T")[0];
+    const { data: newsRow, error: newsErr } = await supabase
+      .from("newspapers")
+      .insert({
+        title: effectiveDocumentTitle,
+        publication_date: pubDate,
+        language: "te",
+        storage_url: storageUrl,
+      })
+      .select("id")
+      .single();
+    if (newsErr) console.warn("[db] newspaper insert error:", newsErr.message);
+    const newspaperUuid: string | null = newsRow?.id ?? null;
+
+    // 3. Individual articles — stored with full content and metadata
+    let savedArticleIds: string[] = [];
+    if (newspaperUuid && articles.length > 0) {
+      const rows = articles.map((art, i) => ({
+        newspaper_id: newspaperUuid,
+        title: art.title,
+        content_preview: art.preview,
+        full_content: art.content,
+        section: art.category,
+        page_number: art.page ?? 1,
+        processing_status: "ready",
+        quality_score: GEMINI_KEY ? 0.95 : 0.80,
+        position_json: {
+          article_index: i + 1,
+          document_type: documentType,
+          reading_style: readingStyle,
+          suggested_speaker: suggestedSpeaker,
+          estimated_duration_seconds: art.estimatedDurationSeconds,
+        },
+      }));
+
+      const { data: savedRows, error: artErr } = await supabase
+        .from("articles")
+        .insert(rows)
+        .select("id");
+      if (artErr) console.warn("[db] articles insert error:", artErr.message);
+      else {
+        savedArticleIds = (savedRows ?? []).map((r: { id: string }) => r.id);
+        console.log(`[db] Saved ${savedArticleIds.length} articles → newspaper ${newspaperUuid}`);
+      }
+    }
 
     const processingTime = Math.round((Date.now() - startedAt) / 1000);
     console.log(`[done] ${articles.length} article(s), type=${documentType}, title="${effectiveDocumentTitle}", style=${readingStyle}, ${processingTime}s`);
 
+    // Annotate each article in the response with its persisted DB uuid
+    const articlesWithDbId = articles.map((art, i) => ({
+      ...art,
+      dbId: savedArticleIds[i] ?? null,
+    }));
+
     return json({
       ok: true,
       newspaper: {
-        id: `newspaper_${ts}`,
+        id: newspaperUuid ?? `newspaper_${ts}`,
         title: effectiveDocumentTitle,
-        date: new Date().toISOString().split("T")[0],
+        date: pubDate,
         storageUrl,
       },
-      articles,
+      articles: articlesWithDbId,
       summary: {
         totalArticles: articles.length,
         processingTime,
