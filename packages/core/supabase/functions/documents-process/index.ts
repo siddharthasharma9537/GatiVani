@@ -306,48 +306,75 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
 
   let currentTitle = "";
   let currentLines: string[] = [];
+  let currentLineColors: (string | null)[] = [];  // Track background colors for paragraphs
   let pendingSectionTitle = "";
 
   /**
-   * mergeParagraphs(paras)
+   * mergeParagraphs(paras, colors)
    * Heuristically merges paragraphs that are continuations.
    * Strategy:
-   *   1. First, pair consecutive bullets with following body paragraphs
-   *   2. Then, merge remaining paragraphs that end abruptly (cut off mid-sentence)
+   *   0. If colors available: merge consecutive paragraphs with matching background colors
+   *   1. Pair consecutive bullets with following body paragraphs
+   *   2. Move water-flow sentence to correct bullet
+   *   3. Merge remaining paragraphs that end abruptly (cut off mid-sentence)
    */
-  function mergeParagraphs(paras: string[]): string[] {
+  function mergeParagraphs(paras: string[], colors: (string | null)[] = []): string[] {
     if (paras.length === 0) return paras;
+
+    // Step 0: Merge by background color (if color data available)
+    let colorGrouped = paras;
+    if (colors && colors.length === paras.length) {
+      colorGrouped = [];
+      let i = 0;
+      while (i < paras.length) {
+        let current = paras[i];
+        const currentColor = colors[i];
+
+        // Group consecutive paragraphs with matching non-null, non-white colors
+        if (currentColor && currentColor !== "transparent" && currentColor !== "white") {
+          let j = i + 1;
+          while (j < paras.length && colors[j] === currentColor) {
+            current = current + " " + paras[j];
+            j++;
+          }
+          i = j;
+        } else {
+          i++;
+        }
+        colorGrouped.push(current);
+      }
+    }
 
     // Step 1: Pair consecutive bullets with following body paragraphs
     // Pattern: BULLETs followed by BODYs → pair them in order
     // E.g., BULLET BULLET BODY BODY → (BULLET+BODY) (BULLET+BODY)
     const pairedParas: string[] = [];
     let i = 0;
-    while (i < paras.length) {
-      const current = paras[i];
+    while (i < colorGrouped.length) {
+      const current = colorGrouped[i];
       const isBullet = current.startsWith("•");
 
       if (isBullet) {
         // Look ahead to count consecutive bullets
         let bulletEnd = i;
-        while (bulletEnd + 1 < paras.length && paras[bulletEnd + 1].startsWith("•")) {
+        while (bulletEnd + 1 < colorGrouped.length && colorGrouped[bulletEnd + 1].startsWith("•")) {
           bulletEnd++;
         }
         const bulletCount = bulletEnd - i + 1;
 
         // Count how many bodies follow immediately after
         let bodyEnd = bulletEnd;
-        while (bodyEnd + 1 < paras.length && !paras[bodyEnd + 1].startsWith("•")) {
+        while (bodyEnd + 1 < colorGrouped.length && !colorGrouped[bodyEnd + 1].startsWith("•")) {
           bodyEnd++;
         }
         const bodyCount = bodyEnd - bulletEnd;
 
         // Pair up bullets with bodies in order
-        for (let j = 0; j < bulletCount && i + j < paras.length; j++) {
-          let pairedText = paras[i + j];
-          if (j < bodyCount && bulletEnd + 1 + j < paras.length) {
+        for (let j = 0; j < bulletCount && i + j < colorGrouped.length; j++) {
+          let pairedText = colorGrouped[i + j];
+          if (j < bodyCount && bulletEnd + 1 + j < colorGrouped.length) {
             const bodyIdx = bulletEnd + 1 + j;
-            pairedText = pairedText + " " + paras[bodyIdx];
+            pairedText = pairedText + " " + colorGrouped[bodyIdx];
           }
           pairedParas.push(pairedText);
         }
@@ -399,12 +426,13 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
 
   function flushArticle() {
     if (!currentTitle) return;
-    // Merge paragraphs before joining
-    const merged = mergeParagraphs(currentLines);
+    // Merge paragraphs before joining (pass color info if available)
+    const merged = mergeParagraphs(currentLines, currentLineColors);
     const content = merged.join("\n\n").trim();
     if (content.length > 60) articles.push({ title: currentTitle, content });
     currentTitle = "";
     currentLines = [];
+    currentLineColors = [];
   }
 
   function processColumn(colContent: string) {
@@ -474,7 +502,17 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
           }
         }
         if (!currentTitle) currentTitle = text.slice(0, 120);
-        else if (text) currentLines.push(text);
+        else if (text) {
+          currentLines.push(text);
+          // Extract background color from style attribute
+          const styleMatch = attrs.match(/style="([^"]*)"/);
+          let bgColor: string | null = null;
+          if (styleMatch) {
+            const bgMatch = styleMatch[1].match(/background[^:]*:\s*([^;]+)/i);
+            if (bgMatch) bgColor = bgMatch[1].trim();
+          }
+          currentLineColors.push(bgColor);
+        }
       }
     }
   }
