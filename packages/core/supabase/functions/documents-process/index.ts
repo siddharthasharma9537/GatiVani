@@ -463,11 +463,23 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
         flushArticle();
         currentTitle = text.slice(0, 120);
       } else if (isSectionTitle) {
-        // If we're already inside an article body (title + content), this is a photo/image
-        // caption embedded mid-article — skip it so it doesn't flush the article prematurely.
+        // Distinguish between photo captions and real subsection titles
+        // Photo captions: short, generic (e.g., "బయసేద్యం", "డ్రమ్ములు")
+        // Subsections: longer, specific (e.g., "టీఫైబర్ సూపర్ సమ్మర్ శిబిరం")
+        const isLikelySubsection = text.length > 25 || /[0-9]|శిబిరం|శిక్షణ|కేంద్రం|పరిషత్|నిర్మాణ/.test(text);
+
         if (currentTitle && currentLines.length > 0) {
-          // caption inside a running article — ignore
+          // Inside article body
+          if (isLikelySubsection) {
+            // Real subsection title — add as content line to mark section boundary
+            // Add period to prevent it from being merged with next paragraph as "abrupt ending"
+            const sectionText = text.endsWith(".") || text.endsWith("।।") ? text : text + ".";
+            currentLines.push(sectionText);
+            currentLineColors.push(null);
+          }
+          // Otherwise it's a photo caption — skip it
         } else {
+          // Not yet inside article body
           if (pendingSectionTitle && currentLines.length > 0) {
             flushArticle();
             currentTitle = pendingSectionTitle;
