@@ -308,9 +308,85 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
   let currentLines: string[] = [];
   let pendingSectionTitle = "";
 
+  /**
+   * mergeParagraphs(paras)
+   * Heuristically merges paragraphs that are continuations.
+   * Strategy:
+   *   1. First, pair consecutive bullets with following body paragraphs
+   *   2. Then, merge remaining paragraphs that end abruptly (cut off mid-sentence)
+   */
+  function mergeParagraphs(paras: string[]): string[] {
+    if (paras.length === 0) return paras;
+
+    // Step 1: Pair consecutive bullets with following body paragraphs
+    // Pattern: BULLETs followed by BODYs → pair them in order
+    // E.g., BULLET BULLET BODY BODY → (BULLET+BODY) (BULLET+BODY)
+    const pairedParas: string[] = [];
+    let i = 0;
+    while (i < paras.length) {
+      const current = paras[i];
+      const isBullet = current.startsWith("•");
+
+      if (isBullet) {
+        // Look ahead to count consecutive bullets
+        let bulletEnd = i;
+        while (bulletEnd + 1 < paras.length && paras[bulletEnd + 1].startsWith("•")) {
+          bulletEnd++;
+        }
+        const bulletCount = bulletEnd - i + 1;
+
+        // Count how many bodies follow immediately after
+        let bodyEnd = bulletEnd;
+        while (bodyEnd + 1 < paras.length && !paras[bodyEnd + 1].startsWith("•")) {
+          bodyEnd++;
+        }
+        const bodyCount = bodyEnd - bulletEnd;
+
+        // Pair up bullets with bodies in order
+        for (let j = 0; j < bulletCount && i + j < paras.length; j++) {
+          let pairedText = paras[i + j];
+          if (j < bodyCount && bulletEnd + 1 + j < paras.length) {
+            const bodyIdx = bulletEnd + 1 + j;
+            pairedText = pairedText + " " + paras[bodyIdx];
+          }
+          pairedParas.push(pairedText);
+        }
+
+        // Skip the bullets and paired bodies
+        i = bulletEnd + 1 + Math.min(bulletCount, bodyCount);
+      } else {
+        pairedParas.push(current);
+        i++;
+      }
+    }
+
+    // Step 2: Merge paragraphs that end abruptly
+    const result: string[] = [];
+    for (let i = 0; i < pairedParas.length; i++) {
+      let current = pairedParas[i];
+      const trimmed = current.trim();
+      const endsCleanly = /(।।?|[.!?:])\s*$/.test(trimmed) || trimmed === "";
+      const endsAbruptly = !endsCleanly && trimmed.length > 0;
+
+      // If current ends abruptly, merge with next (but only if next is body text and not a bullet)
+      if (endsAbruptly && i + 1 < pairedParas.length) {
+        const next = pairedParas[i + 1].trim();
+        if (next.length > 0 && !next.startsWith("•")) {
+          current = current + " " + next;
+          i++; // skip next, we merged it
+        }
+      }
+      result.push(current.trim());
+    }
+
+    return result.filter(p => p.trim().length > 0);
+  }
+
   function flushArticle() {
     if (!currentTitle) return;
-    const content = currentLines.join("\n\n").trim();
+    // Merge paragraphs before joining
+    const merged = mergeParagraphs(currentLines);
+    const content = merged.join("\n\n").trim();
     if (content.length > 60) articles.push({ title: currentTitle, content });
     currentTitle = "";
     currentLines = [];
