@@ -344,11 +344,17 @@ function parseHtmlToArticles(html: string, filename: string): ArticleSegment[] {
         flushArticle();
         currentTitle = text.slice(0, 120);
       } else if (isSectionTitle) {
-        if (pendingSectionTitle && currentLines.length > 0) {
-          flushArticle();
-          currentTitle = pendingSectionTitle;
+        // If we're already inside an article body (title + content), this is a photo/image
+        // caption embedded mid-article — skip it so it doesn't flush the article prematurely.
+        if (currentTitle && currentLines.length > 0) {
+          // caption inside a running article — ignore
+        } else {
+          if (pendingSectionTitle && currentLines.length > 0) {
+            flushArticle();
+            currentTitle = pendingSectionTitle;
+          }
+          pendingSectionTitle = text.slice(0, 120);
         }
-        pendingSectionTitle = text.slice(0, 120);
       } else if (isParagraph) {
         if (pendingSectionTitle) {
           if (currentLines.length > 0) flushArticle();
