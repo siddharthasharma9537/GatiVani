@@ -6,8 +6,13 @@ Extracts individual news articles from scanned newspaper PDFs (Eenadu, etc.)
 with zero embedded text. Pipeline:
 
     PDF ──► render @300 DPI ──► layout segmentation (OpenCV)
-        ──► per-article OCR (Tesseract / Sarvam AI / Claude Vision)
+        ──► per-article OCR (Tesseract / Claude Vision)
         ──► structured JSON  { headline, body, bbox, lang, ... }
+
+    Sarvam path (recommended for Telugu):
+    PDF ──► Sarvam Document Intelligence (async job, full PDF)
+        ──► structured HTML ──► article parser (multi-column-row aware)
+        ──► structured JSON
 
 Usage:
     python extract_articles.py input.pdf -o out/                       # local Tesseract (tel+eng)
@@ -165,30 +170,168 @@ class TesseractOCR:
         return text.strip(), avg_conf
 
 
-class SarvamOCR:
+class SarvamPipeline:
     """
-    Sarvam AI Parse/OCR — best-in-class for Indic scripts.
-    Requires SARVAM_API_KEY. (Endpoint per Sarvam docs; adjust if API evolves.)
+    Sarvam AI Document Intelligence — full PDF path.
+
+    Sends the entire PDF to Sarvam's async job API, receives structured HTML
+    (multi-column-row layout), then parses it into articles using the same
+    column-aware parser as the production Supabase edge function.
+
+    Flow: create job → upload PDF (presigned Azure URL) → start → poll → download ZIP → parse HTML
     """
-    ENDPOINT = "https://api.sarvam.ai/parse/parsepdf"
+    BASE = "https://api.sarvam.ai"
 
     def __init__(self, api_key: str | None = None):
+        import requests as _req
+        self._req = _req
         self.api_key = api_key or os.environ.get("SARVAM_API_KEY", "")
         if not self.api_key:
             raise RuntimeError("Set SARVAM_API_KEY for --ocr sarvam")
 
-    def ocr(self, crop: np.ndarray) -> tuple[str, float]:
-        import requests
-        ok, buf = cv2.imencode(".png", crop)
-        resp = requests.post(
-            self.ENDPOINT,
-            headers={"api-subscription-key": self.api_key},
-            files={"file": ("block.png", buf.tobytes(), "image/png")},
-            timeout=120,
-        )
-        resp.raise_for_status()
-        out = resp.json()
-        return out.get("text", "") or out.get("output", ""), 0.95
+    def _h(self) -> dict:
+        return {"api-subscription-key": self.api_key}
+
+    def run(self, pdf_path: Path) -> str:
+        """Submit PDF, wait for completion, return raw HTML string."""
+        import time, zipfile, io
+        pdf_bytes = pdf_path.read_bytes()
+        fname = pdf_path.name
+
+        # 1. Create job
+        r = self._req.post(f"{self.BASE}/doc-digitization/job/v1",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={"job_parameters": {"language": "te-IN", "output_format": "html"}},
+            timeout=30)
+        r.raise_for_status()
+        job_id = r.json()["job_id"]
+        print(f"   Sarvam job {job_id}")
+
+        # 2. Get presigned upload URL
+        r = self._req.post(f"{self.BASE}/doc-digitization/job/v1/upload-files",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={"job_id": job_id, "files": [fname]},
+            timeout=30)
+        r.raise_for_status()
+        upload_info = next(iter(r.json()["upload_urls"].values()))
+        metadata = upload_info.get("file_metadata") or {}
+
+        # 3. PUT to presigned Azure Blob URL
+        put_headers = {"x-ms-blob-type": "BlockBlob",
+                       **{k: v for k, v in metadata.items() if isinstance(v, str)}}
+        r = self._req.put(upload_info["file_url"], data=pdf_bytes,
+                          headers=put_headers, timeout=300)
+        r.raise_for_status()
+
+        # 4. Start
+        r = self._req.post(f"{self.BASE}/doc-digitization/job/v1/{job_id}/start",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={}, timeout=30)
+        r.raise_for_status()
+
+        # 5. Poll until completed
+        for i in range(120):
+            time.sleep(5)
+            r = self._req.get(f"{self.BASE}/doc-digitization/job/v1/{job_id}/status",
+                headers=self._h(), timeout=30)
+            r.raise_for_status()
+            state = r.json().get("job_state", "")
+            print(f"   [{i*5}s] {state}")
+            if state == "Completed":
+                break
+            if state in ("Failed", "Cancelled"):
+                raise RuntimeError(f"Sarvam job {state}")
+        else:
+            raise RuntimeError("Sarvam job timed out")
+
+        # 6. Get presigned download URL
+        r = self._req.post(f"{self.BASE}/doc-digitization/job/v1/{job_id}/download-files",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={}, timeout=30)
+        r.raise_for_status()
+        dl_info = next(iter(r.json()["download_urls"].values()))
+
+        # 7. Download ZIP → extract HTML
+        r = self._req.get(dl_info["file_url"], timeout=300)
+        r.raise_for_status()
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        for name in zf.namelist():
+            if name.endswith(".html"):
+                return zf.read(name).decode("utf-8", errors="replace")
+        # Fallback: concatenate everything
+        return "\n".join(zf.read(n).decode("utf-8", errors="replace") for n in zf.namelist())
+
+    def parse_html(self, html: str, source_name: str) -> list[ArticleBlock]:
+        """
+        Parse Sarvam's structured HTML output into ArticleBlock list.
+        Uses regex to walk h1-h4/p elements in document order (same approach
+        as the production JS pipeline in test-pipeline.mjs).
+        """
+        articles: list[ArticleBlock] = []
+        current_title = ""
+        current_body_parts: list[str] = []
+
+        def flush():
+            nonlocal current_title, current_body_parts
+            if not current_title:
+                return
+            body = " ".join(current_body_parts).strip()
+            if len(body) > 60:
+                articles.append(ArticleBlock(
+                    page=1, article_id=f"a{len(articles)+1:02d}",
+                    bbox=(0, 0, 0, 0),
+                    headline=current_title, body=body,
+                    raw_text=f"{current_title}\n{body}",
+                    language=detect_language(body),
+                    confidence=0.95,
+                ))
+            current_title = ""
+            current_body_parts = []
+
+        def strip_tags(h: str) -> str:
+            h = re.sub(r"<br\s*/?>", " ", h)
+            h = re.sub(r"<[^>]+>", "", h)
+            h = h.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ")
+            h = re.sub(r"\s+", " ", h)  # collapse newlines + spaces
+            return h.strip()
+
+        # Strip noise: <style>, <figure>, base64 images, ads, tables
+        clean = re.sub(r"<style[^>]*>[\s\S]*?</style>", "", html, flags=re.DOTALL)
+        clean = re.sub(r"<figure[^>]*>[\s\S]*?</figure>", "", clean, flags=re.DOTALL)
+        clean = re.sub(r'src="data:image[^"]*"', 'src=""', clean)
+        clean = re.sub(r'<div[^>]*class="[^"]*advertisement[^"]*"[^>]*>[\s\S]*?</div>', "", clean, flags=re.DOTALL)
+        clean = re.sub(r'<div[^>]*class="[^"]*table[^"]*"[^>]*>[\s\S]*?</div>', "", clean, flags=re.DOTALL)
+
+        element_re = re.compile(r"<(h[1-4]|p)([^>]*)>([\s\S]*?)</\1>", re.IGNORECASE)
+        for m in element_re.finditer(clean):
+            tag, attrs, inner = m.group(1).lower(), m.group(2), m.group(3)
+            cls_m = re.search(r'class="([^"]*)"', attrs)
+            cls = cls_m.group(1) if cls_m else ""
+            text = strip_tags(inner)
+            if not text:
+                continue
+
+            is_headline = tag.startswith("h") and "headline" in cls
+            is_section  = tag.startswith("h") and "section-title" in cls
+            is_para     = tag == "p" and "paragraph" in cls
+
+            if is_headline:
+                flush()
+                current_title = text[:120]
+            elif is_section:
+                is_subsection = len(text) > 25 or bool(re.search(
+                    r"శిబిరం|శిక్షణ|కేంద్రం|పరిషత్|నిర్మాణ|\d", text))
+                if current_title and current_body_parts and is_subsection:
+                    t = text if text.endswith((".", "।।")) else text + "."
+                    current_body_parts.append(t)
+            elif is_para:
+                if not current_title:
+                    current_title = text[:120]
+                else:
+                    current_body_parts.append(text)
+
+        flush()
+        return articles
 
 
 class ClaudeOCR:
@@ -252,7 +395,7 @@ class ClaudeOCR:
             return raw, "", "te"
 
 
-OCR_BACKENDS = {"tesseract": TesseractOCR, "sarvam": SarvamOCR, "claude": ClaudeOCR}
+OCR_BACKENDS = {"tesseract": TesseractOCR, "sarvam": SarvamPipeline, "claude": ClaudeOCR}
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +444,28 @@ def clean_text(text: str) -> str:
 def extract(pdf_path: Path, out_dir: Path, ocr_name: str, dpi: int,
             lang: str, refine: bool, min_conf: float) -> list[ArticleBlock]:
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Sarvam path: full PDF → structured HTML → article parser ──────────────
+    if ocr_name == "sarvam":
+        pipeline = SarvamPipeline()
+        print(f"📄 Sending {pdf_path.name} to Sarvam Document Intelligence...")
+        html = pipeline.run(pdf_path)
+        # Save raw HTML for debugging
+        (out_dir / "sarvam_output.html").write_text(html, encoding="utf-8")
+        articles = pipeline.parse_html(html, pdf_path.name)
+        payload = {
+            "source": pdf_path.name,
+            "ocr_backend": "sarvam",
+            "dpi": None,
+            "article_count": len(articles),
+            "articles": [a.to_dict() for a in articles],
+        }
+        (out_dir / "articles.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"✅ {len(articles)} articles → {out_dir / 'articles.json'}")
+        return articles
+
+    # ── Tesseract / Claude path: render → segment → per-crop OCR ──────────────
     crops_dir = out_dir / "crops"
     crops_dir.mkdir(exist_ok=True)
 
@@ -308,8 +473,7 @@ def extract(pdf_path: Path, out_dir: Path, ocr_name: str, dpi: int,
         print("ℹ️  PDF has an embedded text layer — consider pdftotext instead "
               "of OCR. Continuing with OCR pipeline anyway.")
 
-    ocr = (OCR_BACKENDS[ocr_name](lang) if ocr_name == "tesseract"
-           else OCR_BACKENDS[ocr_name]())
+    ocr = TesseractOCR(lang) if ocr_name == "tesseract" else ClaudeOCR()
     refiner = ClaudeOCR() if (refine and ocr_name != "claude") else None
 
     articles: list[ArticleBlock] = []
