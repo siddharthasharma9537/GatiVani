@@ -16,7 +16,8 @@ with zero embedded text. Pipeline:
 
 Usage:
     python extract_articles.py input.pdf -o out/                       # local Tesseract (tel+eng)
-    python extract_articles.py input.pdf -o out/ --ocr sarvam          # Sarvam AI OCR (SARVAM_API_KEY env)
+    python extract_articles.py input.pdf -o out/ --ocr sarvam          # Sarvam: full PDF → HTML → parser (5-10 articles)
+    python extract_articles.py input.pdf -o out/ --ocr sarvam-crops    # Sarvam: per-crop OCR via OpenCV segmentation (18-20 articles, slower)
     python extract_articles.py input.pdf -o out/ --ocr claude          # Claude Vision (ANTHROPIC_API_KEY env)
     python extract_articles.py input.pdf -o out/ --refine              # Tesseract + Claude cleanup pass
 
@@ -122,7 +123,9 @@ def segment_articles(img: np.ndarray,
     cnts, _ = cv2.findContours(blobs, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     boxes = [cv2.boundingRect(c) for c in cnts]
     boxes = [b for b in boxes
-             if b[2] * b[3] > min_area_frac * H * W and b[2] > 80 and b[3] > 50]
+             if b[2] * b[3] > min_area_frac * H * W
+             and b[2] * b[3] < 0.25 * H * W   # skip blobs covering >25% of page (multi-article merges)
+             and b[2] > 80 and b[3] > 50]
 
     return sort_reading_order(boxes, W)
 
@@ -261,6 +264,81 @@ class SarvamPipeline:
         # Fallback: concatenate everything
         return "\n".join(zf.read(n).decode("utf-8", errors="replace") for n in zf.namelist())
 
+    def _img_to_pdf_bytes(self, img: np.ndarray) -> bytes:
+        """Convert a numpy BGR image to a single-page PDF."""
+        ok, png_buf = cv2.imencode(".png", img)
+        png_bytes = png_buf.tobytes()
+        h, w = img.shape[:2]
+        doc = fitz.open()
+        page = doc.new_page(width=w, height=h)
+        page.insert_image(page.rect, stream=png_bytes)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+        return pdf_bytes
+
+    def ocr_crop(self, crop: np.ndarray, label: str = "crop") -> str:
+        """Send a single image crop to Sarvam as its own job, return plain text."""
+        import time, zipfile, io
+        pdf_bytes = self._img_to_pdf_bytes(crop)
+        fname = f"{label}.pdf"
+
+        r = self._req.post(f"{self.BASE}/doc-digitization/job/v1",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={"job_parameters": {"language": "te-IN", "output_format": "md"}},
+            timeout=30)
+        r.raise_for_status()
+        job_id = r.json()["job_id"]
+
+        r = self._req.post(f"{self.BASE}/doc-digitization/job/v1/upload-files",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={"job_id": job_id, "files": [fname]}, timeout=30)
+        r.raise_for_status()
+        upload_info = next(iter(r.json()["upload_urls"].values()))
+        metadata = upload_info.get("file_metadata") or {}
+        put_headers = {"x-ms-blob-type": "BlockBlob",
+                       **{k: v for k, v in metadata.items() if isinstance(v, str)}}
+        self._req.put(upload_info["file_url"], data=pdf_bytes,
+                      headers=put_headers, timeout=120).raise_for_status()
+
+        self._req.post(f"{self.BASE}/doc-digitization/job/v1/{job_id}/start",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={}, timeout=30).raise_for_status()
+
+        for _ in range(60):
+            time.sleep(4)
+            r = self._req.get(f"{self.BASE}/doc-digitization/job/v1/{job_id}/status",
+                headers=self._h(), timeout=30)
+            r.raise_for_status()
+            state = r.json().get("job_state", "")
+            if state == "Completed":
+                break
+            if state in ("Failed", "Cancelled"):
+                return ""
+        else:
+            return ""
+
+        r = self._req.post(f"{self.BASE}/doc-digitization/job/v1/{job_id}/download-files",
+            headers={**self._h(), "Content-Type": "application/json"},
+            json={}, timeout=30)
+        r.raise_for_status()
+        dl_info = next(iter(r.json()["download_urls"].values()))
+
+        r = self._req.get(dl_info["file_url"], timeout=120)
+        r.raise_for_status()
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        for name in zf.namelist():
+            content = zf.read(name).decode("utf-8", errors="replace")
+            # Strip markdown/html tags → plain text
+            # Strip base64 image data and HTML tags, clean whitespace
+            content = re.sub(r"!\[.*?\]\(data:image[^)]*\)", "", content)
+            content = re.sub(r"data:image\S+", "", content)
+            text = re.sub(r"<[^>]+>", " ", content)
+            text = re.sub(r"[#*_`~]+", "", text)
+            text = re.sub(r"\s+", " ", text).strip()
+            if text:
+                return text
+        return ""
+
     def parse_html(self, html: str, source_name: str) -> list[ArticleBlock]:
         """
         Parse Sarvam's structured HTML output into ArticleBlock list.
@@ -395,7 +473,8 @@ class ClaudeOCR:
             return raw, "", "te"
 
 
-OCR_BACKENDS = {"tesseract": TesseractOCR, "sarvam": SarvamPipeline, "claude": ClaudeOCR}
+OCR_BACKENDS = {"tesseract": TesseractOCR, "sarvam": SarvamPipeline,
+                "sarvam-crops": SarvamPipeline, "claude": ClaudeOCR}
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +523,65 @@ def clean_text(text: str) -> str:
 def extract(pdf_path: Path, out_dir: Path, ocr_name: str, dpi: int,
             lang: str, refine: bool, min_conf: float) -> list[ArticleBlock]:
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Sarvam-crops path: OpenCV segmentation + per-crop Sarvam OCR ──────────
+    if ocr_name == "sarvam-crops":
+        pipeline = SarvamPipeline()
+        crops_dir = out_dir / "crops"
+        crops_dir.mkdir(exist_ok=True)
+
+        pages = render_pages(pdf_path, dpi)
+        print(f"📄 Rendered {len(pages)} page(s) @ {dpi} DPI")
+        articles: list[ArticleBlock] = []
+
+        for pno, img in enumerate(pages, start=1):
+            boxes = segment_articles(img)
+            total = len(boxes)
+            print(f"   page {pno}: {total} article crops → sending to Sarvam one by one")
+            vis = img.copy()
+
+            for i, (x, y, w, h) in enumerate(boxes, start=1):
+                pad = 6
+                crop = img[max(y-pad,0):y+h+pad, max(x-pad,0):x+w+pad]
+                aid = f"p{pno}_a{i:02d}"
+                cv2.imwrite(str(crops_dir / f"{aid}.png"), crop)
+                print(f"   [{i}/{total}] {aid} ...", end=" ", flush=True)
+
+                raw = pipeline.ocr_crop(crop, label=aid)
+                raw = clean_text(raw)
+                print(f"{len(raw)}c")
+
+                if not raw:
+                    continue
+                headline, body = split_headline(raw)
+                language = detect_language(raw)
+                if not (headline or body):
+                    continue
+
+                articles.append(ArticleBlock(
+                    page=pno, article_id=aid, bbox=(x, y, w, h),
+                    headline=headline, body=body, raw_text=raw,
+                    language=language, confidence=0.95,
+                    crop_path=str((crops_dir / f"{aid}.png").relative_to(out_dir)),
+                ))
+                cv2.rectangle(vis, (x, y), (x+w, y+h), (0, 200, 0), 4)
+                cv2.putText(vis, aid, (x+8, y+42),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 200, 0), 3)
+
+            cv2.imwrite(str(out_dir / f"page_{pno}_layout.jpg"),
+                        cv2.resize(vis, (vis.shape[1]//2, vis.shape[0]//2)))
+
+        payload = {
+            "source": pdf_path.name,
+            "ocr_backend": "sarvam-crops",
+            "dpi": dpi,
+            "article_count": len(articles),
+            "articles": [a.to_dict() for a in articles],
+        }
+        (out_dir / "articles.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"✅ {len(articles)} articles → {out_dir / 'articles.json'}")
+        return articles
 
     # ── Sarvam path: full PDF → structured HTML → article parser ──────────────
     if ocr_name == "sarvam":
