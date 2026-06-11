@@ -1,3 +1,11 @@
+> [!WARNING]
+> **LEGACY — not in production.** The live GatiVani backend is the Supabase
+> Edge Functions in [`/supabase/functions`](../../supabase/functions)
+> (project `jjoxowdvzmlchtfarpbs`). The cPanel deployment this package
+> targeted (gativani.sohum.cloud) no longer serves the API. Kept for the
+> 3-stage pipeline reference (`src/services/stage*.js`) and DB migration
+> history (`src/database/`).
+
 # Node core (Express + Gemini + cPanel)
 
 This package is a small Express API intended to run behind **cPanel / Phusion Passenger** (or any Node host). It accepts document uploads, enforces **subscription tier page limits** before calling **Google Gemini** (default `gemini-2.0-flash`, suitable for the standard Generative Language API key flow).

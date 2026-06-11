@@ -1,5 +1,5 @@
 {
-  "name": "voxnews-node-core",
+  "name": "gativani-core-legacy",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -21,5 +21,6 @@
     "sarvamai": "^1.1.7",
     "unzipper": "^0.12.3",
     "ws": "^8.21.0"
-  }
+  },
+  "description": "LEGACY Express backend (cPanel era). Production now runs on Supabase Edge Functions in /supabase/functions. Kept for the 3-stage pipeline reference and DB migration history."
 }
