@@ -11,7 +11,12 @@ import 'package:archive/archive.dart';
 /// Based on official Sarvam AI API documentation
 class SarvamAIService {
   static const String _baseUrl = 'https://api.sarvam.ai';
-  static const String _apiKey = 'sk_xqudb0jx_2dQeYl1Q4K1BbhGDTLTeRIrH'; // Replace with actual key
+
+  /// Supply at build time: flutter build --dart-define=SARVAM_API_KEY=...
+  /// Never hardcode the key here — this file lives in a public repository.
+  /// Production should call the Supabase edge functions (see ApiConfig),
+  /// which hold the key server-side.
+  static const String _apiKey = String.fromEnvironment('SARVAM_API_KEY');
 
   /// Extract text from image using Sarvam AI OCR API (Document Intelligence)
   /// Falls back to editable template if API unavailable

@@ -68,7 +68,7 @@ NODE_ENV=production
 PORT=8788
 
 # Sarvam AI Configuration
-SARVAM_API_KEY=sk_sdq8hvkp_emPfj2uc78TQZQnDiAKJCe4x
+SARVAM_API_KEY=your_sarvam_key_here   # from dashboard.sarvam.ai — never commit real keys
 
 # Azure TTS Configuration (Fallback)
 AZURE_TTS_KEY=your_azure_key_here
