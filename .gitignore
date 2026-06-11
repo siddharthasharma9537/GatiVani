@@ -65,7 +65,6 @@ temp/
 uploads/
 
 # Supabase
-/supabase/
 supabase/.temp/
 packages/core/supabase/.temp/
 
@@ -80,4 +79,3 @@ __pycache__/
 *.pyc
 
 # Supabase local state
-supabase/.temp/
