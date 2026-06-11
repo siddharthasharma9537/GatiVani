@@ -1,0 +1,63 @@
+name: CI
+
+# Lean CI for the monorepo. The previous workflows lived in
+# packages/app/.github/workflows/ where GitHub never executes them
+# (workflows must be at repo root); they are preserved under
+# .github/workflows-archive/ for reference.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter-analyze:
+    name: Flutter analyze (packages/app)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Pub get
+        working-directory: packages/app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: packages/app
+        # Informational for now — flip to blocking once the existing
+        # analyzer findings are cleaned up.
+        continue-on-error: true
+        run: flutter analyze
+
+  node-core-check:
+    name: Syntax check (packages/core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        working-directory: packages/core
+        run: npm install --omit=dev --ignore-scripts
+      - name: Syntax check all sources
+        working-directory: packages/core
+        run: |
+          for f in $(find src -name '*.js'); do node --check "$f"; done
+
+  python-extraction-check:
+    name: Syntax check (gativani-extraction)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile check
+        run: python -m compileall gativani-extraction -q
