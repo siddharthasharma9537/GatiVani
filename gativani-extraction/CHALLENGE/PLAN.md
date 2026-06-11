@@ -209,3 +209,15 @@ mode work without any key. Python: pymupdf, cv2, numpy installed; add rapidfuzz.
   needs finer atomization or review).
 - Next: **Phase 3** — `solution/validate.py` per §4; must FAIL `current_bad_output.json`
   (catch p1_a02) and PASS `solution/articles.json`.
+
+### Phase 3 — DONE
+- `solution/validate.py`: caption_leak / fused_articles / dateline_midbody /
+  flow_continuity / headline_present / order_sanity (flow-aware) / coverage.
+- Old output: 44 flags; p1_a02 caught automatically (caption_leak +
+  "4 datelines + 4 signatures in one body").
+- New output: 12/15 PASS; all 4 remaining flags are TRUE positives (a1 dangling
+  source fragment, a10 embedded headline+caption, a11 block-79 placement — the
+  validator caught the assigner's own least-confident guess). 1 uncertain (block 50).
+- Next: **Phase 4** — second page from ~/Downloads/Eenadu_TELANGANA_20260512.pdf
+  (extract a different page with PyMuPDF, run live Sarvam HTML job via
+  pipeline.py --pdf, then Stage-B assignment + validate; no code changes).
