@@ -28,8 +28,18 @@ interface AssignedBlock {
   continues_block?: number;
 }
 
+export const CATEGORIES = [
+  "International", "National", "State", "District", "Politics", "Editorial",
+  "Business", "Sports", "Entertainment", "Health", "Sci-Tech", "Education",
+  "Agriculture", "Crime", "Judiciary", "Devotional", "Trending", "News",
+] as const;
+
 interface Assignment {
-  articles: Array<{ article_id: string; blocks: AssignedBlock[] }>;
+  articles: Array<{
+    article_id: string;
+    category?: string;       // one of CATEGORIES — an enum label, not free text
+    blocks: AssignedBlock[];
+  }>;
   drop?: Array<{ id: number; reason: string }>;
   uncertain?: Array<{ id: number; candidates?: string[]; reason?: string }>;
 }
@@ -39,6 +49,7 @@ export interface StructuredArticle {
   content: string;          // body paragraphs joined with \n\n
   subheadings: string[];
   captions: string[];
+  category: string;         // from CATEGORIES; "" if model omitted it
   review: string[];         // validation flags; empty = clean
 }
 
@@ -193,8 +204,15 @@ Rules:
 - If genuinely unsure where a block belongs, put it in "uncertain" with candidate
   article ids — do NOT guess silently.
 
+For each article also set "category" — exactly one of:
+International | National | State | District | Politics | Editorial | Business |
+Sports | Entertainment | Health | Sci-Tech | Education | Agriculture | Crime |
+Judiciary | Devotional | Trending | News
+(District = hyperlocal town/mandal news; State = state-level news; use News only
+when nothing else fits.)
+
 Return ONLY this JSON:
-{"articles":[{"article_id":"a1","blocks":[{"id":5,"role":"headline"},
+{"articles":[{"article_id":"a1","category":"Agriculture","blocks":[{"id":5,"role":"headline"},
  {"id":7,"role":"body","seq":1},{"id":9,"role":"body","seq":2,"continues_block":7}]}],
  "drop":[{"id":3,"reason":"masthead"}],
  "uncertain":[{"id":41,"candidates":["a4","a5"],"reason":"…"}]}
@@ -444,11 +462,15 @@ export async function extractArticlesStructured(
     }
     bodyEntries.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
     const paragraphs = stitch(bodyEntries.map((e) => e[2]));
+    const category = (CATEGORIES as readonly string[]).includes(art.category ?? "")
+      ? art.category!
+      : "";
     const article: StructuredArticle = {
       title: title || subs[0] || "",
       content: paragraphs.join("\n\n"),
       subheadings: subs,
       captions: caps,
+      category,
       review: [],
     };
     if (article.content.length < 60) continue;  // skip empty/fragment articles

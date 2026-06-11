@@ -985,9 +985,12 @@ Deno.serve(async (req) => {
     const suggestedSpeaker = speakerForDocumentType(documentType);
 
     const articles = segments.map((seg, i) => {
-      // Category: use document-type override first, then regex fallback
+      // Category priority: structured engine (Gemini per-article) → document-type
+      // override → regex keyword fallback
       const dtCategory = categoryForDocumentType(documentType);
-      const category = dtCategory || deriveCategory(seg.title + " " + seg.content.slice(0, 300));
+      const category = structuredMeta?.articles[i]?.category
+        || dtCategory
+        || deriveCategory(seg.title + " " + seg.content.slice(0, 300));
       const preview = seg.content.replace(/\n/g, " ").trim().slice(0, 200);
       const duration = estimateDurationSeconds(seg.content);
       const sm = structuredMeta?.articles[i];
