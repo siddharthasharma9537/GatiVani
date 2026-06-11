@@ -79,3 +79,10 @@ __pycache__/
 *.pyc
 
 # Supabase local state
+
+# Local test fixtures — copyrighted newspaper scans stay out of the public repo
+packages/uploads/
+gativani-extraction/CHALLENGE/artifacts/*.pdf
+gativani-extraction/CHALLENGE/artifacts/*.png
+gativani-extraction/CHALLENGE/artifacts/*.jpg
+gativani-extraction/CHALLENGE/artifacts/crops/

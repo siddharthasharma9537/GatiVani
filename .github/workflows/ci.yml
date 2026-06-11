@@ -34,6 +34,13 @@ jobs:
         # analyzer findings are cleaned up.
         continue-on-error: true
         run: flutter analyze
+      - name: Test
+        working-directory: packages/app
+        # Informational: the suite currently references services that do not
+        # exist in lib/ (firebase_service, gemini_service, news_service) and
+        # cannot compile — needs an overhaul. See AUDIT.md.
+        continue-on-error: true
+        run: flutter test
 
   node-core-check:
     name: Syntax check (packages/core)

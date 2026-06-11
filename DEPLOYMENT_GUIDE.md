@@ -1,3 +1,8 @@
+> [!WARNING]
+> **STALE — describes the retired cPanel/Express/Azure-TTS architecture.**
+> The live system is Supabase Edge Functions + Gemini 2.5 Flash TTS / Sarvam
+> fallback. See [AUDIT.md](AUDIT.md) for the current verified topology.
+
 # GatiVani Node.js Backend - Deployment Guide
 
 ## Overview

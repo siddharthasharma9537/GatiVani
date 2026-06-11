@@ -88,3 +88,33 @@ benchmark page, 55 s end-to-end, all rows persisted with `extraction_engine:
 "structured-v1"` and per-article review flags. Remaining tuning: title quality on
 boxed/graphic items, and per-model Gemini quota headroom (the ladder degrades
 gracefully through flash-lite and text-only modes).
+
+
+---
+
+## Follow-up sweep — 2026-06-11 (afternoon): all open items executed
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Broken cover-art URLs | ✅ `uploads` bucket made public (migration); all `storage_url`s serve HTTP 200 |
+| 2 | `extracted_texts` anon INSERT + broad UPDATE | ✅ policies dropped/fixed (migration); advisor warnings cleared |
+| 3 | `update_timestamp` search_path | ✅ pinned (migration) |
+| 4 | Firebase key restriction | ⚠️ user action — restrict in Google Cloud Console |
+| 5 | Tier spoofing / no rate limit | ✅ header honored only for authenticated JWTs (anon→free, verified); per-IP 12/h limit via `request_log` |
+| 6 | Audio regenerated every play | ✅ `documents-synthesize` caches to public `audio` bucket + `articles.audio_url` (verified: 2nd call `provider=cache`, URL serves) |
+| 7 | `publication_date` = upload date | ✅ printed date (Gemini) → filename (`…20260512`) → today |
+| 8 | Stage-2 token waste | ✅ split into small classify call + lazy correction; structured path skips correction entirely (~halves Gemini tokens/page) |
+| 9 | Dead Flutter code | ✅ removed unrouted `review_screen.dart`, dead `sarvam_ai_service.dart` (+ orphan tests, mock stripped) |
+| 10 | Stale docs | ✅ warning banners on 6 legacy-era root docs |
+| 11 | Deploy automation | ✅ `.github/workflows/deploy-functions.yml` (auto-deploy on `supabase/functions/**` push). **User action:** `gh secret set SUPABASE_ACCESS_TOKEN` (token from supabase.com/dashboard/account/tokens) — skips safely until set |
+| 12 | Repo bloat / copyright | ✅ `packages/uploads/` (35 MB) + CHALLENGE page scans untracked & gitignored (note: still in git history — full scrub needs `git filter-repo` or a private repo) |
+| 13 | Test suite health | ⚠️ documented: suite references nonexistent services (`firebase_service`, `gemini_service`, `news_service`) and cannot compile — needs an overhaul; `flutter test` added to CI as informational |
+
+**Duplicates check:** 0 duplicate (title, date) newspaper groups after dedupe + upsert.
+**Advisors:** previous 3 WARNs cleared; one intentional INFO (`request_log` service-role-only).
+**Known transient:** free-tier Gemini daily quota exhausted by today's testing — summarize
+returns 429 until reset; documents-process degrades through its flash-lite/text-only ladder.
+Durable fix: paid-tier Gemini key.
+
+**Still user-only actions:** rotate both leaked Sarvam keys; set SUPABASE_ACCESS_TOKEN
+secret; restrict Firebase keys; (optional) repo private / history scrub.

@@ -1,7 +1,6 @@
 /// Mock implementations of services for testing
 import 'package:mockito/mockito.dart';
 import 'package:gativani/services/firebase_service.dart';
-import 'package:gativani/services/sarvam_ai_service.dart';
 import 'package:gativani/services/gemini_service.dart';
 import 'package:gativani/services/storage_service.dart';
 import 'package:gativani/services/news_service.dart';
@@ -37,42 +36,6 @@ class MockFirebaseAnalytics extends Mock implements FirebaseAnalytics {}
 
 /// Mock FirebaseMessaging
 class MockFirebaseMessaging extends Mock implements FirebaseMessaging {}
-
-/// Mock SarvamAIService
-class MockSarvamAIService extends Mock implements SarvamAIService {
-  @override
-  void initialize() {}
-
-  @override
-  Future<String> extractTextFromImage(
-    String imagePath, {
-    String language = 'te',
-  }) async =>
-      'Extracted text from image';
-
-  @override
-  Future<String> textToSpeech(
-    String text, {
-    String language = 'te',
-    String gender = 'female',
-    double speed = 1.0,
-  }) async =>
-      'https://example.com/audio.mp3';
-
-  @override
-  Future<List<String>> batchTextToSpeech(
-    List<String> texts, {
-    String language = 'te',
-    String gender = 'female',
-  }) async =>
-      ['https://example.com/audio1.mp3', 'https://example.com/audio2.mp3'];
-
-  @override
-  Future<bool> healthCheck() async => true;
-
-  @override
-  void dispose() {}
-}
 
 /// Mock GeminiService
 class MockGeminiService extends Mock implements GeminiService {
