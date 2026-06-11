@@ -259,3 +259,12 @@ mode work without any key. Python: pymupdf, cv2, numpy installed; add rapidfuzz.
 
 All detected cases land in the `uncertain`/flags output consumed by the app's
 existing OCR-review screen. Challenge deliverables 1–4 complete.
+
+### Addendum — Gemini 2.5 Flash assigner (cost option)
+- `assign_with_gemini()` added to solution/pipeline.py (`--gemini`, REST, 5xx backoff,
+  `thinkingBudget: 0` — thinking otherwise eats the JSON output budget and truncates).
+- Live page-1 result: 13 articles, 10/13 PASS, 12/14 reference headlines.
+  Errors: merged farmer-profile + Q&A (CAUGHT by fused_articles), silently dropped
+  the జంతుశాల brief (trusted the wrong `advertisement` class hint).
+- Cost: ~$0.01/page vs ~$0.09–0.11 Opus (~10x cheaper). Recommended production policy:
+  Gemini-first; validator-flagged articles escalate to review or a Claude re-pass.

@@ -223,6 +223,56 @@ def assign_with_anthropic(blocks: list[Block], page_png: Path, model: str) -> di
     raise RuntimeError(f"assignment invalid after retry: {last_err}")
 
 
+def assign_with_gemini(blocks: list[Block], page_png: Path,
+                       model: str = "gemini-2.5-flash") -> dict:
+    """Same contract as assign_with_anthropic, via the Gemini REST API.
+    ~12x cheaper per page; the validator audits the result either way."""
+    import base64
+    import requests
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise RuntimeError("Set GEMINI_API_KEY for --gemini")
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{model}:generateContent?key={key}")
+    img_b64 = base64.standard_b64encode(page_png.read_bytes()).decode()
+    parts = [
+        {"inline_data": {"mime_type": "image/png", "data": img_b64}},
+        {"text": PROMPT + manifest(blocks)},
+    ]
+    last_err = ""
+    for attempt in range(2):
+        req_parts = parts if not last_err else parts + [
+            {"text": f"Your previous answer was invalid: {last_err}. "
+                     f"Return corrected JSON only."}]
+        import time
+        for backoff in (0, 5, 15, 30):
+            if backoff:
+                time.sleep(backoff)
+            r = requests.post(url, json={
+                "contents": [{"role": "user", "parts": req_parts}],
+                "generationConfig": {"maxOutputTokens": 32000,
+                                     "responseMimeType": "application/json",
+                                     # thinking eats the output budget on 2.5
+                                     # and isn't needed for this mapping task
+                                     "thinkingConfig": {"thinkingBudget": 0}},
+            }, timeout=300)
+            if r.status_code < 500:
+                break
+        r.raise_for_status()
+        txt = "".join(p.get("text", "") for p in
+                      r.json()["candidates"][0]["content"]["parts"])
+        m = re.search(r"\{.*\}", txt, re.S)
+        try:
+            data = json.loads(m.group(0)) if m else json.loads(txt)
+            err = check_assignment(blocks, data)
+            if not err:
+                return data
+            last_err = err
+        except (json.JSONDecodeError, AttributeError) as e:
+            last_err = f"JSON parse error: {e}"
+    raise RuntimeError(f"assignment invalid after retry: {last_err}")
+
+
 def check_assignment(blocks: list[Block], data: dict) -> str:
     """Return '' if valid, else error description. Enforces id bijection + vocab."""
     ids = {b.id for b in blocks}
@@ -334,7 +384,10 @@ def main():
     ap.add_argument("--manifest", action="store_true", help="print block manifest and exit")
     ap.add_argument("--assignments", type=Path, help="manual assignment JSON (key-free mode)")
     ap.add_argument("--anthropic", action="store_true", help="use Claude API for assignment")
-    ap.add_argument("--model", default="claude-opus-4-8")
+    ap.add_argument("--gemini", action="store_true",
+                    help="use Gemini API for assignment (~12x cheaper)")
+    ap.add_argument("--model", default=None,
+                    help="override model id (default: claude-opus-4-8 / gemini-2.5-flash)")
     ap.add_argument("-o", "--out", type=Path, default=Path("articles.json"))
     args = ap.parse_args()
 
@@ -360,9 +413,17 @@ def main():
     elif args.anthropic:
         if not args.page_image:
             ap.error("--anthropic requires --page-image")
-        data = assign_with_anthropic(blocks, args.page_image, args.model)
+        data = assign_with_anthropic(blocks, args.page_image,
+                                     args.model or "claude-opus-4-8")
+    elif args.gemini:
+        if not args.page_image:
+            ap.error("--gemini requires --page-image")
+        data = assign_with_gemini(blocks, args.page_image,
+                                  args.model or "gemini-2.5-flash")
+        Path(str(args.out) + ".assignments.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     else:
-        ap.error("need --assignments or --anthropic (or --manifest)")
+        ap.error("need --assignments, --anthropic, or --gemini (or --manifest)")
 
     result = assemble(blocks, data)
     result["source"] = str(args.pdf or args.html)
