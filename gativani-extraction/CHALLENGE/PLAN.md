@@ -231,3 +231,31 @@ mode work without any key. Python: pymupdf, cv2, numpy installed; add rapidfuzz.
   84'వివరా'+87'లను'). Ads/notices (19 blocks) correctly dropped.
 - Next: **Phase 5** — `--ocr sarvam-structured` backend in
   backend/extraction/extract_articles.py mapping solution output to legacy JSON shape.
+
+### Phase 5 — DONE
+- `--ocr sarvam-structured` added to `backend/extraction/extract_articles.py`
+  (OCR_BACKENDS + extract() branch). Uses ANTHROPIC_API_KEY for live assignment or
+  GATIVANI_ASSIGNMENTS=<file> for the key-free/manual path; without either it writes
+  the block manifest and exits with instructions. Output is legacy-shape
+  `articles.json` (app-compatible) plus `structured` (subheadings/captions/tables)
+  and `uncertain` fields. Verified end-to-end against cached page-1 artifacts.
+
+## Honest failure modes (deliverable #4)
+1. **Sarvam loses text under tight layouts** (a1's dangling "వ్యర్ధంకావు," — the
+   sentence tail under the photo never reached the HTML). Detected by
+   flow_continuity; unrecoverable without a second OCR pass on the gap region.
+2. **Headline fused inside one block** (a10 జంతుశాల: headline+body+embedded caption
+   in a single aside). The index-only contract can't split a block. Detected by
+   headline_missing; fix = finer atomization (sentence-level split of asides) or review.
+3. **Graphic/stylized titles never reach OCR** (page-2 keychain craft headline).
+   Detected by headline_missing.
+4. **Assigner misjudgment on ambiguous continuations** (a11 block 79 placement).
+   Detected by flow-aware order_sanity — the validator audits the model.
+5. **Decorative tiny-font fragments lost** (page-2 Sadhguru quote middle). Detected
+   by flow_continuity.
+6. **Residual risk not yet covered**: a wrong-but-fluent assignment (two same-topic
+   articles merged where the seam happens to read smoothly) can pass validation.
+   Mitigation: double-run agreement diff (PLAN §4, optional) — not yet implemented.
+
+All detected cases land in the `uncertain`/flags output consumed by the app's
+existing OCR-review screen. Challenge deliverables 1–4 complete.

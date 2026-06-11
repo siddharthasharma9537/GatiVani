@@ -474,7 +474,8 @@ class ClaudeOCR:
 
 
 OCR_BACKENDS = {"tesseract": TesseractOCR, "sarvam": SarvamPipeline,
-                "sarvam-crops": SarvamPipeline, "claude": ClaudeOCR}
+                "sarvam-crops": SarvamPipeline, "claude": ClaudeOCR,
+                "sarvam-structured": SarvamPipeline}
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +598,68 @@ def extract(pdf_path: Path, out_dir: Path, ocr_name: str, dpi: int,
             "dpi": None,
             "article_count": len(articles),
             "articles": [a.to_dict() for a in articles],
+        }
+        (out_dir / "articles.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"✅ {len(articles)} articles → {out_dir / 'articles.json'}")
+        return articles
+
+    # ── Sarvam-structured path: full-page HTML + vision-LLM structure ─────────
+    # The CHALLENGE solution (gativani-extraction/CHALLENGE/PLAN.md):
+    # atomize Sarvam HTML nesting → index-only structure assignment → assemble.
+    if ocr_name == "sarvam-structured":
+        sol = Path(__file__).resolve().parents[2] / "CHALLENGE" / "solution"
+        sys.path.insert(0, str(sol))
+        import pipeline as sp
+
+        html = SarvamPipeline().run(pdf_path)
+        html = re.sub(r'data:image/[^"\')]+', "", html)
+        (out_dir / "sarvam_output.html").write_text(html, encoding="utf-8")
+        blocks = sp.parse_blocks(html)
+        print(f"   atomized {len(blocks)} blocks")
+
+        assignments_env = os.environ.get("GATIVANI_ASSIGNMENTS", "")
+        if assignments_env:
+            data = json.loads(Path(assignments_env).read_text(encoding="utf-8"))
+            err = sp.check_assignment(blocks, data)
+            if err:
+                raise SystemExit(f"assignment file invalid: {err}")
+        elif os.environ.get("ANTHROPIC_API_KEY"):
+            page_png = out_dir / "page_render.png"
+            doc = fitz.open(pdf_path)
+            doc[0].get_pixmap(dpi=150).save(page_png)
+            doc.close()
+            data = sp.assign_with_anthropic(blocks, page_png, "claude-opus-4-8")
+        else:
+            (out_dir / "manifest.txt").write_text(sp.manifest(blocks),
+                                                  encoding="utf-8")
+            raise SystemExit(
+                "sarvam-structured needs ANTHROPIC_API_KEY for the structure "
+                f"assignment, or GATIVANI_ASSIGNMENTS=<file>. Block manifest "
+                f"written to {out_dir / 'manifest.txt'}.")
+
+        result = sp.assemble(blocks, data)
+        articles = []
+        for a in result["articles"]:
+            body = "\n\n".join(a["body_paragraphs"])
+            articles.append(ArticleBlock(
+                page=1,
+                article_id=a["article_id"],
+                bbox=tuple(a["bbox"].values()) if a.get("bbox") else (0, 0, 0, 0),
+                headline=a["headline"],
+                body=body,
+                raw_text="\n".join([a["headline"], *a["subheadings"], body]).strip(),
+                language=detect_language(body),
+                confidence=0.95,
+            ))
+        payload = {
+            "source": pdf_path.name,
+            "ocr_backend": "sarvam-structured",
+            "dpi": None,
+            "article_count": len(articles),
+            "articles": [a.to_dict() for a in articles],
+            "structured": result["articles"],   # full structure incl. subheadings/captions
+            "uncertain": result["uncertain"],
         }
         (out_dir / "articles.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
