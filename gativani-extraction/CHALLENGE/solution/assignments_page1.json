@@ -1,0 +1,156 @@
+{
+  "_note": "Stage-B output produced by the vision model (Claude Fable 5) from page_clean.png + block manifest. Index-only: no Telugu text generated. Continuation evidence: mid-word seams verified against ground-truth text (e.g. 47'ప్రణా'+45'ళిక', 91'సింగిరెడ్డిపల్లి'+85'గ్రామానికి', 122'రోబో'+29'టిక్స్', 78'దరించుకు'+80'న్నారు', 64'పొట్టు'+66'వేసి', 56'ప్రజా'+60'ప్రతినిధులకే', 109'గొడవ'+110'పడేవాడు', 112'క'+113'థలాపూర్').",
+  "articles": [
+    {"article_id": "a1_fertigation", "blocks": [
+      {"id": 0, "role": "headline"},
+      {"id": 1, "role": "body", "seq": 1},
+      {"id": 3, "role": "body", "seq": 2, "continues_block": 1},
+      {"id": 4, "role": "body", "seq": 3},
+      {"id": 6, "role": "body", "seq": 4, "continues_block": 4},
+      {"id": 5, "role": "body", "seq": 5},
+      {"id": 7, "role": "body", "seq": 6, "continues_block": 5},
+      {"id": 10, "role": "body", "seq": 7},
+      {"id": 11, "role": "body", "seq": 8},
+      {"id": 12, "role": "body", "seq": 9},
+      {"id": 9, "role": "caption"}
+    ]},
+    {"article_id": "a2_robotics_camp", "blocks": [
+      {"id": 17, "role": "headline"},
+      {"id": 18, "role": "subheading"},
+      {"id": 19, "role": "body", "seq": 1},
+      {"id": 20, "role": "body", "seq": 2},
+      {"id": 122, "role": "body", "seq": 3, "continues_block": 20},
+      {"id": 29, "role": "body", "seq": 4, "continues_block": 122},
+      {"id": 24, "role": "subheading"},
+      {"id": 23, "role": "body", "seq": 5},
+      {"id": 25, "role": "body", "seq": 6, "continues_block": 23},
+      {"id": 26, "role": "body", "seq": 7},
+      {"id": 27, "role": "body", "seq": 8, "continues_block": 26},
+      {"id": 31, "role": "subheading"},
+      {"id": 32, "role": "body", "seq": 9},
+      {"id": 33, "role": "body", "seq": 10},
+      {"id": 21, "role": "table"},
+      {"id": 121, "role": "caption"}
+    ]},
+    {"article_id": "a3_farmer_raju", "blocks": [
+      {"id": 15, "role": "headline"},
+      {"id": 16, "role": "subheading"},
+      {"id": 44, "role": "body", "seq": 1},
+      {"id": 46, "role": "body", "seq": 2, "continues_block": 44},
+      {"id": 47, "role": "body", "seq": 3, "continues_block": 46},
+      {"id": 45, "role": "body", "seq": 4, "continues_block": 47},
+      {"id": 48, "role": "body", "seq": 5, "continues_block": 45},
+      {"id": 49, "role": "body", "seq": 6},
+      {"id": 43, "role": "caption"}
+    ]},
+    {"article_id": "a4_farmer_qa", "blocks": [
+      {"id": 34, "role": "headline"},
+      {"id": 35, "role": "body", "seq": 1},
+      {"id": 36, "role": "body", "seq": 2},
+      {"id": 37, "role": "body", "seq": 3},
+      {"id": 38, "role": "body", "seq": 4},
+      {"id": 39, "role": "body", "seq": 5},
+      {"id": 40, "role": "body", "seq": 6}
+    ]},
+    {"article_id": "a5_cm_relief_fund", "blocks": [
+      {"id": 51, "role": "headline"},
+      {"id": 52, "role": "subheading"},
+      {"id": 54, "role": "body", "seq": 1},
+      {"id": 55, "role": "body", "seq": 2},
+      {"id": 56, "role": "body", "seq": 3},
+      {"id": 60, "role": "body", "seq": 4, "continues_block": 56},
+      {"id": 62, "role": "body", "seq": 5, "continues_block": 60},
+      {"id": 57, "role": "subheading"},
+      {"id": 58, "role": "body", "seq": 6},
+      {"id": 59, "role": "body", "seq": 7, "continues_block": 58}
+    ]},
+    {"article_id": "a6_dtc_post", "blocks": [
+      {"id": 61, "role": "headline"},
+      {"id": 63, "role": "body", "seq": 1}
+    ]},
+    {"article_id": "a7_vermicompost", "blocks": [
+      {"id": 65, "role": "headline"},
+      {"id": 67, "role": "subheading"},
+      {"id": 64, "role": "body", "seq": 1},
+      {"id": 66, "role": "body", "seq": 2, "continues_block": 64},
+      {"id": 68, "role": "body", "seq": 3, "continues_block": 66}
+    ]},
+    {"article_id": "a8_cheque_bounce", "blocks": [
+      {"id": 69, "role": "headline"},
+      {"id": 70, "role": "body", "seq": 1}
+    ]},
+    {"article_id": "a9_chicken_340", "blocks": [
+      {"id": 71, "role": "headline"},
+      {"id": 72, "role": "body", "seq": 1},
+      {"id": 81, "role": "body", "seq": 2},
+      {"id": 82, "role": "subheading"},
+      {"id": 83, "role": "body", "seq": 3}
+    ]},
+    {"article_id": "a10_animal_house", "blocks": [
+      {"id": 74, "role": "body", "seq": 1}
+    ]},
+    {"article_id": "a11_bheemanna_temple", "blocks": [
+      {"id": 75, "role": "headline"},
+      {"id": 76, "role": "body", "seq": 1},
+      {"id": 78, "role": "body", "seq": 2},
+      {"id": 80, "role": "body", "seq": 3, "continues_block": 78},
+      {"id": 79, "role": "body", "seq": 4},
+      {"id": 123, "role": "caption"}
+    ]},
+    {"article_id": "a13_murder_arrest", "blocks": [
+      {"id": 89, "role": "headline"},
+      {"id": 90, "role": "subheading"},
+      {"id": 91, "role": "body", "seq": 1},
+      {"id": 85, "role": "body", "seq": 2, "continues_block": 91},
+      {"id": 94, "role": "body", "seq": 3, "continues_block": 85},
+      {"id": 93, "role": "body", "seq": 4, "continues_block": 94},
+      {"id": 95, "role": "body", "seq": 5},
+      {"id": 96, "role": "body", "seq": 6, "continues_block": 95},
+      {"id": 124, "role": "caption"}
+    ]},
+    {"article_id": "a14_auto_driver", "blocks": [
+      {"id": 86, "role": "headline"},
+      {"id": 87, "role": "body", "seq": 1}
+    ]},
+    {"article_id": "a15_go17_protest", "blocks": [
+      {"id": 97, "role": "headline"},
+      {"id": 98, "role": "body", "seq": 1},
+      {"id": 99, "role": "body", "seq": 2, "continues_block": 98},
+      {"id": 101, "role": "body", "seq": 3},
+      {"id": 125, "role": "caption"}
+    ]},
+    {"article_id": "a16_four_suicides", "blocks": [
+      {"id": 103, "role": "headline"},
+      {"id": 104, "role": "subheading"},
+      {"id": 105, "role": "body", "seq": 1},
+      {"id": 107, "role": "body", "seq": 2, "continues_block": 105},
+      {"id": 108, "role": "body", "seq": 3},
+      {"id": 109, "role": "body", "seq": 4},
+      {"id": 110, "role": "body", "seq": 5, "continues_block": 109},
+      {"id": 111, "role": "subheading"},
+      {"id": 112, "role": "body", "seq": 6},
+      {"id": 113, "role": "body", "seq": 7, "continues_block": 112},
+      {"id": 116, "role": "body", "seq": 8, "continues_block": 113},
+      {"id": 126, "role": "caption"},
+      {"id": 127, "role": "caption"}
+    ]}
+  ],
+  "drop": [
+    {"id": 2, "reason": "noise"}, {"id": 8, "reason": "noise"},
+    {"id": 13, "reason": "noise"}, {"id": 14, "reason": "noise"},
+    {"id": 22, "reason": "noise"}, {"id": 28, "reason": "noise"},
+    {"id": 30, "reason": "noise"}, {"id": 41, "reason": "noise"},
+    {"id": 42, "reason": "noise"}, {"id": 53, "reason": "noise"},
+    {"id": 73, "reason": "noise"}, {"id": 77, "reason": "noise"},
+    {"id": 84, "reason": "ad"},
+    {"id": 88, "reason": "noise"}, {"id": 92, "reason": "noise"},
+    {"id": 100, "reason": "noise"}, {"id": 102, "reason": "noise"},
+    {"id": 106, "reason": "noise"}, {"id": 114, "reason": "noise"},
+    {"id": 115, "reason": "noise"}, {"id": 117, "reason": "noise"},
+    {"id": 118, "reason": "noise"}, {"id": 119, "reason": "noise"},
+    {"id": 120, "reason": "noise"}
+  ],
+  "uncertain": [
+    {"id": 50, "candidates": [], "reason": "orphan dateline fragment 'న్యూస్టుడే, చొప్పదండి స్కూలు అండగా నిలిచే' — tail of an article not otherwise present on this page; needs human review"}
+  ]
+}

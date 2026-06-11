@@ -196,3 +196,16 @@ mode work without any key. Python: pymupdf, cv2, numpy installed; add rapidfuzz.
   Phase-1 outline parser (HTML → blocks) — reference snippet lives in git history
   of this session; it's ~30 lines with html.parser. Use cached
   `artifacts/sarvam_fullpage.html` (do NOT re-run Sarvam for page 1).
+
+### Phase 2 — DONE
+- `solution/pipeline.py`: [A] HTML→128 blocks, [B] Claude-API + manual assigner with
+  id-bijection enforcement, [C] assembler with Telugu fragment stitching.
+- `solution/assignments_page1.json`: Stage-B output (index-only) produced by the vision
+  model from page image + manifest; continuation seams verified mid-word.
+- `solution/articles.json`: **15 articles**, all correct headlines; murder article
+  stitched across 2 columns reads continuously; farmer profile reordered
+  44→46→47→45→48→49; 0 caption leaks; fertigation ≠ Q&A (p1_a02 fixed); 1 honest
+  uncertain (orphan block 50); a10 జంతుశాల flagged (headline embedded in single block —
+  needs finer atomization or review).
+- Next: **Phase 3** — `solution/validate.py` per §4; must FAIL `current_bad_output.json`
+  (catch p1_a02) and PASS `solution/articles.json`.
