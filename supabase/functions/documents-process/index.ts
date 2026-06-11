@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { SarvamAIClient } from "npm:sarvamai@1.1.7";
+import { extractArticlesStructured, type StructuredResult } from "./structure.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -871,6 +872,8 @@ Deno.serve(async (req) => {
     const isUnified = UNIFIED_DOCUMENT_TYPES.has(documentType);
 
     let segments: ArticleSegment[];
+    let structuredMeta: StructuredResult | null = null;
+    let structuredError = "";
     if (isUnified) {
       // One article: title = Gemini-identified name, content = full corrected text
       const titleForUnified = documentTitle
@@ -879,20 +882,35 @@ Deno.serve(async (req) => {
       segments = [{ title: titleForUnified, content: refinedText }];
       console.log(`[stage3] Unified document (${documentType}) → 1 article: "${titleForUnified}"`);
     } else if (documentType === "newspaper" && rawOcrHtml.length > 100) {
-      // Use layout-aware HTML parser: preserves column boundaries, prevents cross-column bleed
-      segments = parseHtmlToArticles(rawOcrHtml, originalName);
-      console.log(`[stage3] HTML column-aware parse → ${segments.length} articles`);
-      // Overlay Gemini-corrected text onto the HTML-parsed articles.
-      // The HTML parser gives us correct article boundaries (titles/order);
-      // Gemini gives us OCR-error-free body text.  Merging gets us both.
-      if (segments.length > 0 && refinedText.length > 100) {
-        segments = applyGeminiCorrections(segments, refinedText);
-        console.log(`[stage3] Gemini corrections applied to article content`);
+      // Primary: structured engine — atomize Sarvam HTML nesting, Gemini assigns
+      // structure as block indices only (never text), deterministic assembly +
+      // validation. Ported from gativani-extraction/CHALLENGE (15 vs 4 articles
+      // on the benchmark page).
+      if (GEMINI_KEY) {
+        try {
+          structuredMeta = await extractArticlesStructured(
+            rawOcrHtml, buffer, file.type || "application/pdf", GEMINI_KEY);
+        } catch (e) {
+          structuredError = (e as Error).message;
+          console.warn("[stage3] structured engine failed, falling back:", structuredError);
+        }
       }
-      // Fallback: if HTML parse returns nothing useful, use Gemini-corrected text
-      if (segments.length === 0) {
-        segments = segmentArticles(refinedText, originalName);
-        console.log(`[stage3] Fallback to text segmentation → ${segments.length} articles`);
+      if (structuredMeta && structuredMeta.articles.length >= 3) {
+        segments = structuredMeta.articles.map((a) => ({ title: a.title, content: a.content }));
+        console.log(`[stage3] structured engine → ${segments.length} articles ` +
+          `(${structuredMeta.flaggedCount} flagged, ${structuredMeta.uncertainCount} uncertain)`);
+      } else {
+        // Legacy fallback: layout-aware HTML parser + Gemini text overlay
+        structuredMeta = null;
+        segments = parseHtmlToArticles(rawOcrHtml, originalName);
+        console.log(`[stage3] legacy HTML parse → ${segments.length} articles`);
+        if (segments.length > 0 && refinedText.length > 100) {
+          segments = applyGeminiCorrections(segments, refinedText);
+        }
+        if (segments.length === 0) {
+          segments = segmentArticles(refinedText, originalName);
+          console.log(`[stage3] fallback text segmentation → ${segments.length} articles`);
+        }
       }
     } else {
       segments = segmentArticles(refinedText, originalName);
@@ -907,6 +925,7 @@ Deno.serve(async (req) => {
       const category = dtCategory || deriveCategory(seg.title + " " + seg.content.slice(0, 300));
       const preview = seg.content.replace(/\n/g, " ").trim().slice(0, 200);
       const duration = estimateDurationSeconds(seg.content);
+      const sm = structuredMeta?.articles[i];
       return {
         id: `article_${ts}_${i + 1}`,
         title: seg.title,
@@ -919,6 +938,10 @@ Deno.serve(async (req) => {
         estimatedDurationSeconds: duration,
         audioUrl: null,
         page: 1,
+        // additive fields from the structured engine (null on legacy path)
+        subheadings: sm?.subheadings ?? null,
+        captions: sm?.captions ?? null,
+        reviewFlags: sm?.review?.length ? sm.review : null,
       };
     });
 
@@ -973,6 +996,10 @@ Deno.serve(async (req) => {
           reading_style: readingStyle,
           suggested_speaker: suggestedSpeaker,
           estimated_duration_seconds: art.estimatedDurationSeconds,
+          subheadings: art.subheadings ?? undefined,
+          captions: art.captions ?? undefined,
+          review_flags: art.reviewFlags ?? undefined,
+          extraction_engine: structuredMeta ? "structured-v1" : "legacy",
         },
       }));
 
@@ -1011,7 +1038,12 @@ Deno.serve(async (req) => {
         documentType,
         readingStyle,
       },
-      models: { ocr: "sarvam-ocr", refinement: GEMINI_KEY ? "gemini-2.5-flash" : "none" },
+      models: {
+        ocr: "sarvam-ocr",
+        refinement: GEMINI_KEY ? "gemini-2.5-flash" : "none",
+        extraction: structuredMeta ? "structured-v1 (gemini-2.5-flash)" : "legacy-html-parser",
+        extractionError: structuredError || undefined,
+      },
       subscription: { tier, active: true },
       limits: { maxPages: cap, totalPages: 1, processedPages: 1, truncated: false },
     });

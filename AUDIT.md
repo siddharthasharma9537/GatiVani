@@ -70,16 +70,21 @@ Flutter app (packages/app)  ──►  Supabase Edge Functions (project jjoxowdv
    one-line hardening: `alter function public.update_timestamp() set search_path = '';`
 4. **Firebase client keys** in `google-services.json` / `GoogleService-Info.plist` are
    public-by-design but should be API-restricted in Google Cloud Console.
-5. **Hardcoded page-specific hack in production parser** — `documents-process`
-   contains a literal Telugu sentence (`waterFlowSentence`) from one test page. The
-   layout engine in `gativani-extraction/CHALLENGE/solution/` is the designed
-   replacement (validated: 15 vs 4 articles on the same page).
+5. ~~Hardcoded page-specific hack in production parser~~ — **RESOLVED 2026-06-11**:
+   the CHALLENGE structure engine is now ported into `documents-process`
+   (`structure.ts`, deployed): atomize Sarvam HTML → Gemini index-only assignment
+   (quota-resilient ladder: flash+doc → flash-lite+doc → text-only) → deterministic
+   assembly + validation. Live result on the benchmark page: **20 articles vs 4**,
+   with per-article `reviewFlags` persisted for the human-review screen. The legacy
+   parser (incl. the hack) remains only as an automatic fallback path.
 6. **`articles.js` router disabled** in legacy core (`server.js` comment: needs
    Node 22/ws) — moot once core is retired, listed for completeness.
 
 ## Quality observation
 
-Production `documents-process` extracted **4** articles from the test page where the
-new CHALLENGE pipeline (Sarvam HTML atomize → vision-model structure assignment →
-validated assembly) extracts **15** with headline/sub-heading/body separation. Porting
-that engine into `documents-process` is the highest-impact next step for product quality.
+**Resolved same day:** the CHALLENGE engine now runs in production
+(`documents-process` → `structure.ts`). Verified live: **20 articles vs 4** on the
+benchmark page, 55 s end-to-end, all rows persisted with `extraction_engine:
+"structured-v1"` and per-article review flags. Remaining tuning: title quality on
+boxed/graphic items, and per-model Gemini quota headroom (the ladder degrades
+gracefully through flash-lite and text-only modes).
