@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { SarvamAIClient } from "npm:sarvamai@1.1.7";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -283,6 +284,34 @@ Deno.serve(async (req) => {
     const speaker = (body.speaker as string | undefined) || cfg.speaker;
     const readingStyle = (body.readingStyle as string | undefined) || undefined;
 
+    // Optional audio cache: pass the article's DB uuid ("articleId") and the
+    // generated audio is stored once in the public "audio" bucket and reused on
+    // every later call — TTS is the dominant pipeline cost (~85%).
+    const articleId = typeof body.articleId === "string" && body.articleId ? body.articleId : "";
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabase = (articleId && SUPABASE_URL && SERVICE_KEY)
+      ? createClient(SUPABASE_URL, SERVICE_KEY)
+      : null;
+
+    if (supabase) {
+      const { data: row } = await supabase
+        .from("articles").select("audio_url").eq("id", articleId).maybeSingle();
+      if (row?.audio_url) {
+        console.log(`[synthesize] cache hit for article ${articleId}`);
+        return json({
+          ok: true,
+          audioUrl: row.audio_url,
+          provider: "cache",
+          language: langKey,
+          speaker,
+          chunks: 0,
+          durationSeconds: null,
+          cached: true,
+        });
+      }
+    }
+
     // Determine provider from tier header; default "free" → Gemini 2.5
     const tier = (req.headers.get("x-subscription-tier") || "free").toLowerCase();
     const desiredProvider: TtsProvider = TIER_PROVIDER[tier] ?? "gemini-2.5";
@@ -331,17 +360,36 @@ Deno.serve(async (req) => {
       ));
     }
 
-    const audioB64 = bytesToBase64(wavBytes);
     console.log(`[synthesize] done: ${Math.round(wavBytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
+
+    // Persist to the public audio bucket + articles.audio_url for reuse.
+    // The app accepts both plain URLs and data: URIs in audioUrl.
+    let audioUrl = "";
+    if (supabase) {
+      const path = `articles/${articleId}.wav`;
+      const { error: upErr } = await supabase.storage
+        .from("audio")
+        .upload(path, wavBytes, { contentType: "audio/wav", upsert: true });
+      if (upErr) {
+        console.warn("[synthesize] audio upload failed:", upErr.message);
+      } else {
+        audioUrl = supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
+        const { error: updErr } = await supabase
+          .from("articles").update({ audio_url: audioUrl }).eq("id", articleId);
+        if (updErr) console.warn("[synthesize] audio_url update failed:", updErr.message);
+      }
+    }
+    if (!audioUrl) audioUrl = `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
 
     return json({
       ok: true,
-      audioUrl: `data:audio/wav;base64,${audioB64}`,
+      audioUrl,
       provider: usedProvider,
       language: langKey,
       speaker,
       chunks,
       durationSeconds: durationSec,
+      cached: false,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

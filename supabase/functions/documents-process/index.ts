@@ -654,12 +654,12 @@ async function extractTextFromSarvamDownloads(downloadUrls: Record<string, unkno
 
 // ── Gemini refinement: OCR correction + document classification ───────────────
 
-interface GeminiRefinement {
+interface GeminiClassification {
   documentType: string;
   documentTitle: string;   // formal name, e.g. "Shiva Manasa Pooja Stotram"; empty for newspapers
   language: string;
   readingStyle: string;
-  correctedText: string;
+  publicationDate: string; // YYYY-MM-DD if visible on the document, else ""
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -671,47 +671,11 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function refineWithGemini(
-  ocrText: string,
-  fileBuffer: Uint8Array,
-  mimeType: string,
+async function geminiJson(
+  parts: unknown[],
   geminiKey: string,
-): Promise<GeminiRefinement> {
-  const isDisplayable = mimeType.startsWith("image/") || mimeType === "application/pdf";
-  const parts: unknown[] = [];
-
-  // Include the original file as vision context if it's reasonably sized
-  if (isDisplayable && fileBuffer.length < 15 * 1024 * 1024) {
-    parts.push({ inlineData: { mimeType, data: bytesToBase64(fileBuffer) } });
-  }
-
-  const prompt = `You are analyzing a document${parts.length > 0 ? " (image/PDF provided above)" : ""} and its OCR-extracted text.
-
-Perform these tasks:
-1. Classify the document type. Choose ONE: "newspaper", "sloka", "mantra", "book", "invitation", "certificate", "letter", or "other"
-2. If the document is a named devotional/literary work (stotram, mantra, kavyam, book chapter, etc.), set "documentTitle" to its recognized name in the source language (e.g. "శివ మానస పూజా స్తోత్రం" or "Shiva Manasa Pooja Stotram"). For newspapers/letters/certificates, leave "documentTitle" as an empty string "".
-3. Detect the primary language: "te" (Telugu), "sa" (Sanskrit), "hi" (Hindi), "en" (English), or "mixed"
-4. Choose reading style for text-to-speech. Choose ONE:
-   - "news_anchor"     → for news, articles, general content
-   - "devotional_slow" → for slokas, stotras, bhajans, devotional poetry
-   - "mantra_clear"    → for mantras, Vedic text, Sanskrit ritual text
-   - "normal"          → for books, letters, certificates, other
-5. Fix OCR errors in the text below (misrecognized Telugu/Sanskrit/Hindi characters, broken words from column splits, stray numbers/symbols that should be letters). Return the full corrected text — do NOT summarize or shorten it.
-
-OCR Text (may contain errors):
-${ocrText.slice(0, 12000)}
-
-Return ONLY valid JSON with no markdown fences:
-{
-  "documentType": "newspaper",
-  "documentTitle": "",
-  "language": "te",
-  "readingStyle": "news_anchor",
-  "correctedText": "..."
-}`;
-
-  parts.push({ text: prompt });
-
+  maxOutputTokens: number,
+): Promise<string> {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
     {
@@ -722,25 +686,89 @@ Return ONLY valid JSON with no markdown fences:
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.1,
-          maxOutputTokens: 8192,
+          maxOutputTokens,
         },
       }),
       signal: AbortSignal.timeout(45_000),
     },
   );
-
   if (!resp.ok) {
     const errText = await resp.text();
     throw new Error(`Gemini HTTP ${resp.status}: ${errText.slice(0, 100)}`);
   }
-
   const data = await resp.json() as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
-  const parsed = JSON.parse(raw) as GeminiRefinement;
-  console.log(`[stage2] Gemini result: type=${parsed.documentType ?? "?"} title="${parsed.documentTitle ?? ""}" style=${parsed.readingStyle ?? "?"}`);
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+}
+
+// Small, cheap classification call (~1K output tokens). Full-text correction is
+// generated lazily by correctTextWithGemini only on paths that actually use it —
+// the structured newspaper engine takes ground-truth characters from Sarvam HTML
+// and never needs corrected text, which halves Gemini usage per page.
+async function classifyWithGemini(
+  ocrText: string,
+  fileBuffer: Uint8Array,
+  mimeType: string,
+  geminiKey: string,
+): Promise<GeminiClassification> {
+  const isDisplayable = mimeType.startsWith("image/") || mimeType === "application/pdf";
+  const parts: unknown[] = [];
+  if (isDisplayable && fileBuffer.length < 15 * 1024 * 1024) {
+    parts.push({ inlineData: { mimeType, data: bytesToBase64(fileBuffer) } });
+  }
+  const prompt = `You are analyzing a document${parts.length > 0 ? " (image/PDF provided above)" : ""} and a sample of its OCR text.
+
+Perform these tasks:
+1. Classify the document type. Choose ONE: "newspaper", "sloka", "mantra", "book", "invitation", "certificate", "letter", or "other"
+2. If the document is a named devotional/literary work (stotram, mantra, kavyam, book chapter, etc.), set "documentTitle" to its recognized name in the source language. For newspapers/letters/certificates, leave it "".
+3. Detect the primary language: "te", "sa", "hi", "en", or "mixed"
+4. Choose reading style for text-to-speech: "news_anchor" | "devotional_slow" | "mantra_clear" | "normal"
+5. If a publication/issue date is visible on the document, set "publicationDate" to it as YYYY-MM-DD; else "".
+
+OCR sample:
+${ocrText.slice(0, 6000)}
+
+Return ONLY valid JSON:
+{"documentType":"newspaper","documentTitle":"","language":"te","readingStyle":"news_anchor","publicationDate":""}`;
+  parts.push({ text: prompt });
+
+  const raw = await geminiJson(parts, geminiKey, 1024);
+  const parsed = JSON.parse(raw) as GeminiClassification;
+  console.log(`[stage2] classify: type=${parsed.documentType ?? "?"} title="${parsed.documentTitle ?? ""}" date=${parsed.publicationDate ?? ""}`);
   return parsed;
+}
+
+async function correctTextWithGemini(ocrText: string, geminiKey: string): Promise<string> {
+  const prompt = `Fix OCR errors in the text below (misrecognized Telugu/Sanskrit/Hindi characters, broken words from column splits, stray numbers/symbols that should be letters). Return the full corrected text — do NOT summarize or shorten it.
+
+OCR Text (may contain errors):
+${ocrText.slice(0, 12000)}
+
+Return ONLY valid JSON: {"correctedText":"..."}`;
+  const raw = await geminiJson([{ text: prompt }], geminiKey, 8192);
+  const parsed = JSON.parse(raw) as { correctedText?: string };
+  return parsed.correctedText ?? "";
+}
+
+// "Eenadu_TELANGANA_20260512-6-6.pdf" → "2026-05-12"
+function parseDateFromFilename(name: string): string {
+  const m = name.match(/(20\d{2})(\d{2})(\d{2})/);
+  if (!m) return "";
+  const [, y, mo, d] = m;
+  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31) return "";
+  return `${y}-${mo}-${d}`;
+}
+
+// Decode the gateway-verified JWT just to read the role claim.
+function jwtRole(req: Request): string {
+  try {
+    const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload.role ?? "";
+  } catch {
+    return "";
+  }
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -764,8 +792,27 @@ Deno.serve(async (req) => {
     }
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    const tier = (req.headers.get("x-subscription-tier") || "free").toLowerCase();
+    // Tier from the client header is only honored for authenticated users.
+    // Anon-key callers always get "free" — the header alone is not billing proof.
+    const requestedTier = (req.headers.get("x-subscription-tier") || "free").toLowerCase();
+    const tier = jwtRole(req) === "authenticated" ? requestedTier : "free";
     const cap = TIER_MAX_PAGES[tier] ?? TIER_MAX_PAGES.free;
+
+    // Per-IP hourly rate limit — OCR + Gemini per request is real money.
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() ||
+      req.headers.get("x-real-ip") || "unknown";
+    {
+      const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+      const { count } = await supabase
+        .from("request_log")
+        .select("*", { count: "exact", head: true })
+        .eq("ip", ip).eq("endpoint", "documents-process")
+        .gte("created_at", oneHourAgo);
+      if ((count ?? 0) >= 12) {
+        return json({ error: "rate_limited", message: "Hourly processing limit reached. Try again later." }, 429);
+      }
+      await supabase.from("request_log").insert({ ip, endpoint: "documents-process" });
+    }
 
     const form = await req.formData();
     const file = form.get("document");
@@ -835,10 +882,12 @@ Deno.serve(async (req) => {
       extractedText = `Document: ${originalName}`;
     }
 
-    // ── Stage 2: Gemini — OCR correction + document classification ─────────
+    // ── Stage 2: Gemini — document classification (small call) ─────────────
+    // Full-text correction is generated lazily below, only on paths that use it.
     let documentType = "newspaper";
     let documentTitle = "";   // stotram / book name identified by Gemini
     let readingStyle = "news_anchor";
+    let detectedPubDate = "";
 
     // Filter non-narrative noise (images, tables, ads) before Gemini sees the text.
     // This reduces Gemini input tokens by 20–40% on dense newspaper pages.
@@ -849,21 +898,34 @@ Deno.serve(async (req) => {
 
     if (GEMINI_KEY && filteredText.length > 20) {
       try {
-        console.log("[stage2] Refining with Gemini...");
-        const result = await refineWithGemini(filteredText, buffer, file.type || "image/jpeg", GEMINI_KEY);
+        const result = await classifyWithGemini(filteredText, buffer, file.type || "image/jpeg", GEMINI_KEY);
         documentType = result.documentType || "newspaper";
         documentTitle = (result.documentTitle || "").trim();
         readingStyle = result.readingStyle || "news_anchor";
-        if (result.correctedText && result.correctedText.length > 50) {
-          refinedText = cleanText(result.correctedText);
-          console.log(`[stage2] Corrected: ${extractedText.length} → ${refinedText.length} chars`);
-        }
+        detectedPubDate = (result.publicationDate || "").trim();
       } catch (e) {
-        console.warn("[stage2] Gemini refinement failed, using raw OCR:", (e as Error).message);
+        console.warn("[stage2] Gemini classification failed:", (e as Error).message);
       }
     } else {
       console.log("[stage2] Skipping Gemini (no key or too short)");
     }
+
+    // Lazy OCR correction — needed for every path EXCEPT the structured
+    // newspaper engine (which takes ground-truth characters from Sarvam HTML).
+    let textCorrected = false;
+    const ensureCorrectedText = async () => {
+      if (textCorrected || !GEMINI_KEY || filteredText.length <= 20) return;
+      textCorrected = true;
+      try {
+        const corrected = await correctTextWithGemini(filteredText, GEMINI_KEY);
+        if (corrected && corrected.length > 50) {
+          refinedText = cleanText(corrected);
+          console.log(`[stage2-lazy] Corrected: ${filteredText.length} → ${refinedText.length} chars`);
+        }
+      } catch (e) {
+        console.warn("[stage2-lazy] correction failed, using raw OCR:", (e as Error).message);
+      }
+    };
 
     // ── Stage 3: Build articles ─────────────────────────────────────────────
     // Unified document types (sloka, mantra, stotram) → single article with all text.
@@ -876,6 +938,7 @@ Deno.serve(async (req) => {
     let structuredError = "";
     if (isUnified) {
       // One article: title = Gemini-identified name, content = full corrected text
+      await ensureCorrectedText();
       const titleForUnified = documentTitle
         || refinedText.split("\n").find((l) => l.trim().length > 3)?.trim().slice(0, 120)
         || originalName.replace(/\.[^.]+$/, "").trim();
@@ -902,6 +965,7 @@ Deno.serve(async (req) => {
       } else {
         // Legacy fallback: layout-aware HTML parser + Gemini text overlay
         structuredMeta = null;
+        await ensureCorrectedText();
         segments = parseHtmlToArticles(rawOcrHtml, originalName);
         console.log(`[stage3] legacy HTML parse → ${segments.length} articles`);
         if (segments.length > 0 && refinedText.length > 100) {
@@ -913,6 +977,7 @@ Deno.serve(async (req) => {
         }
       }
     } else {
+      await ensureCorrectedText();
       segments = segmentArticles(refinedText, originalName);
       console.log(`[stage3] Segmented → ${segments.length} articles`);
     }
@@ -963,20 +1028,40 @@ Deno.serve(async (req) => {
       if (error) console.warn("[db] extracted_texts insert error:", error.message);
     });
 
-    // 2. Newspaper row → get UUID back
-    const pubDate = new Date().toISOString().split("T")[0];
-    const { data: newsRow, error: newsErr } = await supabase
-      .from("newspapers")
-      .insert({
-        title: effectiveDocumentTitle,
-        publication_date: pubDate,
-        language: "te",
-        storage_url: storageUrl,
-      })
-      .select("id")
-      .single();
-    if (newsErr) console.warn("[db] newspaper insert error:", newsErr.message);
-    const newspaperUuid: string | null = newsRow?.id ?? null;
+    // 2. Newspaper row — reuse an existing (title, publication_date) row so
+    //    re-uploads don't create duplicates; insert only when new.
+    //    Date priority: printed date (Gemini) → filename (Eenadu_…20260512) → today.
+    const pubDate = (/^\d{4}-\d{2}-\d{2}$/.test(detectedPubDate) && detectedPubDate)
+      || parseDateFromFilename(originalName)
+      || new Date().toISOString().split("T")[0];
+
+    let newspaperUuid: string | null = null;
+    {
+      const { data: existing } = await supabase
+        .from("newspapers")
+        .select("id")
+        .eq("title", effectiveDocumentTitle)
+        .eq("publication_date", pubDate)
+        .limit(1)
+        .maybeSingle();
+      if (existing?.id) {
+        newspaperUuid = existing.id;
+        console.log(`[db] reusing newspaper ${newspaperUuid} (${effectiveDocumentTitle} / ${pubDate})`);
+      } else {
+        const { data: newsRow, error: newsErr } = await supabase
+          .from("newspapers")
+          .insert({
+            title: effectiveDocumentTitle,
+            publication_date: pubDate,
+            language: "te",
+            storage_url: storageUrl,
+          })
+          .select("id")
+          .single();
+        if (newsErr) console.warn("[db] newspaper insert error:", newsErr.message);
+        newspaperUuid = newsRow?.id ?? null;
+      }
+    }
 
     // 3. Individual articles — stored with full content and metadata
     let savedArticleIds: string[] = [];
