@@ -221,3 +221,13 @@ mode work without any key. Python: pymupdf, cv2, numpy installed; add rapidfuzz.
 - Next: **Phase 4** — second page from ~/Downloads/Eenadu_TELANGANA_20260512.pdf
   (extract a different page with PyMuPDF, run live Sarvam HTML job via
   pipeline.py --pdf, then Stage-B assignment + validate; no code changes).
+
+### Phase 4 — DONE
+- Second page (full edition p2, state-news layout: crafts feature, briefs, accident,
+  HC ruling, govt notices, quote boxes, weather table) run with ZERO code changes:
+  `solution/page2_test/` — 104 blocks, 15 articles, 12/15 PASS, 3 true-positive
+  flags (b2 graphic headline, b5 pull-quote punctuation, b15 lost tiny-font fragment).
+- Cross-column continuations again resolved by seams (61'ఆ'+63, 63'సవ'+67'రించిన',
+  84'వివరా'+87'లను'). Ads/notices (19 blocks) correctly dropped.
+- Next: **Phase 5** — `--ocr sarvam-structured` backend in
+  backend/extraction/extract_articles.py mapping solution output to legacy JSON shape.
