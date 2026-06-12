@@ -23,6 +23,13 @@ class ApiConfig {
   );
 
   static String get documentsProcessUrl => '$functionsUrl/documents-process';
+  static String get documentsProcessEditionUrl =>
+      '$functionsUrl/documents-process-edition';
+
+  /// Supabase REST base (functionsUrl minus the /functions/v1 suffix).
+  static String get restUrl =>
+      '${functionsUrl.replaceFirst('/functions/v1', '')}/rest/v1';
+
   static String get documentsSynthesizeUrl => '$functionsUrl/documents-synthesize';
   static String get documentsSummarizeUrl => '$functionsUrl/documents-summarize';
   static String get healthUrl => '$functionsUrl/health';

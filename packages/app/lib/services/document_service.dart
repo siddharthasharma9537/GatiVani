@@ -71,6 +71,78 @@ class DocumentService {
     );
   }
 
+  // ── Multi-page edition flow (async job) ────────────────────────────────────
+  // POST the full PDF → job starts server-side, one page per invocation.
+  // Poll processing_jobs until completed, then fetch articles via REST.
+
+  Future<EditionJob> startEdition({
+    required String filePath,
+    required String filename,
+    Uint8List? fileBytes,
+  }) async {
+    final request = http.MultipartRequest(
+        'POST', Uri.parse(ApiConfig.documentsProcessEditionUrl));
+    request.headers.addAll(ApiConfig.authHeaders);
+    await _attachFile(request, filePath, filename, fileBytes);
+
+    final response = await http.Response.fromStream(await request.send()
+        .timeout(const Duration(seconds: 90)));
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    if (response.statusCode != 200 || data['ok'] != true) {
+      throw Exception(data['message'] ?? 'Edition upload failed '
+          '(${response.statusCode})');
+    }
+    return EditionJob(
+      jobId: data['jobId'] as String,
+      newspaperId: data['newspaperId'] as String,
+      totalPages: data['totalPages'] as int,
+    );
+  }
+
+  Future<EditionJobStatus> pollEdition(String jobId) async {
+    final r = await http.get(
+      Uri.parse('${ApiConfig.restUrl}/processing_jobs?id=eq.$jobId'
+          '&select=status,done_pages,total_pages,article_count,failed_pages'),
+      headers: ApiConfig.authHeaders,
+    );
+    final rows = json.decode(r.body) as List<dynamic>;
+    if (rows.isEmpty) throw Exception('Job not found');
+    final j = rows.first as Map<String, dynamic>;
+    return EditionJobStatus(
+      status: j['status'] as String,
+      donePages: j['done_pages'] as int,
+      totalPages: j['total_pages'] as int,
+      articleCount: j['article_count'] as int,
+      failedPages: (j['failed_pages'] as List<dynamic>).length,
+    );
+  }
+
+  /// Articles of a processed edition, in page order, mapped to the same JSON
+  /// shape that processNewspaper feeds into NewspaperArticle.fromJson.
+  Future<List<NewspaperArticle>> fetchEditionArticles(
+      String newspaperId) async {
+    final r = await http.get(
+      Uri.parse('${ApiConfig.restUrl}/articles?newspaper_id=eq.$newspaperId'
+          '&select=id,title,content_preview,full_content,section,page_number,audio_url'
+          '&order=page_number,created_at'),
+      headers: ApiConfig.authHeaders,
+    );
+    final rows = json.decode(r.body) as List<dynamic>;
+    return rows.map((row) {
+      final m = row as Map<String, dynamic>;
+      return NewspaperArticle.fromJson({
+        'id': m['id'],
+        'dbId': m['id'],
+        'title': m['title'],
+        'preview': m['content_preview'] ?? '',
+        'content': m['full_content'] ?? '',
+        'category': m['section'] ?? 'News',
+        'page': m['page_number'] ?? 1,
+        'audioUrl': m['audio_url'],
+      }, imageUrl: '');
+    }).toList();
+  }
+
   // ── Legacy: single-article flow (ReviewScreen / PlayerScreen) ─────────────
 
   Future<UploadedArticle> processUploadedContent({
@@ -169,4 +241,29 @@ class DocumentService {
       ));
     }
   }
+}
+
+/// Handle returned by startEdition — poll with pollEdition(jobId).
+class EditionJob {
+  final String jobId;
+  final String newspaperId;
+  final int totalPages;
+  EditionJob({required this.jobId, required this.newspaperId, required this.totalPages});
+}
+
+class EditionJobStatus {
+  final String status; // pending | processing | completed | failed
+  final int donePages;
+  final int totalPages;
+  final int articleCount;
+  final int failedPages;
+  EditionJobStatus({
+    required this.status,
+    required this.donePages,
+    required this.totalPages,
+    required this.articleCount,
+    required this.failedPages,
+  });
+  bool get isDone => status == 'completed' || status == 'failed';
+  double get progress => totalPages == 0 ? 0 : donePages / totalPages;
 }
