@@ -134,3 +134,19 @@ secret; restrict Firebase keys; (optional) repo private / history scrub.
 1. `POST /functions/v1/documents-process-edition` (multipart `document`) → `{jobId, newspaperId, totalPages}`
 2. Poll `GET /rest/v1/processing_jobs?id=eq.{jobId}&select=status,done_pages,total_pages,article_count,failed_pages`
 3. On `completed`: `GET /rest/v1/articles?newspaper_id=eq.{newspaperId}&order=page_number` → list, play, synthesize per article (pass `articleId` for caching + timings).
+
+
+### Spine — verified live 2026-06-12
+- **Paid Gemini key** (project `voxnews-496111`) set as Supabase secret — free-tier
+  429 quota ceiling resolved; structured path runs on flash+doc top rung.
+- **Edition flow end-to-end:** 3-page Eenadu slice → job accepted instantly →
+  self-chaining continuations → **43 articles, 0 page failures**, aggregated under
+  one newspaper (page 1:10, 2:16, 3:17). Categories spread across State/Education/
+  Politics/Crime/Judiciary/District/Devotional/Agriculture/Trending — the Gemini
+  per-article grading working at edition scale.
+- Continuation auth fixed (service key is an opaque sb_secret_, not a JWT →
+  x-internal-token string compare).
+
+**Remaining for full product (not blocking trial):** Flutter upload screen to call
+the edition endpoint + poll job status (backend contract documented above); per-word
+(vs segment) timing granularity via STT sync-API chunking; MP3/Opus instead of WAV.
