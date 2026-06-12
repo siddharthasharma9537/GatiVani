@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
+import "screens/today_screen.dart";
 import "screens/home_screen.dart";
 import "design/app_theme.dart";
 import "services/settings_provider.dart";
@@ -33,7 +34,7 @@ class GatiVaniApp extends StatelessWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,
-      home: const HomeScreen(),
+      home: const TodayScreen(),
       routes: {
         '/article-list': (context) {
           return const HomeScreen();
