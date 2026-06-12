@@ -208,12 +208,23 @@ async function processPage(supabase: any, jobId: string, page: number): Promise<
 
 function fireContinuation(jobId: string, page: number): void {
   const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/documents-process-edition`;
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  // fire-and-forget; the next invocation carries the work
+  // Anon JWT satisfies the gateway; the service key travels in x-internal-token
+  // and is string-compared by our gate (it may be an opaque sb_secret_ key,
+  // which is not a decodable JWT — see jwtRole).
+  const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const internal = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const p = fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${anon}`,
+      "apikey": anon,
+      "x-internal-token": internal,
+    },
     body: JSON.stringify({ job_id: jobId, page }),
+  }).then(async (r) => {
+    if (!r.ok) console.warn(`[edition] continuation page ${page} -> HTTP ${r.status}`);
+    await r.body?.cancel();
   }).catch((e) => console.warn("[edition] continuation fire failed:", e.message));
   // deno-lint-ignore no-explicit-any
   (globalThis as any).EdgeRuntime?.waitUntil?.(p);
@@ -234,9 +245,12 @@ Deno.serve(async (req) => {
 
   const contentType = req.headers.get("content-type") ?? "";
 
-  // ── internal continuation (service-role only) ───────────────────────────
+  // ── internal continuation (service-key holders only) ────────────────────
   if (contentType.includes("application/json")) {
-    if (jwtRole(req) !== "service_role") return json({ error: "forbidden" }, 403);
+    const internal = req.headers.get("x-internal-token") ?? "";
+    if (internal !== SERVICE_KEY && jwtRole(req) !== "service_role") {
+      return json({ error: "forbidden" }, 403);
+    }
     const { job_id, page } = await req.json() as { job_id: string; page: number };
     if (!job_id || !page) return json({ error: "bad_request" }, 400);
     // do the page work inside this invocation; respond when done

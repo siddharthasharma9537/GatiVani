@@ -118,3 +118,19 @@ Durable fix: paid-tier Gemini key.
 
 **Still user-only actions:** rotate both leaked Sarvam keys; set SUPABASE_ACCESS_TOKEN
 secret; restrict Firebase keys; (optional) repo private / history scrub.
+
+
+---
+
+## Spine build — 2026-06-12
+
+| Piece | Status |
+|---|---|
+| **Categories** | ✅ live — Stage-B returns a per-article category enum (18 labels incl. District, Sci-Tech); preferred over regex fallback. Verified: Crime/Judiciary/Education labels accurate on benchmark page. |
+| **Timings (lyrics sync)** | ✅ deployed — background Sarvam STT forced alignment after TTS (EdgeRuntime.waitUntil); timings JSON stored next to cached audio; `timingsUrl` in synthesize responses; app's SentenceTiming.fromJson format. **Caveat:** batch STT returned segment-level (not per-word) granularity on short clips — powers sentence-sync today; per-word needs sync-API 30s chunking (follow-up). |
+| **Multi-page editions** | ✅ deployed — `documents-process-edition`: async job, one page per invocation self-chaining via service-role continuations, per-page failure isolation, aggregation under one newspaper, 2/h/IP limit, `processing_jobs` polling table. |
+
+**Client contract (for the Flutter upload screen):**
+1. `POST /functions/v1/documents-process-edition` (multipart `document`) → `{jobId, newspaperId, totalPages}`
+2. Poll `GET /rest/v1/processing_jobs?id=eq.{jobId}&select=status,done_pages,total_pages,article_count,failed_pages`
+3. On `completed`: `GET /rest/v1/articles?newspaper_id=eq.{newspaperId}&order=page_number` → list, play, synthesize per article (pass `articleId` for caching + timings).
