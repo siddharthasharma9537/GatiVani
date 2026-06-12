@@ -32,7 +32,7 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   Future<void> _upload() async {
-    final picked = await FilePicker.platform
+    final picked = await FilePicker
         .pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
     if (picked == null || picked.files.isEmpty) return;
     final f = picked.files.first;
