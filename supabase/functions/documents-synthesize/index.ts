@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { SarvamAIClient } from "npm:sarvamai@1.1.7";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { alignAndStore } from "./alignment.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -302,6 +303,9 @@ Deno.serve(async (req) => {
         return json({
           ok: true,
           audioUrl: row.audio_url,
+          // word-level timings live next to the audio; the app falls back to
+          // estimation if this 404s (alignment may still be running)
+          timingsUrl: row.audio_url.replace(/\.wav$/, ".timings.json"),
           provider: "cache",
           language: langKey,
           speaker,
@@ -365,6 +369,7 @@ Deno.serve(async (req) => {
     // Persist to the public audio bucket + articles.audio_url for reuse.
     // The app accepts both plain URLs and data: URIs in audioUrl.
     let audioUrl = "";
+    let timingsUrl = "";
     if (supabase) {
       const path = `articles/${articleId}.wav`;
       const { error: upErr } = await supabase.storage
@@ -374,9 +379,24 @@ Deno.serve(async (req) => {
         console.warn("[synthesize] audio upload failed:", upErr.message);
       } else {
         audioUrl = supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
+        timingsUrl = audioUrl.replace(/\.wav$/, ".timings.json");
         const { error: updErr } = await supabase
           .from("articles").update({ audio_url: audioUrl }).eq("id", articleId);
         if (updErr) console.warn("[synthesize] audio_url update failed:", updErr.message);
+
+        // Background forced alignment (Sarvam STT with word timestamps) for
+        // lyrics-style highlighting. Non-blocking: response returns now, the
+        // timings file appears next to the audio ~30-90s later.
+        if (SARVAM_KEY) {
+          // deno-lint-ignore no-explicit-any
+          (globalThis as any).EdgeRuntime?.waitUntil?.(alignAndStore({
+            wavBytes,
+            articleId,
+            languageCode: body.language || "te-IN",
+            sarvamKey: SARVAM_KEY,
+            supabase,
+          }));
+        }
       }
     }
     if (!audioUrl) audioUrl = `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
@@ -384,6 +404,7 @@ Deno.serve(async (req) => {
     return json({
       ok: true,
       audioUrl,
+      timingsUrl: timingsUrl || null,
       provider: usedProvider,
       language: langKey,
       speaker,

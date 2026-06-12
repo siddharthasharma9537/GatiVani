@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { SarvamAIClient } from "npm:sarvamai@1.1.7";
-import { extractArticlesStructured, type StructuredResult } from "./structure.ts";
+import { extractArticlesStructured, type StructuredResult } from "../_shared/structure.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
