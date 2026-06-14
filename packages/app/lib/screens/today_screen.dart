@@ -8,7 +8,6 @@ import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
 import '../services/playback_service.dart';
 import '../widgets/mini_player.dart';
-import 'home_screen.dart';
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -141,23 +140,13 @@ class _TodayScreenState extends State<TodayScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('GatiVani',
-                        style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w500,
-                            color: kInk)),
-                    IconButton(
-                      icon: const Icon(Icons.apps, color: kMuted),
-                      tooltip: 'Classic home',
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const HomeScreen())),
-                    ),
-                  ],
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 4),
+                  child: Text('GatiVani',
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w500,
+                          color: kInk)),
                 ),
                 if (_error != null)
                   Padding(
