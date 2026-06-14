@@ -10,7 +10,9 @@ import '../models/newspaper_article.dart';
 class PlaybackService extends ChangeNotifier {
   PlaybackService._() {
     player.playerStateStream.listen((s) {
-      if (s.processingState == ProcessingState.completed) next();
+      // Only auto-advance on a genuine end-of-track, not the transient
+      // "completed" just_audio emits while a new url is being loaded.
+      if (s.processingState == ProcessingState.completed && !loading) next();
       notifyListeners();
     });
     player.positionStream.listen((_) => notifyListeners());
@@ -98,6 +100,9 @@ class PlaybackService extends ChangeNotifier {
         url = data['audioUrl'] as String;
         a.audioUrl = url;
       }
+      // Stop the previous track before swapping the source — avoids the web
+      // case where a new setUrl is ignored while the old one is still active.
+      await player.stop();
       await player.setUrl(url);
       await player.play();
       _recordPlay(a);

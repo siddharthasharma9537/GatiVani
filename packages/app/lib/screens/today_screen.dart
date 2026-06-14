@@ -8,6 +8,7 @@ import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
 import '../services/playback_service.dart';
 import '../widgets/mini_player.dart';
+import 'lyrics_player_screen.dart';
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -101,7 +102,13 @@ class _TodayScreenState extends State<TodayScreen> {
 
   void _play(NewspaperArticle a) {
     PlaybackService.i.playOne(a);
+    _openPlayer();
     Future.delayed(const Duration(seconds: 2), _loadRecent);
+  }
+
+  void _openPlayer() {
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const LyricsPlayerScreen()));
   }
 
   void _playAll() {
@@ -433,7 +440,7 @@ class _TodayScreenState extends State<TodayScreen> {
               ],
             ),
           ),
-          const MiniPlayer(),
+          MiniPlayer(onExpand: _openPlayer),
         ]),
       ),
     );
