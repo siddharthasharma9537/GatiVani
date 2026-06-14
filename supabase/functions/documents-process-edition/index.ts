@@ -309,8 +309,8 @@ async function runStart(
       .from("request_log").select("*", { count: "exact", head: true })
       .eq("ip", ip).eq("endpoint", "documents-process-edition")
       .gte("created_at", oneHourAgo);
-    if ((count ?? 0) >= 2) {
-      return json({ error: "rate_limited", message: "Edition limit: 2 per hour." }, 429);
+    if ((count ?? 0) >= 20) {
+      return json({ error: "rate_limited", message: "Edition limit: 20 per hour." }, 429);
     }
     await supabase.from("request_log").insert({ ip, endpoint: "documents-process-edition" });
 
