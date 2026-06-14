@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:dio/dio.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import '../config/api_config.dart';
@@ -79,6 +80,7 @@ class DocumentService {
     required String filePath,
     required String filename,
     Uint8List? fileBytes,
+    void Function(double progress)? onProgress,
   }) async {
     final bytes = fileBytes;
     if (bytes == null) throw Exception('Could not read file bytes.');
@@ -93,14 +95,29 @@ class DocumentService {
     final path = 'editions/${DateTime.now().millisecondsSinceEpoch}_$safe';
 
     // 1. Heavy leg: upload bytes straight to Supabase Storage (not via the edge
-    //    function). Long timeout; this is the only large transfer.
+    //    function). dio reports real byte progress (XHR upload events on web).
     final storageBase =
         ApiConfig.restUrl.replaceFirst('/rest/v1', '/storage/v1/object');
-    final up = await http
-        .post(Uri.parse('$storageBase/uploads/$path'),
-            headers: {...ApiConfig.authHeaders, 'Content-Type': mime},
-            body: bytes)
-        .timeout(const Duration(minutes: 10));
+    final dio = Dio();
+    final up = await dio.post<dynamic>(
+      '$storageBase/uploads/$path',
+      data: Stream.fromIterable([bytes]),
+      options: Options(
+        headers: {
+          ...ApiConfig.authHeaders,
+          'content-type': mime,
+          'content-length': bytes.length,
+        },
+        contentType: mime,
+        sendTimeout: const Duration(minutes: 10),
+        receiveTimeout: const Duration(minutes: 2),
+        validateStatus: (s) => s != null && s < 500,
+      ),
+      onSendProgress: (sent, total) {
+        final t = total > 0 ? total : bytes.length;
+        onProgress?.call(sent / t);
+      },
+    );
     if (up.statusCode != 200 && up.statusCode != 201) {
       throw Exception('Upload failed (${up.statusCode}). Check your connection.');
     }

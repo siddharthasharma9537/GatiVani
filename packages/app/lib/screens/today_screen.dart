@@ -27,6 +27,7 @@ class _TodayScreenState extends State<TodayScreen> {
   Timer? _poll;
   String? _error;
   bool _uploading = false;
+  double _uploadProgress = 0;
   List<Map<String, dynamic>> _recent = [];
 
   @override
@@ -71,6 +72,7 @@ class _TodayScreenState extends State<TodayScreen> {
     setState(() {
       _error = null;
       _uploading = true;
+      _uploadProgress = 0;
       _editionTitle = f.name.replaceAll(RegExp(r'\.(pdf|jpe?g|png)$'), '');
       _articles = [];
       _job = null;
@@ -78,7 +80,12 @@ class _TodayScreenState extends State<TodayScreen> {
     });
     try {
       final job = await _svc.startEdition(
-          filePath: f.path ?? '', filename: f.name, fileBytes: f.bytes);
+          filePath: f.path ?? '',
+          filename: f.name,
+          fileBytes: f.bytes,
+          onProgress: (p) {
+            if (mounted) setState(() => _uploadProgress = p);
+          });
       setState(() {
         _job = job;
         _uploading = false;
@@ -161,21 +168,40 @@ class _TodayScreenState extends State<TodayScreen> {
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
                         color: kInk, borderRadius: BorderRadius.circular(16)),
-                    child: Row(children: [
-                      const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: kAccent)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text('Uploading $_editionTitle…',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: kPaper, fontSize: 13)),
-                      ),
-                    ]),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Expanded(
+                            child: Text(
+                                _uploadProgress >= 0.999
+                                    ? 'Processing $_editionTitle…'
+                                    : 'Uploading $_editionTitle…',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: kPaper, fontSize: 13)),
+                          ),
+                          const SizedBox(width: 8),
+                          Text('${(_uploadProgress * 100).round()}%',
+                              style: const TextStyle(
+                                  color: kAccent,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500)),
+                        ]),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(
+                              value: _uploadProgress >= 0.999
+                                  ? null
+                                  : _uploadProgress,
+                              minHeight: 4,
+                              backgroundColor: const Color(0xFF5F5E5A),
+                              color: kAccent),
+                        ),
+                      ],
+                    ),
                   )
                 else if (_articles.isNotEmpty || st != null)
                   Container(
