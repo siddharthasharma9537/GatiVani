@@ -86,7 +86,7 @@ class DocumentService {
     await _attachFile(request, filePath, filename, fileBytes);
 
     final response = await http.Response.fromStream(await request.send()
-        .timeout(const Duration(seconds: 90)));
+        .timeout(const Duration(seconds: 300)));
     final data = json.decode(response.body) as Map<String, dynamic>;
     if (response.statusCode != 200 || data['ok'] != true) {
       throw Exception(data['message'] ?? 'Edition upload failed '

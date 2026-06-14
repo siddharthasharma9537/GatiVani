@@ -27,6 +27,7 @@ class _TodayScreenState extends State<TodayScreen> {
   EditionJobStatus? _jobStatus;
   Timer? _poll;
   String? _error;
+  bool _uploading = false;
   List<Map<String, dynamic>> _recent = [];
 
   @override
@@ -68,18 +69,27 @@ class _TodayScreenState extends State<TodayScreen> {
         withData: true);
     if (picked == null || picked.files.isEmpty) return;
     final f = picked.files.first;
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _uploading = true;
+      _editionTitle = f.name.replaceAll(RegExp(r'\.(pdf|jpe?g|png)$'), '');
+      _articles = [];
+      _job = null;
+      _jobStatus = null;
+    });
     try {
       final job = await _svc.startEdition(
           filePath: f.path ?? '', filename: f.name, fileBytes: f.bytes);
       setState(() {
         _job = job;
-        _editionTitle = f.name.replaceAll(RegExp(r'\.pdf$'), '');
-        _articles = [];
+        _uploading = false;
       });
       _poll = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() {
+        _error = e.toString();
+        _uploading = false;
+      });
     }
   }
 
@@ -156,7 +166,29 @@ class _TodayScreenState extends State<TodayScreen> {
                         style:
                             const TextStyle(color: kAccent, fontSize: 12.5)),
                   ),
-                if (_articles.isNotEmpty || st != null)
+                if (_uploading)
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                        color: kInk, borderRadius: BorderRadius.circular(16)),
+                    child: Row(children: [
+                      const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: kAccent)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text('Uploading $_editionTitle…',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: kPaper, fontSize: 13)),
+                      ),
+                    ]),
+                  )
+                else if (_articles.isNotEmpty || st != null)
                   Container(
                     padding: const EdgeInsets.all(16),
                     margin: const EdgeInsets.only(bottom: 12),
