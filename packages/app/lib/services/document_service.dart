@@ -80,17 +80,40 @@ class DocumentService {
     required String filename,
     Uint8List? fileBytes,
   }) async {
-    final request = http.MultipartRequest(
-        'POST', Uri.parse(ApiConfig.documentsProcessEditionUrl));
-    request.headers.addAll(ApiConfig.authHeaders);
-    await _attachFile(request, filePath, filename, fileBytes);
+    final bytes = fileBytes;
+    if (bytes == null) throw Exception('Could not read file bytes.');
 
-    final response = await http.Response.fromStream(await request.send()
-        .timeout(const Duration(seconds: 300)));
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    if (response.statusCode != 200 || data['ok'] != true) {
-      throw Exception(data['message'] ?? 'Edition upload failed '
-          '(${response.statusCode})');
+    final ext = filename.contains('.') ? filename.split('.').last.toLowerCase() : 'pdf';
+    final mime = ext == 'png'
+        ? 'image/png'
+        : (ext == 'jpg' || ext == 'jpeg')
+            ? 'image/jpeg'
+            : 'application/pdf';
+    final safe = filename.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+    final path = 'editions/${DateTime.now().millisecondsSinceEpoch}_$safe';
+
+    // 1. Heavy leg: upload bytes straight to Supabase Storage (not via the edge
+    //    function). Long timeout; this is the only large transfer.
+    final storageBase =
+        ApiConfig.restUrl.replaceFirst('/rest/v1', '/storage/v1/object');
+    final up = await http
+        .post(Uri.parse('$storageBase/uploads/$path'),
+            headers: {...ApiConfig.authHeaders, 'Content-Type': mime},
+            body: bytes)
+        .timeout(const Duration(minutes: 10));
+    if (up.statusCode != 200 && up.statusCode != 201) {
+      throw Exception('Upload failed (${up.statusCode}). Check your connection.');
+    }
+
+    // 2. Light leg: start the job from the stored path (returns in seconds).
+    final r = await http
+        .post(Uri.parse(ApiConfig.documentsProcessEditionUrl),
+            headers: {...ApiConfig.authHeaders, 'Content-Type': 'application/json'},
+            body: json.encode({'storagePath': path, 'filename': filename}))
+        .timeout(const Duration(seconds: 120));
+    final data = json.decode(r.body) as Map<String, dynamic>;
+    if (r.statusCode != 200 || data['ok'] != true) {
+      throw Exception(data['message'] ?? 'Edition start failed (${r.statusCode})');
     }
     return EditionJob(
       jobId: data['jobId'] as String,

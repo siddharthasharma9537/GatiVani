@@ -158,12 +158,14 @@ async function processPage(supabase: any, jobId: string, page: number): Promise<
     .from("processing_jobs").select("*").eq("id", jobId).single();
   if (!job || job.status === "failed") return;
 
+  const sourcePath = job.source_path ?? `editions/${jobId}.pdf`;
   try {
     // load source PDF from storage and cut out this page
     const { data: blob, error: dlErr } = await supabase.storage
-      .from("uploads").download(`editions/${jobId}.pdf`);
+      .from("uploads").download(sourcePath);
     if (dlErr) throw new Error(`pdf download: ${dlErr.message}`);
-    const src = await PDFDocument.load(new Uint8Array(await blob.arrayBuffer()));
+    const srcBytes = await normalizeToPdf(new Uint8Array(await blob.arrayBuffer()));
+    const src = await PDFDocument.load(srcBytes);
     const single = await PDFDocument.create();
     const [pg] = await single.copyPages(src, [page - 1]);
     single.addPage(pg);
@@ -213,11 +215,14 @@ async function processPage(supabase: any, jobId: string, page: number): Promise<
     }).eq("id", jobId);
   }
 
-  // chain next page
+  // chain next page, or finish: delete the source file (articles + audio are
+  // the product; the source PDF is no longer needed — saves storage).
   if (page < job.total_pages) {
     fireContinuation(jobId, page + 1);
   } else {
-    console.log(`[edition] job ${jobId} completed`);
+    await supabase.storage.from("uploads").remove([sourcePath])
+      .then(() => {}, () => {});
+    console.log(`[edition] job ${jobId} completed; source ${sourcePath} deleted`);
   }
 }
 
@@ -260,22 +265,44 @@ Deno.serve(async (req) => {
 
   const contentType = req.headers.get("content-type") ?? "";
 
-  // ── internal continuation (service-key holders only) ────────────────────
   if (contentType.includes("application/json")) {
-    const internal = req.headers.get("x-internal-token") ?? "";
-    if (internal !== SERVICE_KEY && jwtRole(req) !== "service_role") {
-      return json({ error: "forbidden" }, 403);
+    const body = await req.json().catch(() => ({})) as {
+      job_id?: string; page?: number; storagePath?: string; filename?: string;
+    };
+
+    // ── internal continuation (service-key holders only) ──────────────────
+    if (body.job_id && body.page) {
+      const internal = req.headers.get("x-internal-token") ?? "";
+      if (internal !== SERVICE_KEY && jwtRole(req) !== "service_role") {
+        return json({ error: "forbidden" }, 403);
+      }
+      await processPage(supabase, body.job_id, body.page);
+      return json({ ok: true, job_id: body.job_id, page: body.page });
     }
-    const { job_id, page } = await req.json() as { job_id: string; page: number };
-    if (!job_id || !page) return json({ error: "bad_request" }, 400);
-    // do the page work inside this invocation; respond when done
-    await processPage(supabase, job_id, page);
-    return json({ ok: true, job_id, page });
+
+    // ── public: start from a pre-uploaded storage path (durable path) ─────
+    if (body.storagePath) {
+      return await runStart(supabase, req, SUPABASE_URL!,
+        { storagePath: body.storagePath, filename: body.filename || "edition.pdf" });
+    }
+    return json({ error: "bad_request" }, 400);
   }
 
-  // ── public: start a new edition job ─────────────────────────────────────
+  // ── public: start from a multipart upload (legacy / small files) ────────
+  return await runStart(supabase, req, SUPABASE_URL!, { multipart: true });
+});
+
+// Shared edition starter. Source is either a multipart file in the request, or
+// a path the client already uploaded straight to storage (the durable path —
+// the heavy byte transfer never touches this function).
+async function runStart(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  req: Request,
+  SUPABASE_URL: string,
+  source: { multipart?: boolean; storagePath?: string; filename?: string },
+): Promise<Response> {
   try {
-    // editions are ~20x the cost of a single page — tight rate limit
     const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
     const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await supabase
@@ -287,24 +314,38 @@ Deno.serve(async (req) => {
     }
     await supabase.from("request_log").insert({ ip, endpoint: "documents-process-edition" });
 
-    const form = await req.formData();
-    const file = form.get("document");
-    if (!(file instanceof File)) return json({ error: "missing_file" }, 400);
-    if (file.size > 60 * 1024 * 1024) return json({ error: "file_too_large", message: "Max 60 MB." }, 413);
+    let originalName: string;
+    let sourcePath: string;       // where the source lives in the uploads bucket
+    let bytes: Uint8Array;        // normalized PDF bytes, for page counting
 
-    const raw = new Uint8Array(await file.arrayBuffer());
-    // Normalize image uploads (newspaper photos) into a 1-page PDF so the rest
-    // of the pipeline is identical to a PDF upload. JPEG/PNG only for now.
-    const bytes = await normalizeToPdf(raw);
+    if (source.multipart) {
+      const form = await req.formData();
+      const file = form.get("document");
+      if (!(file instanceof File)) return json({ error: "missing_file" }, 400);
+      if (file.size > 60 * 1024 * 1024) return json({ error: "file_too_large", message: "Max 60 MB." }, 413);
+      originalName = file.name || "edition.pdf";
+      const safe = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      sourcePath = `editions/${Date.now()}_${safe}`;
+      bytes = await normalizeToPdf(new Uint8Array(await file.arrayBuffer()));
+      const { error: upErr } = await supabase.storage.from("uploads")
+        .upload(sourcePath, bytes, { contentType: "application/pdf", upsert: true });
+      if (upErr) throw new Error(`pdf store: ${upErr.message}`);
+    } else {
+      originalName = source.filename!;
+      sourcePath = source.storagePath!;
+      const { data: blob, error: dlErr } = await supabase.storage
+        .from("uploads").download(sourcePath);
+      if (dlErr) throw new Error(`source download: ${dlErr.message}`);
+      bytes = await normalizeToPdf(new Uint8Array(await blob.arrayBuffer()));
+    }
+
     const pdf = await PDFDocument.load(bytes);
     const totalPages = Math.min(pdf.getPageCount(), MAX_PAGES);
     if (totalPages === 0) return json({ error: "empty_pdf" }, 400);
 
-    const originalName = file.name || "edition.pdf";
     const pubDate = parseDateFromFilename(originalName) || new Date().toISOString().split("T")[0];
     const title = originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 
-    // newspaper row (reuse if same title+date already exists)
     let newspaperId: string;
     const { data: existing } = await supabase
       .from("newspapers").select("id")
@@ -322,31 +363,19 @@ Deno.serve(async (req) => {
 
     const { data: jobRow, error: jErr } = await supabase
       .from("processing_jobs")
-      .insert({ filename: originalName, status: "processing", total_pages: totalPages, newspaper_id: newspaperId })
+      .insert({
+        filename: originalName, status: "processing",
+        total_pages: totalPages, newspaper_id: newspaperId, source_path: sourcePath,
+      })
       .select("id").single();
     if (jErr) throw new Error(`job insert: ${jErr.message}`);
     const jobId = jobRow.id as string;
 
-    // store the source PDF where continuations can reach it
-    const { error: upErr } = await supabase.storage
-      .from("uploads")
-      .upload(`editions/${jobId}.pdf`, bytes, { contentType: "application/pdf", upsert: true });
-    if (upErr) throw new Error(`pdf store: ${upErr.message}`);
-    const storageUrl = supabase.storage.from("uploads").getPublicUrl(`editions/${jobId}.pdf`).data.publicUrl;
-    await supabase.from("newspapers").update({ storage_url: storageUrl }).eq("id", newspaperId);
-
     fireContinuation(jobId, 1);
-
-    return json({
-      ok: true,
-      jobId,
-      newspaperId,
-      totalPages,
-      statusHint: `poll GET ${SUPABASE_URL}/rest/v1/processing_jobs?id=eq.${jobId}&select=status,done_pages,total_pages,article_count,failed_pages`,
-    });
+    return json({ ok: true, jobId, newspaperId, totalPages });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[documents-process-edition]", err);
     return json({ error: "edition_failed", message }, 500);
   }
-});
+}
