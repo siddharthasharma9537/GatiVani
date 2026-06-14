@@ -236,20 +236,89 @@ class _TodayScreenState extends State<TodayScreen> {
                       ],
                     ),
                   )
-                else
+                else ...[
                   Container(
-                    padding: const EdgeInsets.all(24),
-                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
+                    margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
-                        border: Border.all(color: const Color(0xFFD3D1C7)),
-                        borderRadius: BorderRadius.circular(16)),
-                    child: const Center(
-                        child: Text(
-                            'Upload a newspaper PDF or photo with + to\n'
-                            "build today's audio edition",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: kMuted, fontSize: 13))),
+                        color: kInk, borderRadius: BorderRadius.circular(20)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.headphones_rounded,
+                            color: kAccent, size: 30),
+                        const SizedBox(height: 14),
+                        const Text('Listen to the newspaper',
+                            style: TextStyle(
+                                color: kPaper,
+                                fontSize: 21,
+                                fontWeight: FontWeight.w500)),
+                        const SizedBox(height: 6),
+                        const Text(
+                            'Upload today’s edition and GatiVani turns every '
+                            'article into audio you can listen to.',
+                            style: TextStyle(
+                                color: Color(0xFFB4B2A9),
+                                fontSize: 13.5,
+                                height: 1.5)),
+                        const SizedBox(height: 18),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                              backgroundColor: kAccent,
+                              foregroundColor: kPaper,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 12)),
+                          onPressed: _upload,
+                          icon: const Icon(Icons.upload_file, size: 18),
+                          label: const Text('Upload edition'),
+                        ),
+                      ],
+                    ),
                   ),
+                  for (final step in const [
+                    ['1', 'Upload', 'A newspaper PDF or a photo of a page'],
+                    ['2', 'We separate', 'Each article, headline and section, automatically'],
+                    ['3', 'Listen', 'Play article by article, like a podcast'],
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 26,
+                            height: 26,
+                            alignment: Alignment.center,
+                            decoration: const BoxDecoration(
+                                color: Color(0xFFFAECE7),
+                                shape: BoxShape.circle),
+                            child: Text(step[0],
+                                style: const TextStyle(
+                                    color: Color(0xFF993C1D),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500)),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(step[1],
+                                    style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: kInk)),
+                                Text(step[2],
+                                    style: const TextStyle(
+                                        fontSize: 12.5, color: kMuted)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                ],
                 if (_recent.isNotEmpty) ...[
                   const Padding(
                     padding: EdgeInsets.only(top: 4, bottom: 6),
