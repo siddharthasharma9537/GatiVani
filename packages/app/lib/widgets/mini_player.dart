@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import '../services/playback_service.dart';
-
-const kInk = Color(0xFF2C2C2A);
-const kPaper = Color(0xFFFAF7F0);
-const kAccent = Color(0xFFD85A30);
-const kMuted = Color(0xFF888780);
+// Re-export the design tokens so screens that `import 'mini_player.dart'`
+// keep resolving kInk/kPaper/kAccent/kMuted from the single source of truth.
+import '../design/tokens.dart';
+export '../design/tokens.dart';
 
 /// Persistent bottom bar. Audio keeps playing while the user browses.
 class MiniPlayer extends StatelessWidget {
