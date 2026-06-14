@@ -55,6 +55,21 @@ class PlaybackService extends ChangeNotifier {
   void seek(Duration d) => player.seek(d);
   void setSpeed(double s) => player.setSpeed(s);
 
+  /// Fire-and-forget: record into recent_plays so the Today screen can show
+  /// recently-played history.
+  void _recordPlay(NewspaperArticle a) {
+    http
+        .post(Uri.parse('${ApiConfig.restUrl}/recent_plays'),
+            headers: {...ApiConfig.authHeaders, 'Content-Type': 'application/json'},
+            body: json.encode({
+              'article_id': a.id,
+              'title': a.title,
+              'category': a.category,
+              'page': a.page,
+            }))
+        .catchError((_) => http.Response('', 204));
+  }
+
   Future<void> _playIndex(int idx) async {
     index = idx;
     loading = true;
@@ -85,6 +100,7 @@ class PlaybackService extends ChangeNotifier {
       }
       await player.setUrl(url);
       await player.play();
+      _recordPlay(a);
     } catch (e) {
       error = e.toString();
     } finally {
