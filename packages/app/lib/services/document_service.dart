@@ -157,6 +157,28 @@ class DocumentService {
     );
   }
 
+  /// A single article by its DB id — lets surfaces like "Recently played" play
+  /// an item without depending on the currently-loaded edition list.
+  Future<NewspaperArticle?> fetchArticleById(String id) async {
+    final r = await http.get(
+      Uri.parse('${ApiConfig.restUrl}/articles?id=eq.$id'
+          '&select=id,title,content_preview,full_content,section,page_number,audio_url&limit=1'),
+      headers: ApiConfig.authHeaders,
+    );
+    final rows = json.decode(r.body) as List<dynamic>;
+    if (rows.isEmpty) return null;
+    final m = rows.first as Map<String, dynamic>;
+    return NewspaperArticle.fromJson({
+      'id': m['id'],
+      'title': m['title'],
+      'preview': m['content_preview'] ?? '',
+      'content': m['full_content'] ?? '',
+      'category': m['section'] ?? 'News',
+      'page': m['page_number'] ?? 1,
+      'audioUrl': m['audio_url'],
+    }, imageUrl: '');
+  }
+
   /// Articles of a processed edition, in page order, mapped to the same JSON
   /// shape that processNewspaper feeds into NewspaperArticle.fromJson.
   Future<List<NewspaperArticle>> fetchEditionArticles(

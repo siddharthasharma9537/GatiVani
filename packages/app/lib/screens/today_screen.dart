@@ -111,6 +111,13 @@ class _TodayScreenState extends State<TodayScreen> {
         MaterialPageRoute(builder: (_) => const LyricsPlayerScreen()));
   }
 
+  Future<void> _playRecent(String id) async {
+    final a = await _svc.fetchArticleById(id);
+    if (a == null || !mounted) return;
+    PlaybackService.i.playOne(a);
+    _openPlayer();
+  }
+
   void _playAll() {
     PlaybackService.i.playAll(_articles);
     Future.delayed(const Duration(seconds: 2), _loadRecent);
@@ -351,45 +358,50 @@ class _TodayScreenState extends State<TodayScreen> {
                             color: kInk)),
                   ),
                   SizedBox(
-                    height: 84,
+                    height: 96,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
                       itemCount: _recent.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      separatorBuilder: (_, __) => const SizedBox(width: 10),
                       itemBuilder: (_, i) {
                         final m = _recent[i];
-                        final a = _articles.firstWhere(
-                          (x) => x.id == m['article_id'],
-                          orElse: () => _articles.isEmpty
-                              ? (throw StateError('none'))
-                              : _articles.first,
-                        );
                         return GestureDetector(
-                          onTap: () => _play(a),
+                          onTap: () => _playRecent(m['article_id'] as String),
                           child: Container(
-                            width: 150,
-                            padding: const EdgeInsets.all(10),
+                            width: 160,
+                            padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
                             decoration: BoxDecoration(
                                 color: Colors.white,
                                 border: Border.all(
-                                    color: const Color(0xFFD3D1C7)),
-                                borderRadius: BorderRadius.circular(12)),
+                                    color: const Color(0xFFE7E4DB)),
+                                borderRadius: BorderRadius.circular(14)),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(m['category'] ?? 'News',
+                                Text((m['category'] as String? ?? 'News').toUpperCase(),
                                     style: const TextStyle(
-                                        fontSize: 10.5, color: kAccent)),
-                                const SizedBox(height: 4),
+                                        fontSize: 10,
+                                        letterSpacing: 0.4,
+                                        color: kAccent,
+                                        fontWeight: FontWeight.w500)),
+                                const SizedBox(height: 5),
                                 Expanded(
-                                  child: Text(m['title'] ?? '',
+                                  child: Text(m['title'] as String? ?? '',
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
-                                          fontSize: 12.5, color: kInk)),
+                                          fontSize: 13,
+                                          height: 1.3,
+                                          color: kInk)),
                                 ),
-                                const Icon(Icons.play_circle_fill,
-                                    color: kAccent, size: 18),
+                                Row(children: const [
+                                  Icon(Icons.play_circle_fill,
+                                      color: kAccent, size: 18),
+                                  SizedBox(width: 4),
+                                  Text('Play',
+                                      style: TextStyle(
+                                          fontSize: 11.5, color: kMuted)),
+                                ]),
                               ],
                             ),
                           ),
@@ -397,7 +409,7 @@ class _TodayScreenState extends State<TodayScreen> {
                       },
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
                 ],
                 if (cats.isNotEmpty)
                   Padding(
