@@ -62,8 +62,10 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   Future<void> _upload() async {
-    final picked = await FilePicker
-        .pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
+    final picked = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+        withData: true);
     if (picked == null || picked.files.isEmpty) return;
     final f = picked.files.first;
     setState(() => _error = null);
@@ -211,8 +213,8 @@ class _TodayScreenState extends State<TodayScreen> {
                         borderRadius: BorderRadius.circular(16)),
                     child: const Center(
                         child: Text(
-                            'Upload a newspaper PDF with + to build\n'
-                            "today's audio edition",
+                            'Upload a newspaper PDF or photo with + to\n'
+                            "build today's audio edition",
                             textAlign: TextAlign.center,
                             style: TextStyle(color: kMuted, fontSize: 13))),
                   ),

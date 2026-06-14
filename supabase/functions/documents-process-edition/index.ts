@@ -132,6 +132,21 @@ function estimateDurationSeconds(text: string): number {
   return Math.max(15, Math.round((text.length / 700) * 60));
 }
 
+// Wrap a JPEG/PNG into a single-page PDF (page sized to the image). If the bytes
+// are already a PDF (or an unrecognized type), return them unchanged.
+async function normalizeToPdf(bytes: Uint8Array): Promise<Uint8Array> {
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 &&
+    bytes[2] === 0x4e && bytes[3] === 0x47;
+  if (!isJpeg && !isPng) return bytes; // already PDF (or let load() error clearly)
+
+  const doc = await PDFDocument.create();
+  const img = isJpeg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+  const page = doc.addPage([img.width, img.height]);
+  page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+  return await doc.save();
+}
+
 // ── Page continuation ─────────────────────────────────────────────────────────
 
 // deno-lint-ignore no-explicit-any
@@ -277,7 +292,10 @@ Deno.serve(async (req) => {
     if (!(file instanceof File)) return json({ error: "missing_file" }, 400);
     if (file.size > 60 * 1024 * 1024) return json({ error: "file_too_large", message: "Max 60 MB." }, 413);
 
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    const raw = new Uint8Array(await file.arrayBuffer());
+    // Normalize image uploads (newspaper photos) into a 1-page PDF so the rest
+    // of the pipeline is identical to a PDF upload. JPEG/PNG only for now.
+    const bytes = await normalizeToPdf(raw);
     const pdf = await PDFDocument.load(bytes);
     const totalPages = Math.min(pdf.getPageCount(), MAX_PAGES);
     if (totalPages === 0) return json({ error: "empty_pdf" }, 400);
