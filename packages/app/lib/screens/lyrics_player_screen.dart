@@ -22,6 +22,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
   final _scroll = ScrollController();
   final _keys = <int, GlobalKey>{};
   int _lastScrolled = -1;
+  bool _dismissing = false;
 
   // Per-article cache, recomputed when the playing article changes.
   String _forId = '';
@@ -147,7 +148,17 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                         color: Gati.onInk, fontSize: 20, fontWeight: FontWeight.w500)),
               ),
               Expanded(
-                child: ShaderMask(
+                child: NotificationListener<ScrollNotification>(
+                  // Pull the lyrics down past the top to minimize the player —
+                  // the iOS now-playing gesture, without fighting normal scroll.
+                  onNotification: (n) {
+                    if (n.metrics.pixels < -90 && !_dismissing) {
+                      _dismissing = true;
+                      Navigator.maybePop(context);
+                    }
+                    return false;
+                  },
+                  child: ShaderMask(
                   // Soft fade at top and bottom so lines glide under the title
                   // and controls — premium, Apple-Music-like.
                   shaderCallback: (rect) => const LinearGradient(
@@ -159,6 +170,8 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                   blendMode: BlendMode.dstIn,
                   child: ListView.builder(
                     controller: _scroll,
+                    physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics()),
                     padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                     itemCount: _lines.length,
                     itemBuilder: (context, li) {
@@ -206,6 +219,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                     },
                   ),
                 ),
+              ),
               ),
               _controls(p),
             ]);

@@ -507,8 +507,14 @@ class _TodayScreenState extends State<TodayScreen> {
                           for (final p in pageKeys)
                             ChoiceChip(
                               label: Text('Page $p · ${pages[p]}',
-                                  style: const TextStyle(fontSize: 12)),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: _pageSel == p
+                                          ? const Color(0xFF993C1D)
+                                          : kInk)),
                               selected: _pageSel == p,
+                              showCheckmark: false,
+                              backgroundColor: Colors.white,
                               selectedColor: const Color(0xFFFAECE7),
                               onSelected: (_) => setState(() =>
                                   _pageSel = _pageSel == p ? null : p),
@@ -517,8 +523,14 @@ class _TodayScreenState extends State<TodayScreen> {
                           for (final e in cats.entries)
                             ChoiceChip(
                               label: Text('${e.key} · ${e.value}',
-                                  style: const TextStyle(fontSize: 12)),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: _category == e.key
+                                          ? const Color(0xFF993C1D)
+                                          : kInk)),
                               selected: _category == e.key,
+                              showCheckmark: false,
+                              backgroundColor: Colors.white,
                               selectedColor: const Color(0xFFFAECE7),
                               onSelected: (_) => setState(() => _category =
                                   _category == e.key ? null : e.key),

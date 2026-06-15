@@ -23,6 +23,10 @@ class MiniPlayer extends StatelessWidget {
             : p.position.inMilliseconds / p.duration.inMilliseconds;
         return GestureDetector(
           onTap: onExpand,
+          // Swipe up on the bar to open the full player.
+          onVerticalDragEnd: (d) {
+            if ((d.primaryVelocity ?? 0) < -100) onExpand?.call();
+          },
           child: Container(
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
