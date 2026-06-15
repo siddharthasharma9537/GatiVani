@@ -220,9 +220,80 @@ async function processPage(supabase: any, jobId: string, page: number): Promise<
   if (page < job.total_pages) {
     fireContinuation(jobId, page + 1);
   } else {
+    // All pages done — stitch cross-page article continuations, then clean up.
+    await finalizeContinuations(supabase, job.newspaper_id);
     await supabase.storage.from("uploads").remove([sourcePath])
       .then(() => {}, () => {});
     console.log(`[edition] job ${jobId} completed; source ${sourcePath} deleted`);
+  }
+}
+
+// ── Cross-page continuation stitching ────────────────────────────────────────
+// Telugu papers split long articles across pages: the body ends with a marker
+// like "(మిగతా 3వ పేజీలో)" / "మిగతా 3లో" / "సశేషం 5వ పేజీలో", and the rest sits
+// on page N under a "(... తరువాయి)" continuation header. This runs once, after
+// every page is extracted (the only point all pages coexist). Conservative:
+// only merges on a strong match (continuation header OR matching headline) to
+// avoid fusing unrelated articles; otherwise it just strips the dangling marker
+// so it isn't read aloud.
+
+// "continued TO page N" — captures the page number.
+const CONT_TO = /(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*(\d{1,2})\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)[^)]*\)?/;
+// "continued FROM" header at the start of the destination article.
+const CONT_FROM = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
+
+// deno-lint-ignore no-explicit-any
+async function finalizeContinuations(supabase: any, newspaperId: string): Promise<void> {
+  if (!newspaperId) return;
+  const { data: arts } = await supabase.from("articles")
+    .select("id,title,full_content,content_preview,page_number")
+    .eq("newspaper_id", newspaperId)
+    .order("page_number");
+  if (!arts || arts.length < 2) return;
+
+  for (const a of arts) {
+    const body: string = a.full_content ?? "";
+    const m = body.match(CONT_TO);
+    if (!m) continue;
+    const targetPage = parseInt(m[1], 10);
+
+    // candidate continuations: articles on the target page
+    const cands = arts.filter((x: typeof a) =>
+      x.page_number === targetPage && x.id !== a.id && x.full_content);
+    let best: typeof a | null = null;
+    let bestScore = 0;
+    for (const c of cands) {
+      const head = (c.full_content as string).slice(0, 90);
+      let score = 0;
+      if (CONT_FROM.test(head)) score += 2;
+      if (a.title && c.title &&
+          (a.title as string).slice(0, 10) === (c.title as string).slice(0, 10)) {
+        score += 2;
+      }
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+
+    // Strip the dangling "continued to" marker from this article regardless.
+    const head = body.replace(CONT_TO, " ").replace(/\s{2,}/g, " ").trim();
+
+    if (best && bestScore >= 2) {
+      const contBody = (best.full_content as string)
+        .replace(CONT_FROM, " ")
+        .replace(/^[\s\S]{0,40}?తరువాయి[^)]*\)?/, " ") // drop leading header line
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      const merged = `${head} ${contBody}`.trim();
+      await supabase.from("articles")
+        .update({ full_content: merged, content_preview: merged.slice(0, 200) })
+        .eq("id", a.id);
+      await supabase.from("articles").delete().eq("id", best.id);
+      console.log(`[edition] merged continuation p→${targetPage}: "${(a.title as string).slice(0, 24)}"`);
+    } else if (head !== body) {
+      // No confident match — at least don't read the marker aloud.
+      await supabase.from("articles")
+        .update({ full_content: head, content_preview: head.slice(0, 200) })
+        .eq("id", a.id);
+    }
   }
 }
 
