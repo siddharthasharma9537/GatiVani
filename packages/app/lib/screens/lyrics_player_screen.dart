@@ -147,44 +147,64 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                         color: Gati.onInk, fontSize: 20, fontWeight: FontWeight.w500)),
               ),
               Expanded(
-                child: ListView.builder(
-                  controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                  itemCount: _lines.length,
-                  itemBuilder: (context, li) {
-                    final k = _keys.putIfAbsent(li, () => GlobalKey());
-                    final firstWord = _lineFirstWord[li];
-                    final spans = <TextSpan>[];
-                    for (var w = 0; w < _lines[li].length; w++) {
-                      final gi = firstWord + w;
-                      final isActive = gi == activeWord;
-                      final isPast = gi < activeWord;
-                      spans.add(TextSpan(
-                        text: _lines[li][w] + (w == _lines[li].length - 1 ? '' : ' '),
-                        style: TextStyle(
-                          color: isActive
-                              ? Gati.accent
-                              : isPast
-                                  ? Gati.onInkPast
-                                  : Gati.onInkFuture,
-                          fontWeight: isActive ? FontWeight.w500 : FontWeight.w400,
+                child: ShaderMask(
+                  // Soft fade at top and bottom so lines glide under the title
+                  // and controls — premium, Apple-Music-like.
+                  shaderCallback: (rect) => const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Colors.black, Colors.black, Colors.transparent],
+                    stops: [0.0, 0.06, 0.9, 1.0],
+                  ).createShader(rect),
+                  blendMode: BlendMode.dstIn,
+                  child: ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                    itemCount: _lines.length,
+                    itemBuilder: (context, li) {
+                      final k = _keys.putIfAbsent(li, () => GlobalKey());
+                      final firstWord = _lineFirstWord[li];
+                      final isActiveLine = li == activeLine;
+                      final spans = <TextSpan>[];
+                      for (var w = 0; w < _lines[li].length; w++) {
+                        final gi = firstWord + w;
+                        final isActive = gi == activeWord;
+                        final isPast = gi < activeWord;
+                        spans.add(TextSpan(
+                          text: _lines[li][w] + (w == _lines[li].length - 1 ? '' : ' '),
+                          style: TextStyle(
+                            color: isActive
+                                ? Gati.accent
+                                : isPast
+                                    ? Gati.onInkPast
+                                    : Gati.onInkFuture,
+                            fontWeight: isActive ? FontWeight.w500 : FontWeight.w400,
+                          ),
+                        ));
+                      }
+                      return GestureDetector(
+                        key: k,
+                        onTap: () => p.seek(Duration(
+                            milliseconds: (_wordStart[firstWord] * dur).round())),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isActiveLine
+                                ? const Color(0x1AD85A30) // accent @ ~10%
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: RichText(
+                            text: TextSpan(
+                                style: const TextStyle(fontSize: 18, height: 1.6),
+                                children: spans),
+                          ),
                         ),
-                      ));
-                    }
-                    return GestureDetector(
-                      key: k,
-                      onTap: () => p.seek(Duration(
-                          milliseconds: (_wordStart[firstWord] * dur).round())),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 7),
-                        child: RichText(
-                          text: TextSpan(
-                              style: const TextStyle(fontSize: 18, height: 1.6),
-                              children: spans),
-                        ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
               _controls(p),
@@ -244,40 +264,34 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
         ),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(fmt(pos), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
-          Text(fmt(dur), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
-        ]),
-        const SizedBox(height: 8),
-        Row(children: [
-          // speed cycle — sits at the left, balanced by the spacer on the right
-          SizedBox(
-            width: 56,
-            child: GestureDetector(
-              onTap: () {
-                const steps = [1.0, 1.25, 1.5, 2.0, 0.75];
-                final next = steps[(steps.indexOf(p.speed) + 1) % steps.length];
-                p.setSpeed(next);
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 5),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                    border: Border.all(color: Gati.onInkTrack),
-                    borderRadius: BorderRadius.circular(14)),
-                child: Text('${_fmtSpeed(p.speed)}×',
-                    style: const TextStyle(
-                        color: Gati.onInkFuture,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w500)),
-              ),
+          // speed cycle — small, where the eye already is (the time row)
+          GestureDetector(
+            onTap: () {
+              const steps = [1.0, 1.25, 1.5, 2.0, 0.75];
+              p.setSpeed(steps[(steps.indexOf(p.speed) + 1) % steps.length]);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                  border: Border.all(color: Gati.onInkTrack),
+                  borderRadius: BorderRadius.circular(12)),
+              child: Text('${_fmtSpeed(p.speed)}×',
+                  style: const TextStyle(
+                      color: Gati.onInkFuture, fontSize: 11.5, fontWeight: FontWeight.w500)),
             ),
           ),
-          Expanded(
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Text(fmt(dur), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
+        ]),
+        const SizedBox(height: 10),
+        // Transport: prev article · −15s · play · +15s · next article
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           IconButton(
-            icon: const Icon(Icons.skip_previous, color: Gati.onInkFuture, size: 30),
+            icon: const Icon(Icons.skip_previous, color: Gati.onInkFuture, size: 26),
             onPressed: p.previous,
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 4),
+          _seekBtn(p, -15),
+          const SizedBox(width: 8),
           Container(
             width: 64,
             height: 64,
@@ -292,16 +306,34 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
               onPressed: p.toggle,
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 8),
+          _seekBtn(p, 15),
+          const SizedBox(width: 4),
           IconButton(
-            icon: const Icon(Icons.skip_next, color: Gati.onInkFuture, size: 30),
+            icon: const Icon(Icons.skip_next, color: Gati.onInkFuture, size: 26),
             onPressed: p.next,
           ),
-            ]),
-          ),
-          const SizedBox(width: 56), // balances the speed pill — keeps play centered
         ]),
       ]),
+    );
+  }
+
+  Widget _seekBtn(PlaybackService p, int secs) {
+    final dur = p.duration.inMilliseconds;
+    return GestureDetector(
+      onTap: () => p.seek(Duration(
+          milliseconds: (p.position.inMilliseconds + secs * 1000).clamp(0, dur))),
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: Stack(alignment: Alignment.center, children: [
+          Icon(secs < 0 ? Icons.replay : Icons.refresh,
+              color: Gati.onInkFuture, size: 30),
+          Text('${secs.abs()}',
+              style: const TextStyle(
+                  color: Gati.onInkFuture, fontSize: 9, fontWeight: FontWeight.w500)),
+        ]),
+      ),
     );
   }
 
