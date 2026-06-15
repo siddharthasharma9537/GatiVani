@@ -42,12 +42,23 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
         .map((s) => s.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList())
         .toList();
 
+    // Per-word weight ≈ how long it's spoken. Char count + a pause budget after
+    // punctuation: TTS pauses at "." and "," but those pauses belong to no word,
+    // so without counting them the highlight runs ahead (it was ~5-6 words off).
+    final sentenceEnd = RegExp(r'[.?!।॥…]$');
+    final clauseEnd = RegExp(r'[,;:]$');
     final weights = <double>[];
     _lineFirstWord = [];
     for (final line in _lines) {
       _lineFirstWord.add(weights.length);
       for (final w in line) {
-        weights.add(w.runes.length.clamp(1, 30).toDouble());
+        var wt = w.runes.length.clamp(1, 30).toDouble();
+        if (sentenceEnd.hasMatch(w)) {
+          wt += 7; // ~a long pause
+        } else if (clauseEnd.hasMatch(w)) {
+          wt += 3; // ~a short pause
+        }
+        weights.add(wt);
       }
     }
     _wordCount = weights.length;
@@ -116,7 +127,11 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
               _prepare(a.content.isNotEmpty ? a.content : a.preview);
             }
             final dur = p.duration.inMilliseconds;
-            final frac = dur == 0 ? 0.0 : (p.position.inMilliseconds / dur).clamp(0.0, 1.0);
+            // TTS clips usually open with ~0.4s of silence before the first word,
+            // which otherwise makes the highlight lead from the very start.
+            const leadMs = 400;
+            final adjPos = (p.position.inMilliseconds - leadMs).clamp(0, dur);
+            final frac = dur == 0 ? 0.0 : (adjPos / dur).clamp(0.0, 1.0);
             final activeWord = _wordCount == 0 ? 0 : _activeWord(frac);
             final activeLine = _lineOf(activeWord);
             WidgetsBinding.instance
@@ -227,7 +242,32 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
           Text(fmt(dur), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
         ]),
         const SizedBox(height: 8),
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Row(children: [
+          // speed cycle — sits at the left, balanced by the spacer on the right
+          SizedBox(
+            width: 56,
+            child: GestureDetector(
+              onTap: () {
+                const steps = [1.0, 1.25, 1.5, 2.0, 0.75];
+                final next = steps[(steps.indexOf(p.speed) + 1) % steps.length];
+                p.setSpeed(next);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    border: Border.all(color: Gati.onInkTrack),
+                    borderRadius: BorderRadius.circular(14)),
+                child: Text('${_fmtSpeed(p.speed)}×',
+                    style: const TextStyle(
+                        color: Gati.onInkFuture,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500)),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           IconButton(
             icon: const Icon(Icons.skip_previous, color: Gati.onInkFuture, size: 30),
             onPressed: p.previous,
@@ -252,8 +292,16 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
             icon: const Icon(Icons.skip_next, color: Gati.onInkFuture, size: 30),
             onPressed: p.next,
           ),
+            ]),
+          ),
+          const SizedBox(width: 56), // balances the speed pill — keeps play centered
         ]),
       ]),
     );
+  }
+
+  String _fmtSpeed(double s) {
+    final r = (s * 100).round() / 100;
+    return r == r.roundToDouble() ? r.toStringAsFixed(0) : r.toString();
   }
 }

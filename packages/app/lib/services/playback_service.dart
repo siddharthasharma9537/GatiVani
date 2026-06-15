@@ -64,6 +64,7 @@ class PlaybackService extends ChangeNotifier {
   NewspaperArticle? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
   bool get isPlaying => player.playing;
+  double get speed => player.speed;
   Duration get position => player.position;
   Duration get duration => player.duration ?? Duration.zero;
 
