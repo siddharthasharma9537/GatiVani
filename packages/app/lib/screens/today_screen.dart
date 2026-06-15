@@ -101,8 +101,12 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   void _play(NewspaperArticle a) {
-    PlaybackService.i.playOne(a);
+    // Open the player first (synchronously, inside the tap gesture) so the
+    // play control is available immediately — mobile browsers block audio that
+    // starts after an async gap, so the player's own play button is the
+    // reliable path there.
     _openPlayer();
+    PlaybackService.i.playOne(a);
     Future.delayed(const Duration(seconds: 2), _loadRecent);
   }
 
@@ -112,10 +116,10 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   Future<void> _playRecent(String id) async {
-    final a = await _svc.fetchArticleById(id);
-    if (a == null || !mounted) return;
-    PlaybackService.i.playOne(a);
     _openPlayer();
+    final a = await _svc.fetchArticleById(id);
+    if (a == null) return;
+    PlaybackService.i.playOne(a);
   }
 
   void _playAll() {
@@ -147,14 +151,20 @@ class _TodayScreenState extends State<TodayScreen> {
         ? _articles
         : _articles.where((a) => a.category == _category).toList();
     final st = _jobStatus;
+    // First-run / empty state shows the hero "Upload edition" CTA — hide the FAB
+    // then so there aren't two upload buttons. The FAB returns once an edition
+    // is loaded, as the persistent "add another" action.
+    final showHero = !_uploading && _articles.isEmpty && st == null;
 
     return Scaffold(
       backgroundColor: kPaper,
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: kAccent,
-        onPressed: _upload,
-        child: const Icon(Icons.add, color: kPaper),
-      ),
+      floatingActionButton: showHero
+          ? null
+          : FloatingActionButton(
+              backgroundColor: kAccent,
+              onPressed: _upload,
+              child: const Icon(Icons.add, color: kPaper),
+            ),
       body: SafeArea(
         child: Column(children: [
           Expanded(
