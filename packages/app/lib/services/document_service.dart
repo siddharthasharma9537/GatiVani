@@ -171,26 +171,26 @@ class DocumentService {
     return data['answer'] as String? ?? '—';
   }
 
-  /// The featured demo edition (or the most recent edition with articles) so the
-  /// app opens onto real, playable content instead of an empty screen.
+  /// Edition to open the app onto: the most recently processed one with
+  /// articles, falling back to the pinned featured/demo edition. This makes a
+  /// fresh upload become the home edition automatically.
   Future<({String title, String id, List<NewspaperArticle> articles})?>
       fetchFeaturedEdition() async {
-    Future<List<dynamic>> q(String filter) async {
-      final r = await http.get(
-        Uri.parse('${ApiConfig.restUrl}/newspapers?$filter'
-            '&select=id,title&limit=1'),
-        headers: ApiConfig.authHeaders,
-      );
-      return json.decode(r.body) as List<dynamic>;
+    final r = await http.get(
+      Uri.parse('${ApiConfig.restUrl}/newspapers'
+          '?select=id,title,featured&order=created_at.desc&limit=6'),
+      headers: ApiConfig.authHeaders,
+    );
+    final rows = (json.decode(r.body) as List<dynamic>).cast<Map<String, dynamic>>();
+    // Newest first (query already ordered): return the first edition that
+    // actually has articles.
+    for (final n in rows) {
+      final arts = await fetchEditionArticles(n['id'] as String);
+      if (arts.isNotEmpty) {
+        return (title: n['title'] as String, id: n['id'] as String, articles: arts);
+      }
     }
-
-    var rows = await q('featured=eq.true');
-    if (rows.isEmpty) rows = await q('order=created_at.desc');
-    if (rows.isEmpty) return null;
-    final n = rows.first as Map<String, dynamic>;
-    final arts = await fetchEditionArticles(n['id'] as String);
-    if (arts.isEmpty) return null;
-    return (title: n['title'] as String, id: n['id'] as String, articles: arts);
+    return null;
   }
 
   /// A single article by its DB id — lets surfaces like "Recently played" play
