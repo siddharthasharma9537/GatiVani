@@ -442,6 +442,135 @@ function validateArticle(a: StructuredArticle): string[] {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+// A draft article before stitching — body kept as ordered fragments so the
+// coherence passes can reorder / patch them.
+interface Draft {
+  title: string;
+  subs: string[];
+  caps: string[];
+  category: string;
+  blocks: Array<{ id: number; text: string }>;
+  review: string[];
+}
+
+function frag(text: string, head = 60, tail = 30): string {
+  return text.length <= head + tail
+    ? `"${text}"`
+    : `"${text.slice(0, head)}…" tail="…${text.slice(-tail)}"`;
+}
+
+function applyOrder(d: Draft, order: unknown): boolean {
+  if (!Array.isArray(order) || order.length !== d.blocks.length) return false;
+  if (new Set(order).size !== d.blocks.length) return false;
+  if (!order.every((x) => typeof x === "number" && x >= 0 && x < d.blocks.length)) return false;
+  const changed = order.some((x, k) => x !== k);
+  d.blocks = (order as number[]).map((x) => d.blocks[x]);
+  return changed;
+}
+
+// ── Layer 2: text coherence ──────────────────────────────────────────────────
+// One cheap text call per page. Reorders body fragments by MEANING (catches the
+// within-column semantic mis-orders that string heuristics miss) and flags
+// narrative gaps. Index-only: it permutes existing fragments, never edits text.
+async function coherencePass(drafts: Draft[], geminiKey: string): Promise<void> {
+  const lines: string[] = [];
+  drafts.forEach((d, i) => {
+    if (d.blocks.length < 2) return;
+    lines.push(`# Article ${i}: ${d.title.slice(0, 40)}`);
+    d.blocks.forEach((b, j) => lines.push(`  [${j}] ${frag(b.text)}`));
+  });
+  if (!lines.length) return;
+  const prompt =
+`Each article below is a list of OCR text fragments in their CURRENT order.
+Newspapers split stories across columns, so fragments can be out of reading order.
+For each article decide if the fragments read as ONE coherent story in the right
+order, judging by MEANING (does each fragment continue the previous idea?).
+Return ONLY JSON: {"articles":[{"i":0,"order":[2,0,1],"gap":false}]}
+RULES:
+- "order" = that article's fragment indices in correct reading order. It MUST be a
+  permutation of the existing indices — never invent, drop, or edit text. Omit it
+  if already correct.
+- "gap": true ONLY if a piece is clearly missing (a narrative jump no reorder fixes).
+
+${lines.join("\n")}`;
+  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
+  if (status !== 200) return;
+  const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as
+    { articles?: Array<{ i: number; order?: number[]; gap?: boolean }> };
+  for (const r of data.articles ?? []) {
+    const d = drafts[r.i];
+    if (!d) continue;
+    if (applyOrder(d, r.order)) d.review.push("reordered");
+    if (r.gap) d.review.push("gap_suspected");
+  }
+}
+
+// ── Layer 3: vision recovery ─────────────────────────────────────────────────
+// Runs only for articles Layer 2 flagged as gapped. Uses the page IMAGE as
+// ground truth to fix order and transcribe text that OCR missed. Recovered text
+// is model-transcribed (not Sarvam ground truth) so the article is flagged
+// `vision_recovered` for review.
+async function visionPass(
+  drafts: Draft[], fileBuffer: Uint8Array, mimeType: string, geminiKey: string,
+): Promise<void> {
+  const targets = drafts
+    .map((d, i) => ({ d, i }))
+    .filter((t) => t.d.review.includes("gap_suspected"));
+  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
+    fileBuffer.length < 15 * 1024 * 1024;
+  if (!targets.length || !visual) return;
+
+  const lines: string[] = [];
+  for (const { d, i } of targets) {
+    lines.push(`# Article ${i}: ${d.title.slice(0, 40)}`);
+    d.blocks.forEach((b, j) => lines.push(`  [${j}] ${frag(b.text)}`));
+  }
+  const prompt =
+`The page IMAGE is provided. The articles below were flagged as possibly missing
+text or out of order. Using the image as ground truth, return ONLY JSON:
+{"articles":[{"i":0,"order":[...],"inserts":[{"after":1,"text":"<missing Telugu from image>"}]}]}
+RULES:
+- "order": correct reading order of the existing fragment indices (a permutation).
+- "inserts": ONLY text visibly present in the image but missing from the fragments.
+  Transcribe EXACTLY from the image — never paraphrase or invent. "after" is the
+  fragment index it follows (-1 = very start).
+- If nothing is missing and order is fine, return empty arrays.
+
+${lines.join("\n")}`;
+  const { status, text } = await callGeminiJson(
+    "gemini-2.5-flash-lite",
+    [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }, { text: prompt }],
+    geminiKey,
+  );
+  if (status !== 200) return;
+  const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
+    articles?: Array<{ i: number; order?: number[]; inserts?: Array<{ after: number; text: string }> }>;
+  };
+  for (const r of data.articles ?? []) {
+    const d = drafts[r.i];
+    if (!d) continue;
+    applyOrder(d, r.order);
+    const inserts = (r.inserts ?? []).filter(
+      (x) => typeof x?.text === "string" && x.text.trim().length >= 4);
+    if (!inserts.length) continue;
+    const after = new Map<number, string[]>();
+    for (const ins of inserts) {
+      const list = after.get(ins.after) ?? [];
+      list.push(ins.text.trim());
+      after.set(ins.after, list);
+    }
+    const out: Array<{ id: number; text: string }> = [];
+    for (const t of after.get(-1) ?? []) out.push({ id: -1, text: t });
+    d.blocks.forEach((b, j) => {
+      out.push(b);
+      for (const t of after.get(j) ?? []) out.push({ id: -1, text: t });
+    });
+    d.blocks = out;
+    d.review = d.review.filter((f) => f !== "gap_suspected");
+    d.review.push("vision_recovered");
+  }
+}
+
 export async function extractArticlesStructured(
   rawOcrHtml: string,
   fileBuffer: Uint8Array,
@@ -455,7 +584,9 @@ export async function extractArticlesStructured(
   const assignment = await assignWithGemini(blocks, fileBuffer, mimeType, geminiKey);
   const byId = new Map(blocks.map((b) => [b.id, b]));
 
-  const articles: StructuredArticle[] = [];
+  // Build drafts (body kept as ordered fragments — stitching deferred until
+  // after the coherence passes can reorder / patch them).
+  const drafts: Draft[] = [];
   for (const art of assignment.articles ?? []) {
     let title = "";
     const subs: string[] = [];
@@ -471,21 +602,40 @@ export async function extractArticlesStructured(
       // role "table": excluded from spoken body
     }
     bodyEntries.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-    const paragraphs = stitch(bodyEntries.map((e) => e[2]));
-    if (paragraphs.length) paragraphs[0] = stripLeadingDateline(paragraphs[0]);
     const category = (CATEGORIES as readonly string[]).includes(art.category ?? "")
       ? art.category!
       : "";
+    drafts.push({
+      title, subs, caps, category, review: [],
+      blocks: bodyEntries.map((e) => ({ id: e[1], text: e[2] })),
+    });
+  }
+
+  // Layer 2 (text coherence) → Layer 3 (vision, only for flagged gaps). Both
+  // non-fatal: any failure leaves the structure-engine order untouched.
+  if (geminiKey) {
+    try { await coherencePass(drafts, geminiKey); }
+    catch (e) { console.warn("[structure] L2 coherence failed:", (e as Error).message); }
+    if (drafts.some((d) => d.review.includes("gap_suspected"))) {
+      try { await visionPass(drafts, fileBuffer, mimeType, geminiKey); }
+      catch (e) { console.warn("[structure] L3 vision failed:", (e as Error).message); }
+    }
+  }
+
+  const articles: StructuredArticle[] = [];
+  for (const d of drafts) {
+    const paragraphs = stitch(d.blocks.map((b) => b.text));
+    if (paragraphs.length) paragraphs[0] = stripLeadingDateline(paragraphs[0]);
     const article: StructuredArticle = {
-      title: title || subs[0] || "",
+      title: d.title || d.subs[0] || "",
       content: paragraphs.join("\n\n"),
-      subheadings: subs,
-      captions: caps,
-      category,
+      subheadings: d.subs,
+      captions: d.caps,
+      category: d.category,
       review: [],
     };
     if (article.content.length < 60) continue;  // skip empty/fragment articles
-    article.review = validateArticle(article);
+    article.review = [...d.review, ...validateArticle(article)];
     articles.push(article);
   }
 
