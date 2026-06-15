@@ -423,6 +423,9 @@ async function runStart(
       .eq("title", title).eq("publication_date", pubDate).limit(1).maybeSingle();
     if (existing?.id) {
       newspaperId = existing.id;
+      // Reprocessing the same edition: clear its old articles so we replace
+      // rather than duplicate.
+      await supabase.from("articles").delete().eq("newspaper_id", newspaperId);
     } else {
       const { data: created, error: nErr } = await supabase
         .from("newspapers")

@@ -1049,6 +1049,8 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (existing?.id) {
         newspaperUuid = existing.id;
+        // Reprocessing the same document: replace its articles, don't duplicate.
+        await supabase.from("articles").delete().eq("newspaper_id", newspaperUuid);
         console.log(`[db] reusing newspaper ${newspaperUuid} (${effectiveDocumentTitle} / ${pubDate})`);
       } else {
         const { data: newsRow, error: newsErr } = await supabase

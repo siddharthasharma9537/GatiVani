@@ -407,6 +407,16 @@ function stitch(parts: string[]): string[] {
 
 // ── [D] Validate ──────────────────────────────────────────────────────────────
 
+// Leading dateline / byline — publication + city, journalistic metadata, not
+// news content, so we don't narrate it. Forms: "ఈనాడు, చెన్నై:", "న్యూస్‌టుడే,
+// కరీంనగర్:", "చెన్నై, ఈనాడు:".
+const DATELINE_LEAD =
+  /^\s*(?:[ఀ-౿]{2,24}\s*,\s*)?(?:ఈనాడు|న్యూస్\s?టుడే|సాక్షి)(?:\s*,\s*[ఀ-౿().\s]{2,40})?\s*:\s*/;
+
+function stripLeadingDateline(s: string): string {
+  return s.replace(DATELINE_LEAD, "").trimStart();
+}
+
 const AI_DESC = /ఈ చిత్రంలో|ఈ చిత్రం/;
 const DATELINE = /[ఀ-౿()\s]{2,30}[,:]\s*న్యూ[సన]్?\s?టుడే|న్యూ[సన]్?\s?టుడే\s*[,:]/g;
 const SIGNATURE = /-\s*న్యూ[సన]్?\s?టుడే/g;
@@ -462,6 +472,7 @@ export async function extractArticlesStructured(
     }
     bodyEntries.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
     const paragraphs = stitch(bodyEntries.map((e) => e[2]));
+    if (paragraphs.length) paragraphs[0] = stripLeadingDateline(paragraphs[0]);
     const category = (CATEGORIES as readonly string[]).includes(art.category ?? "")
       ? art.category!
       : "";
