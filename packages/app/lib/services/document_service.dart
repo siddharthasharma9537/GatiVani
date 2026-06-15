@@ -157,6 +157,20 @@ class DocumentService {
     );
   }
 
+  /// Grounded assistant: ask a question about the article + its edition.
+  Future<String> ask(String articleId, String question) async {
+    final r = await http
+        .post(Uri.parse('${ApiConfig.functionsUrl}/documents-ask'),
+            headers: {...ApiConfig.authHeaders, 'Content-Type': 'application/json'},
+            body: json.encode({'articleId': articleId, 'question': question}))
+        .timeout(const Duration(seconds: 45));
+    final data = json.decode(r.body) as Map<String, dynamic>;
+    if (data['ok'] != true) {
+      throw Exception(data['message'] ?? 'Assistant unavailable');
+    }
+    return data['answer'] as String? ?? '—';
+  }
+
   /// The featured demo edition (or the most recent edition with articles) so the
   /// app opens onto real, playable content instead of an empty screen.
   Future<({String title, String id, List<NewspaperArticle> articles})?>

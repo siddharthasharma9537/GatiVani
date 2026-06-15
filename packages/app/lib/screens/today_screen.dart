@@ -202,13 +202,6 @@ class _TodayScreenState extends State<TodayScreen> {
 
     return Scaffold(
       backgroundColor: kPaper,
-      floatingActionButton: showHero
-          ? null
-          : FloatingActionButton(
-              backgroundColor: kAccent,
-              onPressed: _upload,
-              child: const Icon(Icons.add, color: kPaper),
-            ),
       body: Listener(
         // First tap unlocks mobile web audio (autoplay policy).
         onPointerDown: (_) => PlaybackService.i.unlock(),
@@ -218,13 +211,38 @@ class _TodayScreenState extends State<TodayScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               children: [
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 4),
-                  child: Text('GatiVani',
-                      style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w500,
-                          color: kInk)),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('GatiVani',
+                          style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w500,
+                              color: kInk)),
+                      if (!showHero)
+                        GestureDetector(
+                          onTap: _upload,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                                color: kAccent,
+                                borderRadius: BorderRadius.circular(20)),
+                            child: const Row(children: [
+                              Icon(Icons.add, color: kPaper, size: 17),
+                              SizedBox(width: 4),
+                              Text('Upload',
+                                  style: TextStyle(
+                                      color: kPaper,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500)),
+                            ]),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
                 if (_error != null)
                   Padding(

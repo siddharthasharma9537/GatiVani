@@ -31,20 +31,6 @@ class MiniPlayer extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
             child: Row(children: [
-              IconButton(
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                icon: p.loading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: kAccent))
-                    : Icon(p.isPlaying ? Icons.pause : Icons.play_arrow,
-                        color: kPaper, size: 26),
-                onPressed: p.toggle,
-              ),
-              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -66,9 +52,29 @@ class MiniPlayer extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 6),
               IconButton(
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+                constraints: const BoxConstraints(minWidth: 32),
+                icon: const Icon(Icons.skip_previous, color: kMuted, size: 22),
+                onPressed: p.previous,
+              ),
+              IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36),
+                icon: p.loading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: kAccent))
+                    : Icon(p.isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: kPaper, size: 28),
+                onPressed: p.toggle,
+              ),
+              IconButton(
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32),
                 icon: const Icon(Icons.skip_next, color: kMuted, size: 22),
                 onPressed: p.next,
               ),

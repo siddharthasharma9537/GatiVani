@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/playback_service.dart';
 import '../design/tokens.dart';
+import '../widgets/assistant_sheet.dart';
 
 /// Full-screen player: the article text scrolls like lyrics with the current
 /// WORD highlighted as the audio plays.
@@ -207,7 +208,11 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
               textAlign: TextAlign.center,
               style: const TextStyle(color: Gati.onInkMuted, fontSize: 12)),
         ),
-        const SizedBox(width: 40),
+        IconButton(
+          icon: const Icon(Icons.auto_awesome, color: Gati.accent, size: 20),
+          tooltip: 'Ask about this',
+          onPressed: () => AssistantSheet.open(context, a.id, a.title),
+        ),
       ]),
     );
   }
