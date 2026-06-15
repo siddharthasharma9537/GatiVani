@@ -23,6 +23,8 @@ class _TodayScreenState extends State<TodayScreen> {
   List<NewspaperArticle> _articles = [];
   String _editionTitle = '';
   String? _category;
+  int? _pageSel;
+  String _lens = 'section'; // 'section' | 'page'
   EditionJob? _job;
   EditionJobStatus? _jobStatus;
   Timer? _poll;
@@ -130,6 +132,26 @@ class _TodayScreenState extends State<TodayScreen> {
         MaterialPageRoute(builder: (_) => const LyricsPlayerScreen()));
   }
 
+  Widget _lensBtn(String label, String lens) {
+    final sel = _lens == lens;
+    return GestureDetector(
+      onTap: () => setState(() => _lens = lens),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: sel ? kInk : Colors.transparent,
+          border: Border.all(color: sel ? kInk : const Color(0xFFD3D1C7)),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 12.5,
+                color: sel ? kPaper : kMuted,
+                fontWeight: FontWeight.w500)),
+      ),
+    );
+  }
+
   Future<void> _playRecent(String id) async {
     _openPlayer();
     final a = await _svc.fetchArticleById(id);
@@ -159,12 +181,19 @@ class _TodayScreenState extends State<TodayScreen> {
   @override
   Widget build(BuildContext context) {
     final cats = <String, int>{};
+    final pages = <int, int>{};
     for (final a in _articles) {
       cats[a.category] = (cats[a.category] ?? 0) + 1;
+      pages[a.page] = (pages[a.page] ?? 0) + 1;
     }
-    final visible = _category == null
-        ? _articles
-        : _articles.where((a) => a.category == _category).toList();
+    final pageKeys = pages.keys.toList()..sort();
+    final visible = _lens == 'page'
+        ? (_pageSel == null
+            ? _articles
+            : _articles.where((a) => a.page == _pageSel).toList())
+        : (_category == null
+            ? _articles
+            : _articles.where((a) => a.category == _category).toList());
     final st = _jobStatus;
     // First-run / empty state shows the hero "Upload edition" CTA — hide the FAB
     // then so there aren't two upload buttons. The FAB returns once an edition
@@ -439,22 +468,43 @@ class _TodayScreenState extends State<TodayScreen> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                if (cats.isNotEmpty)
+                if (_articles.isNotEmpty && pageKeys.length > 1) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(children: [
+                      _lensBtn('Sections', 'section'),
+                      const SizedBox(width: 8),
+                      _lensBtn('Pages', 'page'),
+                    ]),
+                  ),
+                ],
+                if (_articles.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Wrap(
                       spacing: 6,
                       runSpacing: 6,
                       children: [
-                        for (final e in cats.entries)
-                          ChoiceChip(
-                            label: Text('${e.key} · ${e.value}',
-                                style: const TextStyle(fontSize: 12)),
-                            selected: _category == e.key,
-                            selectedColor: const Color(0xFFFAECE7),
-                            onSelected: (_) => setState(() => _category =
-                                _category == e.key ? null : e.key),
-                          ),
+                        if (_lens == 'page')
+                          for (final p in pageKeys)
+                            ChoiceChip(
+                              label: Text('Page $p · ${pages[p]}',
+                                  style: const TextStyle(fontSize: 12)),
+                              selected: _pageSel == p,
+                              selectedColor: const Color(0xFFFAECE7),
+                              onSelected: (_) => setState(() =>
+                                  _pageSel = _pageSel == p ? null : p),
+                            )
+                        else
+                          for (final e in cats.entries)
+                            ChoiceChip(
+                              label: Text('${e.key} · ${e.value}',
+                                  style: const TextStyle(fontSize: 12)),
+                              selected: _category == e.key,
+                              selectedColor: const Color(0xFFFAECE7),
+                              onSelected: (_) => setState(() => _category =
+                                  _category == e.key ? null : e.key),
+                            ),
                       ],
                     ),
                   ),

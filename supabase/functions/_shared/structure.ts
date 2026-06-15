@@ -489,10 +489,26 @@ export async function extractArticlesStructured(
     articles.push(article);
   }
 
+  // Coverage: how much of the OCR'd content survived into articles. A low value
+  // means the model dropped content blocks (sent them to `drop` instead of an
+  // article) — a silent content-loss detector. NB: this CANNOT catch text that
+  // Sarvam never OCR'd, nor a semantic mis-order within a column (that needs an
+  // LLM coherence pass) — it only catches dropped *blocks*.
+  const isContentCls = (c: string) =>
+    c === "paragraph" || c === "headline" || c === "section-title";
+  const ocrChars = blocks.filter((b) => isContentCls(b.cls))
+    .reduce((s, b) => s + b.text.length, 0);
+  const keptChars = articles.reduce(
+    (s, a) => s + a.content.length + a.title.length + a.subheadings.join("").length, 0);
+  const coverage = ocrChars ? keptChars / ocrChars : 1;
+  if (coverage < 0.9) {
+    for (const a of articles) a.review.push(`low_coverage:${coverage.toFixed(2)}`);
+  }
+
   const flaggedCount = articles.filter((a) => a.review.length > 0).length;
   console.log(
     `[structure] ${articles.length} articles, ${flaggedCount} flagged, ` +
-      `${assignment.uncertain?.length ?? 0} uncertain`,
+      `coverage=${coverage.toFixed(2)}, ${assignment.uncertain?.length ?? 0} uncertain`,
   );
   return {
     articles,
