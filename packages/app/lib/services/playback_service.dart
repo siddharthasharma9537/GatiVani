@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -16,8 +17,43 @@ class PlaybackService extends ChangeNotifier {
       notifyListeners();
     });
     player.positionStream.listen((_) => notifyListeners());
+    // Preload a silent clip so the first user gesture can "unlock" web audio
+    // (mobile browsers only allow audio that starts inside a user gesture).
+    _preloadSilent();
   }
   static final PlaybackService i = PlaybackService._();
+
+  bool _unlocked = false;
+
+  Future<void> _preloadSilent() async {
+    try {
+      await player.setAudioSource(
+          AudioSource.uri(Uri.dataFromBytes(_silentWav(), mimeType: 'audio/wav')));
+    } catch (_) {}
+  }
+
+  /// Call from the first user tap (a gesture handler) to satisfy the mobile
+  /// autoplay policy. Plays the preloaded silent clip in-gesture; afterwards
+  /// programmatic playback works for the session.
+  void unlock() {
+    if (_unlocked) return;
+    _unlocked = true;
+    player.play().catchError((_) {});
+  }
+
+  static Uint8List _silentWav() {
+    const sr = 8000;
+    const n = sr ~/ 3; // ~0.33s of silence
+    final b = BytesBuilder();
+    void s(String x) => b.add(x.codeUnits);
+    void u32(int v) => b.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
+    void u16(int v) => b.add([v & 0xff, (v >> 8) & 0xff]);
+    s('RIFF'); u32(36 + n); s('WAVE'); s('fmt ');
+    u32(16); u16(1); u16(1); u32(sr); u32(sr); u16(1); u16(8);
+    s('data'); u32(n);
+    b.add(Uint8List(n)..fillRange(0, n, 128));
+    return b.toBytes();
+  }
 
   final AudioPlayer player = AudioPlayer();
   final List<NewspaperArticle> queue = [];

@@ -31,10 +31,25 @@ class _TodayScreenState extends State<TodayScreen> {
   double _uploadProgress = 0;
   List<Map<String, dynamic>> _recent = [];
 
+  bool _featuredLoaded = false;
+
   @override
   void initState() {
     super.initState();
     _loadRecent();
+    _loadFeatured();
+  }
+
+  // Open onto real content: load the featured/most-recent edition so the app is
+  // never an empty screen. Skipped once the user starts their own upload.
+  Future<void> _loadFeatured() async {
+    final ed = await _svc.fetchFeaturedEdition();
+    if (ed == null || !mounted || _job != null || _articles.isNotEmpty) return;
+    setState(() {
+      _articles = ed.articles;
+      _editionTitle = ed.title;
+      _featuredLoaded = true;
+    });
   }
 
   @override
@@ -165,7 +180,10 @@ class _TodayScreenState extends State<TodayScreen> {
               onPressed: _upload,
               child: const Icon(Icons.add, color: kPaper),
             ),
-      body: SafeArea(
+      body: Listener(
+        // First tap unlocks mobile web audio (autoplay policy).
+        onPointerDown: (_) => PlaybackService.i.unlock(),
+        child: SafeArea(
         child: Column(children: [
           Expanded(
             child: ListView(
@@ -464,6 +482,7 @@ class _TodayScreenState extends State<TodayScreen> {
           ),
           MiniPlayer(onExpand: _openPlayer),
         ]),
+      ),
       ),
     );
   }

@@ -157,6 +157,28 @@ class DocumentService {
     );
   }
 
+  /// The featured demo edition (or the most recent edition with articles) so the
+  /// app opens onto real, playable content instead of an empty screen.
+  Future<({String title, String id, List<NewspaperArticle> articles})?>
+      fetchFeaturedEdition() async {
+    Future<List<dynamic>> q(String filter) async {
+      final r = await http.get(
+        Uri.parse('${ApiConfig.restUrl}/newspapers?$filter'
+            '&select=id,title&limit=1'),
+        headers: ApiConfig.authHeaders,
+      );
+      return json.decode(r.body) as List<dynamic>;
+    }
+
+    var rows = await q('featured=eq.true');
+    if (rows.isEmpty) rows = await q('order=created_at.desc');
+    if (rows.isEmpty) return null;
+    final n = rows.first as Map<String, dynamic>;
+    final arts = await fetchEditionArticles(n['id'] as String);
+    if (arts.isEmpty) return null;
+    return (title: n['title'] as String, id: n['id'] as String, articles: arts);
+  }
+
   /// A single article by its DB id — lets surfaces like "Recently played" play
   /// an item without depending on the currently-loaded edition list.
   Future<NewspaperArticle?> fetchArticleById(String id) async {
