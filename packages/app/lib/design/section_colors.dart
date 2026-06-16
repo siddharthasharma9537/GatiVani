@@ -31,6 +31,12 @@ const List<Color> _kSectionFallback = [
 ];
 
 /// [background, title, subtitle] colors for a section, with a neutral gray
-/// fallback so unknown/odd sections degrade gracefully.
-List<Color> sectionRamp(String section) =>
-    kSectionColors[section] ?? _kSectionFallback;
+/// fallback so unknown/odd sections degrade gracefully. In dark mode the light
+/// pastel fill would glare, so tiles/cards become a shared warm-dark surface
+/// with light text and the section's pastel reused as a subtle accent — that
+/// keeps per-section color recognition without lighting up the screen.
+List<Color> sectionRamp(String section, {bool dark = false}) {
+  final base = kSectionColors[section] ?? _kSectionFallback;
+  if (!dark) return base;
+  return [const Color(0xFF26241F), const Color(0xFFECE7DD), base[0]];
+}

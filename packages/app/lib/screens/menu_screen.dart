@@ -14,16 +14,17 @@ class MenuScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = context.watch<SettingsProvider>();
     final lang = s.lang;
+    final p = GatiPalette.of(context);
     return Scaffold(
-      backgroundColor: kPaper,
+      backgroundColor: p.paper,
       appBar: AppBar(
-        backgroundColor: kPaper,
-        surfaceTintColor: kPaper,
+        backgroundColor: p.paper,
+        surfaceTintColor: p.paper,
         elevation: 0,
-        foregroundColor: kInk,
+        foregroundColor: p.ink,
         title: Text(tr(lang, 'menu'),
-            style: const TextStyle(
-                fontSize: 17, fontWeight: FontWeight.w500, color: kInk)),
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w500, color: p.ink)),
       ),
       body: SafeArea(
         child: ListView(
@@ -100,41 +101,40 @@ class MenuScreen extends StatelessWidget {
             const SizedBox(height: 20),
 
             // ── Language ─────────────────────────────────────────────────────
-            _sectionLabel(tr(lang, 'language')),
-            _card(Column(children: [
-              _choiceRow('English', s.lang == 'en',
+            _sectionLabel(p, tr(lang, 'language')),
+            _card(p, Column(children: [
+              _choiceRow(p, 'English', s.lang == 'en',
                   () => s.setLanguage('en')),
-              const Divider(height: 1, color: Color(0xFFEDEAE1)),
-              _choiceRow('తెలుగు', s.lang == 'te',
+              Divider(height: 1, color: p.line),
+              _choiceRow(p, 'తెలుగు', s.lang == 'te',
                   () => s.setLanguage('te')),
             ])),
             const SizedBox(height: 20),
 
             // ── Theme ────────────────────────────────────────────────────────
-            _sectionLabel(tr(lang, 'theme')),
-            _card(Column(children: [
-              _choiceRow(tr(lang, 'theme_system'),
+            _sectionLabel(p, tr(lang, 'theme')),
+            _card(p, Column(children: [
+              _choiceRow(p, tr(lang, 'theme_system'),
                   s.themeMode == ThemeMode.system,
                   () => s.setThemeMode(ThemeMode.system)),
-              const Divider(height: 1, color: Color(0xFFEDEAE1)),
-              _choiceRow(tr(lang, 'theme_light'),
+              Divider(height: 1, color: p.line),
+              _choiceRow(p, tr(lang, 'theme_light'),
                   s.themeMode == ThemeMode.light,
                   () => s.setThemeMode(ThemeMode.light)),
-              const Divider(height: 1, color: Color(0xFFEDEAE1)),
-              _choiceRow(tr(lang, 'theme_dark'),
+              Divider(height: 1, color: p.line),
+              _choiceRow(p, tr(lang, 'theme_dark'),
                   s.themeMode == ThemeMode.dark,
                   () => s.setThemeMode(ThemeMode.dark)),
             ])),
             const SizedBox(height: 20),
 
             // ── Playback ─────────────────────────────────────────────────────
-            _sectionLabel(tr(lang, 'playback')),
-            _card(Column(children: [
+            _sectionLabel(p, tr(lang, 'playback')),
+            _card(p, Column(children: [
               for (final sp in const [0.75, 1.0, 1.25, 1.5, 2.0])
                 Column(children: [
-                  if (sp != 0.75)
-                    const Divider(height: 1, color: Color(0xFFEDEAE1)),
-                  _choiceRow('${sp}×', s.playbackSpeed == sp,
+                  if (sp != 0.75) Divider(height: 1, color: p.line),
+                  _choiceRow(p, '${sp}×', s.playbackSpeed == sp,
                       () => s.setPlaybackSpeed(sp)),
                 ]),
             ])),
@@ -143,15 +143,15 @@ class MenuScreen extends StatelessWidget {
             // ── About ────────────────────────────────────────────────────────
             Center(
               child: Column(children: [
-                const Text('Gativani',
+                Text('Gativani',
                     style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
-                        color: kInk)),
+                        color: p.ink)),
                 const SizedBox(height: 2),
                 Text(tr(lang, 'about_tagline'),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, color: kMuted)),
+                    style: TextStyle(fontSize: 12, color: p.muted)),
               ]),
             ),
           ],
@@ -165,27 +165,28 @@ class MenuScreen extends StatelessWidget {
         MaterialPageRoute(builder: (_) => AuthScreen(signUp: signUp)));
   }
 
-  Widget _sectionLabel(String text) => Padding(
+  Widget _sectionLabel(GatiPalette p, String text) => Padding(
         padding: const EdgeInsets.only(left: 4, bottom: 8),
         child: Text(text,
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
-                color: kMuted,
+                color: p.muted,
                 letterSpacing: 0.3)),
       );
 
-  Widget _card(Widget child) => Container(
+  Widget _card(GatiPalette p, Widget child) => Container(
         decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: const Color(0xFFE7E4DB)),
+            color: p.surface,
+            border: Border.all(color: p.line),
             borderRadius: BorderRadius.circular(14)),
         clipBehavior: Clip.antiAlias,
         // Material ancestor so the InkWell rows reliably handle taps + splash.
         child: Material(color: Colors.transparent, child: child),
       );
 
-  Widget _choiceRow(String label, bool selected, VoidCallback onTap) =>
+  Widget _choiceRow(GatiPalette p, String label, bool selected,
+          VoidCallback onTap) =>
       InkWell(
         onTap: onTap,
         child: Padding(
@@ -193,7 +194,7 @@ class MenuScreen extends StatelessWidget {
           child: Row(children: [
             Expanded(
                 child: Text(label,
-                    style: const TextStyle(fontSize: 14.5, color: kInk))),
+                    style: TextStyle(fontSize: 14.5, color: p.ink))),
             if (selected)
               const Icon(Icons.check_rounded, color: kAccent, size: 20),
           ]),

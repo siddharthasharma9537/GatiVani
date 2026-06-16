@@ -26,9 +26,22 @@ class ApiConfig {
   static String get documentsProcessEditionUrl =>
       '$functionsUrl/documents-process-edition';
 
+  /// Supabase project origin, e.g. https://<ref>.supabase.co
+  static String get projectUrl =>
+      functionsUrl.replaceFirst('/functions/v1', '');
+
   /// Supabase REST base (functionsUrl minus the /functions/v1 suffix).
-  static String get restUrl =>
-      '${functionsUrl.replaceFirst('/functions/v1', '')}/rest/v1';
+  static String get restUrl => '$projectUrl/rest/v1';
+
+  /// Supabase GoTrue (Auth) base.
+  static String get authUrl => '$projectUrl/auth/v1';
+
+  /// Browser URL to start a provider OAuth flow. Supabase handles the provider
+  /// handshake and redirects back to [redirectTo] with the session in the URL
+  /// fragment. Providers must be enabled in the Supabase dashboard first.
+  static String oauthAuthorizeUrl(String provider, String redirectTo) =>
+      '$authUrl/authorize?provider=$provider'
+      '&redirect_to=${Uri.encodeComponent(redirectTo)}';
 
   static String get documentsSynthesizeUrl => '$functionsUrl/documents-synthesize';
   static String get documentsSummarizeUrl => '$functionsUrl/documents-summarize';

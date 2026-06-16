@@ -36,16 +36,17 @@ class SectionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lang = context.watch<SettingsProvider>().lang;
+    final p = GatiPalette.of(context);
     return Scaffold(
-      backgroundColor: kPaper,
+      backgroundColor: p.paper,
       appBar: AppBar(
-        backgroundColor: kPaper,
-        surfaceTintColor: kPaper,
+        backgroundColor: p.paper,
+        surfaceTintColor: p.paper,
         elevation: 0,
-        foregroundColor: kInk,
+        foregroundColor: p.ink,
         title: Text('${sectionLabel(section, lang)} · ${articles.length}',
-            style: const TextStyle(
-                fontSize: 17, fontWeight: FontWeight.w500, color: kInk)),
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w500, color: p.ink)),
         actions: [
           TextButton.icon(
             onPressed: _playAll,

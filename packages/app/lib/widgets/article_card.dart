@@ -22,7 +22,8 @@ class ArticleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lang = context.watch<SettingsProvider>().lang;
-    final r = sectionRamp(article.category);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final r = sectionRamp(article.category, dark: dark);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Container(

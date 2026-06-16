@@ -47,7 +47,8 @@ const Map<String, Map<String, String>> _kStrings = {
     'have_account': 'Already have an account?',
     'no_account': "Don't have an account?",
     'continue_guest': 'Continue as guest',
-    'auth_note': 'Demo — accounts are not yet connected to a server.',
+    'continue_with': 'Continue with',
+    'auth_note': 'Demo — email sign-in is not yet connected to a server.',
     'lang_label': 'తె',
   },
   'te': {
@@ -94,7 +95,8 @@ const Map<String, Map<String, String>> _kStrings = {
     'have_account': 'ఇప్పటికే ఖాతా ఉందా?',
     'no_account': 'ఖాతా లేదా?',
     'continue_guest': 'అతిథిగా కొనసాగండి',
-    'auth_note': 'డెమో — ఖాతాలు ఇంకా సర్వర్‌కు అనుసంధానించబడలేదు.',
+    'continue_with': 'వీటితో కొనసాగండి:',
+    'auth_note': 'డెమో — ఇమెయిల్ సైన్ ఇన్ ఇంకా సర్వర్‌కు అనుసంధానించబడలేదు.',
     'lang_label': 'EN',
   },
 };

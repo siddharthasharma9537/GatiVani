@@ -1,12 +1,18 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../config/api_config.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../services/settings_provider.dart';
 
-/// Login / signup UI scaffolding. Styled and navigable, but not yet wired to a
-/// real auth backend — the primary action shows a demo notice. [signUp] picks
-/// the initial mode; the user can toggle between the two.
+/// Login / signup. OAuth (Google / Apple / Microsoft) is wired to Supabase's
+/// hosted authorize endpoint — tapping a provider redirects through Supabase,
+/// which completes the handshake and returns to the app. The providers must be
+/// enabled with their client id + secret in the Supabase dashboard for the
+/// round-trip to succeed (see docs/AUTH_OAUTH_SETUP.md). The email/password
+/// form is still scaffolding (no server yet).
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key, this.signUp = false});
   final bool signUp;
@@ -17,20 +23,38 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   late bool _signUp = widget.signUp;
 
+  // Supabase provider codes. Microsoft is the "azure" provider in Supabase.
+  static const _providers = [
+    ('google', 'Google', Icons.g_mobiledata),
+    ('apple', 'Apple', Icons.apple),
+    ('azure', 'Microsoft', Icons.window),
+  ];
+
+  Future<void> _oauth(String provider) async {
+    // On web, return to wherever the app is being served; native would use a
+    // deep link / custom scheme (configured separately).
+    final redirect = kIsWeb ? Uri.base.origin : 'https://gativani.vercel.app';
+    final uri = Uri.parse(ApiConfig.oauthAuthorizeUrl(provider, redirect));
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, webOnlyWindowName: '_self');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final lang = context.watch<SettingsProvider>().lang;
+    final p = GatiPalette.of(context);
     final title = tr(lang, _signUp ? 'sign_up' : 'sign_in');
     return Scaffold(
-      backgroundColor: kPaper,
+      backgroundColor: p.paper,
       appBar: AppBar(
-        backgroundColor: kPaper,
-        surfaceTintColor: kPaper,
+        backgroundColor: p.paper,
+        surfaceTintColor: p.paper,
         elevation: 0,
-        foregroundColor: kInk,
+        foregroundColor: p.ink,
         title: Text(title,
-            style: const TextStyle(
-                fontSize: 17, fontWeight: FontWeight.w500, color: kInk)),
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w500, color: p.ink)),
       ),
       body: SafeArea(
         child: ListView(
@@ -40,14 +64,36 @@ class _AuthScreenState extends State<AuthScreen> {
             const Icon(Icons.headphones_rounded, color: kAccent, size: 34),
             const SizedBox(height: 16),
             Text(title,
-                style: const TextStyle(
-                    fontSize: 24, fontWeight: FontWeight.w600, color: kInk)),
+                style: TextStyle(
+                    fontSize: 24, fontWeight: FontWeight.w600, color: p.ink)),
             const SizedBox(height: 22),
-            if (_signUp) _field(lang, 'name', Icons.person_outline),
+
+            // ── OAuth providers ──────────────────────────────────────────────
+            for (final prov in _providers) ...[
+              _oauthButton(p, lang, prov.$1, prov.$2, prov.$3),
+              const SizedBox(height: 10),
+            ],
+
+            // ── divider ──────────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(children: [
+                Expanded(child: Divider(color: p.line)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('or',
+                      style: TextStyle(fontSize: 12.5, color: p.muted)),
+                ),
+                Expanded(child: Divider(color: p.line)),
+              ]),
+            ),
+
+            // ── email / password ─────────────────────────────────────────────
+            if (_signUp) _field(p, lang, 'name', Icons.person_outline),
             if (_signUp) const SizedBox(height: 12),
-            _field(lang, 'email', Icons.mail_outline),
+            _field(p, lang, 'email', Icons.mail_outline),
             const SizedBox(height: 12),
-            _field(lang, 'password', Icons.lock_outline, obscure: true),
+            _field(p, lang, 'password', Icons.lock_outline, obscure: true),
             const SizedBox(height: 20),
             FilledButton(
               style: FilledButton.styleFrom(
@@ -60,15 +106,14 @@ class _AuthScreenState extends State<AuthScreen> {
                 SnackBar(content: Text(tr(lang, 'auth_note'))),
               ),
               child: Text(title,
-                  style: const TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w500)),
+                  style:
+                      const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
             ),
             const SizedBox(height: 14),
             Center(
               child: GestureDetector(
                 onTap: () => setState(() => _signUp = !_signUp),
-                child: Text(
-                    tr(lang, _signUp ? 'have_account' : 'no_account'),
+                child: Text(tr(lang, _signUp ? 'have_account' : 'no_account'),
                     style: const TextStyle(
                         fontSize: 13.5,
                         color: kAccent,
@@ -80,33 +125,55 @@ class _AuthScreenState extends State<AuthScreen> {
               child: TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: Text(tr(lang, 'continue_guest'),
-                    style: const TextStyle(fontSize: 13, color: kMuted)),
+                    style: TextStyle(fontSize: 13, color: p.muted)),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             Text(tr(lang, 'auth_note'),
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11.5, color: kMuted)),
+                style: TextStyle(fontSize: 11.5, color: p.muted)),
           ],
         ),
       ),
     );
   }
 
-  Widget _field(String lang, String key, IconData icon, {bool obscure = false}) {
+  Widget _oauthButton(GatiPalette p, String lang, String provider, String label,
+          IconData icon) =>
+      OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: p.ink,
+          side: BorderSide(color: p.line),
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        onPressed: () => _oauth(provider),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, size: 19, color: p.ink),
+          const SizedBox(width: 10),
+          Text('${tr(lang, 'continue_with')} $label',
+              style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w500)),
+        ]),
+      );
+
+  Widget _field(GatiPalette p, String lang, String key, IconData icon,
+      {bool obscure = false}) {
     return TextField(
       obscureText: obscure,
+      style: TextStyle(color: p.ink),
       decoration: InputDecoration(
         labelText: tr(lang, key),
-        prefixIcon: Icon(icon, size: 20, color: kMuted),
+        labelStyle: TextStyle(color: p.muted),
+        prefixIcon: Icon(icon, size: 20, color: p.muted),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: p.surface,
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE7E4DB))),
+            borderSide: BorderSide(color: p.line)),
         enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE7E4DB))),
+            borderSide: BorderSide(color: p.line)),
         focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: kAccent)),

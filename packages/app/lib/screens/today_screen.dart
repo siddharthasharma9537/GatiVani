@@ -164,15 +164,17 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   Widget _chip(String label, bool selected, VoidCallback onTap) {
+    final p = GatiPalette.of(context);
     return ChoiceChip(
       label: Text(label,
           style: TextStyle(
               fontSize: 12,
-              color: selected ? const Color(0xFF993C1D) : kInk)),
+              color: selected ? const Color(0xFF993C1D) : p.ink)),
       selected: selected,
       showCheckmark: false,
-      backgroundColor: Colors.white,
+      backgroundColor: p.surface,
       selectedColor: const Color(0xFFFAECE7),
+      side: BorderSide(color: p.line),
       onSelected: (_) => onTap(),
     );
   }
@@ -180,6 +182,7 @@ class _TodayScreenState extends State<TodayScreen> {
   // Compact EN/తె language toggle for the header.
   Widget _langToggle() {
     final s = context.watch<SettingsProvider>();
+    final p = GatiPalette.of(context);
     Widget cell(String label, String code) {
       final sel = s.lang == code;
       return GestureDetector(
@@ -194,7 +197,7 @@ class _TodayScreenState extends State<TodayScreen> {
               style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w500,
-                  color: sel ? kPaper : kMuted)),
+                  color: sel ? kPaper : p.muted)),
         ),
       );
     }
@@ -202,8 +205,7 @@ class _TodayScreenState extends State<TodayScreen> {
     return Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-          color: const Color(0xFFEFE9DE),
-          borderRadius: BorderRadius.circular(10)),
+          color: p.chip, borderRadius: BorderRadius.circular(10)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         cell('EN', 'en'),
         cell('తె', 'te'),
@@ -229,7 +231,8 @@ class _TodayScreenState extends State<TodayScreen> {
           color: sel ? kAccent : Colors.transparent,
           borderRadius: BorderRadius.circular(7),
         ),
-        child: Icon(icon, size: 17, color: sel ? kPaper : kMuted),
+        child: Icon(icon,
+            size: 17, color: sel ? kPaper : GatiPalette.of(context).muted),
       ),
     );
   }
@@ -246,7 +249,7 @@ class _TodayScreenState extends State<TodayScreen> {
   // the whole section as a playlist.
   Widget _sectionTile(String section, int count, List<NewspaperArticle> arts) {
     final lang = context.watch<SettingsProvider>().lang;
-    final r = sectionRamp(section);
+    final r = sectionRamp(section, dark: GatiPalette.of(context).dark);
     return GestureDetector(
       onTap: () => _openSection(section, arts),
       child: Container(
@@ -286,19 +289,20 @@ class _TodayScreenState extends State<TodayScreen> {
 
   Widget _lensBtn(String label, String lens) {
     final sel = _lens == lens;
+    final p = GatiPalette.of(context);
     return GestureDetector(
       onTap: () => setState(() => _lens = lens),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: sel ? kInk : Colors.transparent,
-          border: Border.all(color: sel ? kInk : const Color(0xFFD3D1C7)),
+          color: sel ? p.ink : Colors.transparent,
+          border: Border.all(color: sel ? p.ink : p.line),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(label,
             style: TextStyle(
                 fontSize: 12.5,
-                color: sel ? kPaper : kMuted,
+                color: sel ? p.paper : p.muted,
                 fontWeight: FontWeight.w500)),
       ),
     );
@@ -333,6 +337,7 @@ class _TodayScreenState extends State<TodayScreen> {
   @override
   Widget build(BuildContext context) {
     final lang = context.watch<SettingsProvider>().lang;
+    final p = GatiPalette.of(context);
     final cats = <String, int>{};
     final pages = <int, int>{};
     for (final a in _articles) {
@@ -356,7 +361,7 @@ class _TodayScreenState extends State<TodayScreen> {
     final showHero = !_uploading && _articles.isEmpty && st == null;
 
     return Scaffold(
-      backgroundColor: kPaper,
+      backgroundColor: p.paper,
       body: SafeArea(
         child: Column(children: [
           Expanded(
@@ -368,11 +373,11 @@ class _TodayScreenState extends State<TodayScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Gativani',
+                      Text('Gativani',
                           style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w500,
-                              color: kInk)),
+                              color: p.ink)),
                       Row(mainAxisSize: MainAxisSize.min, children: [
                         _langToggle(),
                         const SizedBox(width: 8),
@@ -405,10 +410,10 @@ class _TodayScreenState extends State<TodayScreen> {
                             height: 36,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                                color: const Color(0xFFEFE9DE),
+                                color: p.chip,
                                 borderRadius: BorderRadius.circular(10)),
-                            child: const Icon(Icons.menu_rounded,
-                                color: kInk, size: 20),
+                            child: Icon(Icons.menu_rounded,
+                                color: p.ink, size: 20),
                           ),
                         ),
                       ]),
@@ -573,13 +578,13 @@ class _TodayScreenState extends State<TodayScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(step[1],
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w500,
-                                        color: kInk)),
+                                        color: p.ink)),
                                 Text(step[2],
-                                    style: const TextStyle(
-                                        fontSize: 12.5, color: kMuted)),
+                                    style: TextStyle(
+                                        fontSize: 12.5, color: p.muted)),
                               ],
                             ),
                           ),
@@ -592,10 +597,10 @@ class _TodayScreenState extends State<TodayScreen> {
                   Padding(
                     padding: const EdgeInsets.only(top: 4, bottom: 6),
                     child: Text(tr(lang, 'recently_played'),
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
-                            color: kInk)),
+                            color: p.ink)),
                   ),
                   SizedBox(
                     height: 96,
@@ -611,9 +616,8 @@ class _TodayScreenState extends State<TodayScreen> {
                             width: 160,
                             padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
                             decoration: BoxDecoration(
-                                color: Colors.white,
-                                border: Border.all(
-                                    color: const Color(0xFFE7E4DB)),
+                                color: p.surface,
+                                border: Border.all(color: p.line),
                                 borderRadius: BorderRadius.circular(14)),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -634,18 +638,18 @@ class _TodayScreenState extends State<TodayScreen> {
                                   child: Text(m['title'] as String? ?? '',
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           fontSize: 13,
                                           height: 1.3,
-                                          color: kInk)),
+                                          color: p.ink)),
                                 ),
                                 Row(children: [
                                   const Icon(Icons.play_circle_fill,
                                       color: kAccent, size: 18),
                                   const SizedBox(width: 4),
                                   Text(tr(lang, 'play'),
-                                      style: const TextStyle(
-                                          fontSize: 11.5, color: kMuted)),
+                                      style: TextStyle(
+                                          fontSize: 11.5, color: p.muted)),
                                 ]),
                               ],
                             ),
@@ -668,14 +672,14 @@ class _TodayScreenState extends State<TodayScreen> {
                                 _view == 'tiles'
                                     ? 'browse_by_section'
                                     : 'all_articles'),
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
-                                color: kInk)),
+                                color: p.ink)),
                         Container(
                           padding: const EdgeInsets.all(3),
                           decoration: BoxDecoration(
-                              color: const Color(0xFFEFE9DE),
+                              color: p.chip,
                               borderRadius: BorderRadius.circular(9)),
                           child: Row(children: [
                             _viewBtn(Icons.view_list_rounded, 'list'),

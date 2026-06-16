@@ -43,7 +43,60 @@ class Gati {
 }
 
 // Backward-compatible short names used across the reimagined screens.
+// These remain the LIGHT values; for theme-aware surfaces resolve a
+// [GatiPalette] from context instead. kAccent (terracotta) is shared by both
+// modes, so it stays a plain const.
 const kInk = Gati.ink;
 const kPaper = Gati.paper;
 const kAccent = Gati.accent;
 const kMuted = Gati.muted;
+
+/// Warm-dark counterpart to the paper palette. Keeps the brand warm (no cold
+/// blue-greys) so dark mode still feels like the same product.
+class GatiDark {
+  GatiDark._();
+  static const paper = Color(0xFF1A1916); // warm near-black page bg
+  static const ink = Color(0xFFECE7DD); // warm off-white primary text
+  static const muted = Color(0xFF9C968A); // secondary text
+  static const surface = Color(0xFF26241F); // cards / tiles on the dark bg
+  static const line = Color(0xFF38342C); // hairline borders
+  static const chip = Color(0xFF2E2B24); // segmented-control / chip background
+}
+
+/// Brightness-resolved surface colors for the reimagined screens. Resolve once
+/// per build: `final p = GatiPalette.of(context);` then use `p.paper`, `p.ink`…
+class GatiPalette {
+  const GatiPalette(
+      {required this.dark,
+      required this.paper,
+      required this.ink,
+      required this.muted,
+      required this.surface,
+      required this.line,
+      required this.chip});
+
+  final bool dark;
+  final Color paper, ink, muted, surface, line, chip;
+
+  static const _light = GatiPalette(
+    dark: false,
+    paper: Gati.paper,
+    ink: Gati.ink,
+    muted: Gati.muted,
+    surface: Colors.white,
+    line: Gati.line,
+    chip: Color(0xFFEFE9DE),
+  );
+  static const _dark = GatiPalette(
+    dark: true,
+    paper: GatiDark.paper,
+    ink: GatiDark.ink,
+    muted: GatiDark.muted,
+    surface: GatiDark.surface,
+    line: GatiDark.line,
+    chip: GatiDark.chip,
+  );
+
+  static GatiPalette of(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? _dark : _light;
+}
