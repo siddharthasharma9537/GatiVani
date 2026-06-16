@@ -29,7 +29,7 @@ class GatiVaniApp extends StatelessWidget {
       (s) => s.themeMode,
     );
     return MaterialApp(
-      title: "GatiVani",
+      title: "Gativani",
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),

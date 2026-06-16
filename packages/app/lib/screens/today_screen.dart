@@ -213,7 +213,7 @@ class _TodayScreenState extends State<TodayScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('GatiVani',
+                      const Text('Gativani',
                           style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w500,
@@ -356,7 +356,7 @@ class _TodayScreenState extends State<TodayScreen> {
                                 fontWeight: FontWeight.w500)),
                         const SizedBox(height: 6),
                         const Text(
-                            'Upload today’s edition and GatiVani turns every '
+                            'Upload today’s edition and Gativani turns every '
                             'article into audio you can listen to.',
                             style: TextStyle(
                                 color: Color(0xFFB4B2A9),
