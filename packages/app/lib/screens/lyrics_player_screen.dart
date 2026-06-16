@@ -45,20 +45,30 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
         .toList();
 
     // Per-word weight ≈ how long it's spoken. Char count + a pause budget after
-    // punctuation: TTS pauses at "." and "," but those pauses belong to no word,
-    // so without counting them the highlight runs ahead (it was ~5-6 words off).
+    // punctuation (TTS pauses at "." and "," — pauses belong to no word, so
+    // uncounted they make the highlight run ahead). Line 0 is the headline,
+    // which TTS reads slowly and follows with a long pause before the body — so
+    // it gets a speed multiplier and a big trailing pause (without this the
+    // highlight jumps a whole line ahead during the title).
     final sentenceEnd = RegExp(r'[.?!।॥…]$');
     final clauseEnd = RegExp(r'[,;:]$');
     final weights = <double>[];
     _lineFirstWord = [];
-    for (final line in _lines) {
+    for (var li = 0; li < _lines.length; li++) {
+      final line = _lines[li];
+      final isHeadline = li == 0;
       _lineFirstWord.add(weights.length);
-      for (final w in line) {
+      for (var wi = 0; wi < line.length; wi++) {
+        final w = line[wi];
         var wt = w.runes.length.clamp(1, 30).toDouble();
+        if (isHeadline) wt *= 1.7; // titles are spoken slower & emphasized
         if (sentenceEnd.hasMatch(w)) {
-          wt += 7; // ~a long pause
+          wt += 10; // ~a long pause
         } else if (clauseEnd.hasMatch(w)) {
-          wt += 3; // ~a short pause
+          wt += 4; // ~a short pause
+        }
+        if (isHeadline && wi == line.length - 1) {
+          wt += 20; // the pause between the headline and the body
         }
         weights.add(wt);
       }
