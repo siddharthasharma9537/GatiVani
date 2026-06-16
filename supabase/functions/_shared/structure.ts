@@ -57,6 +57,17 @@ export interface StructuredResult {
   articles: StructuredArticle[];
   uncertainCount: number;
   flaggedCount: number;
+  printedPage: number | null; // the page number printed on the page (vs PDF index)
+}
+
+// Sarvam tags the printed page number as <p class="page-number">6</p>. Editions
+// often have cover/main pages before the numbered pages start, so the PDF index
+// drifts from the real page number — prefer this when present.
+export function extractPrintedPage(html: string): number | null {
+  const m = html.match(/class="[^"]*page-number[^"]*"[^>]*>\s*([0-9]{1,3})/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 1 && n <= 100 ? n : null;
 }
 
 // ── [A] Atomize: Sarvam HTML → blocks ────────────────────────────────────────
@@ -664,5 +675,6 @@ export async function extractArticlesStructured(
     articles,
     uncertainCount: assignment.uncertain?.length ?? 0,
     flaggedCount,
+    printedPage: extractPrintedPage(rawOcrHtml),
   };
 }

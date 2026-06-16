@@ -181,12 +181,14 @@ async function processPage(supabase: any, jobId: string, page: number): Promise<
       content_preview: a.content.replace(/\n/g, " ").slice(0, 200),
       full_content: a.content,
       section: a.category || "News",
-      page_number: page,
+      // Prefer the printed page number (cover/main pages shift the PDF index).
+      page_number: result.printedPage ?? page,
       processing_status: a.review.length ? "review" : "ready",
       quality_score: a.review.length ? 0.7 : 0.95,
       position_json: {
         article_index: i + 1,
-        page,
+        page: result.printedPage ?? page,
+        pdf_page: page,
         subheadings: a.subheadings,
         captions: a.captions,
         review_flags: a.review.length ? a.review : undefined,
@@ -250,6 +252,30 @@ async function finalizeContinuations(supabase: any, newspaperId: string): Promis
     .eq("newspaper_id", newspaperId)
     .order("page_number");
   if (!arts || arts.length < 2) return;
+
+  // ── Front-page teaser / digest drop ──────────────────────────────────────
+  // Front pages carry short promo blurbs ("…full story on page 8") that are
+  // print navigation, meaningless as audio. A SHORT article whose text is
+  // echoed by a LONGER article elsewhere in the edition is a teaser — drop it.
+  const longs = (arts as Array<{ id: string; full_content: string }>)
+    .filter((x) => (x.full_content?.length ?? 0) > 500);
+  for (const a of arts as Array<{ id: string; title: string; full_content: string }>) {
+    const body = a.full_content ?? "";
+    if (body.length >= 260 || body.length < 30) continue;
+    let echoed = false;
+    for (const off of [0, 12, 24, 40, 60]) {
+      const probe = body.slice(off, off + 18).trim();
+      if (probe.length < 12) continue;
+      if (longs.some((L) => L.id !== a.id && L.full_content.includes(probe))) {
+        echoed = true;
+        break;
+      }
+    }
+    if (echoed) {
+      await supabase.from("articles").delete().eq("id", a.id);
+      console.log(`[edition] dropped front-page teaser "${(a.title ?? "").slice(0, 20)}"`);
+    }
+  }
 
   for (const a of arts) {
     const body: string = a.full_content ?? "";
