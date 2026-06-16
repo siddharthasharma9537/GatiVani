@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "flutter-web-app",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd packages/app/build/web && python3 -m http.server 8080 --bind localhost"],
+      "port": 8080
+    },
+    {
+      "name": "supabase-local",
+      "runtimeExecutable": "supabase",
+      "runtimeArgs": ["start"],
+      "port": 54321
+    },
+    {
+      "name": "core-legacy-express",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "packages/core"],
+      "port": 8788
+    }
+  ]
+}

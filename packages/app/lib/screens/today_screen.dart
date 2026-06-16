@@ -9,6 +9,35 @@ import '../services/document_service.dart';
 import '../services/playback_service.dart';
 import '../widgets/mini_player.dart';
 import 'lyrics_player_screen.dart';
+import 'section_screen.dart';
+
+// Muted, equal-lightness section tints — editorial, not rainbow. Each section
+// gets its own hue for recognition; all share the same lightness so the grid
+// reads as one cohesive set. [background, title, subtitle].
+const Map<String, List<Color>> kSectionColors = {
+  'State': [Color(0xFFE6F1FB), Color(0xFF042C53), Color(0xFF185FA5)],
+  'National': [Color(0xFFFAECE7), Color(0xFF4A1B0C), Color(0xFF993C1D)],
+  'International': [Color(0xFFE1F5EE), Color(0xFF04342C), Color(0xFF0F6E56)],
+  'District': [Color(0xFFEAF3DE), Color(0xFF173404), Color(0xFF3B6D11)],
+  'Politics': [Color(0xFFEEEDFE), Color(0xFF26215C), Color(0xFF534AB7)],
+  'Editorial': [Color(0xFFF1EFE8), Color(0xFF2C2C2A), Color(0xFF5F5E5A)],
+  'Judiciary': [Color(0xFFFBEAF0), Color(0xFF4B1528), Color(0xFF993556)],
+  'Crime': [Color(0xFFFCEBEB), Color(0xFF501313), Color(0xFFA32D2D)],
+  'Business': [Color(0xFFFAEEDA), Color(0xFF412402), Color(0xFF854F0B)],
+  'Sports': [Color(0xFFFBEAF0), Color(0xFF4B1528), Color(0xFF993556)],
+  'Health': [Color(0xFFE1F5EE), Color(0xFF04342C), Color(0xFF0F6E56)],
+  'Sci-Tech': [Color(0xFFE6F1FB), Color(0xFF042C53), Color(0xFF185FA5)],
+  'Education': [Color(0xFFFAEEDA), Color(0xFF412402), Color(0xFF854F0B)],
+  'Agriculture': [Color(0xFFEAF3DE), Color(0xFF173404), Color(0xFF3B6D11)],
+  'Entertainment': [Color(0xFFFBEAF0), Color(0xFF4B1528), Color(0xFF993556)],
+  'Devotional': [Color(0xFFFAECE7), Color(0xFF4A1B0C), Color(0xFF993C1D)],
+  'Trending': [Color(0xFFFAEEDA), Color(0xFF412402), Color(0xFF854F0B)],
+  'News': [Color(0xFFF1EFE8), Color(0xFF2C2C2A), Color(0xFF5F5E5A)],
+};
+const List<Color> _kSectionFallback = [
+  Color(0xFFF1EFE8), Color(0xFF2C2C2A), Color(0xFF5F5E5A),
+];
+List<Color> _sectionRamp(String s) => kSectionColors[s] ?? _kSectionFallback;
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -25,6 +54,7 @@ class _TodayScreenState extends State<TodayScreen> {
   String? _category;
   int? _pageSel;
   String _lens = 'section'; // 'section' | 'page'
+  String _view = 'tiles'; // 'tiles' | 'list'
   EditionJob? _job;
   EditionJobStatus? _jobStatus;
   Timer? _poll;
@@ -165,6 +195,73 @@ class _TodayScreenState extends State<TodayScreen> {
       backgroundColor: Colors.white,
       selectedColor: const Color(0xFFFAECE7),
       onSelected: (_) => onTap(),
+    );
+  }
+
+  // List ⇄ tiles toggle, like Google Drive/Files.
+  Widget _viewBtn(IconData icon, String view) {
+    final sel = _view == view;
+    return GestureDetector(
+      onTap: () => setState(() => _view = view),
+      child: Container(
+        width: 32,
+        height: 28,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: sel ? kAccent : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Icon(icon, size: 17, color: sel ? kPaper : kMuted),
+      ),
+    );
+  }
+
+  // Drill down: tapping a section tile opens that section's article list.
+  void _openSection(String section, List<NewspaperArticle> arts) {
+    Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => SectionScreen(section: section, articles: arts)));
+  }
+
+  // A colored section tile: tap the body → open the section; tap the ▶ → play
+  // the whole section as a playlist.
+  Widget _sectionTile(String section, int count, List<NewspaperArticle> arts) {
+    final r = _sectionRamp(section);
+    return GestureDetector(
+      onTap: () => _openSection(section, arts),
+      child: Container(
+        decoration: BoxDecoration(
+            color: r[0], borderRadius: BorderRadius.circular(14)),
+        padding: const EdgeInsets.all(13),
+        child: Stack(children: [
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(section,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w500, color: r[1])),
+            const SizedBox(height: 2),
+            Text('$count ${count == 1 ? 'story' : 'stories'}',
+                style: TextStyle(fontSize: 12, color: r[2])),
+          ]),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: GestureDetector(
+              onTap: () => _playList(arts),
+              child: Container(
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                decoration:
+                    const BoxDecoration(color: kAccent, shape: BoxShape.circle),
+                child: const Icon(Icons.play_arrow, color: kPaper, size: 15),
+              ),
+            ),
+          ),
+        ]),
+      ),
     );
   }
 
@@ -521,17 +618,60 @@ class _TodayScreenState extends State<TodayScreen> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                if (_articles.isNotEmpty && pageKeys.length > 1) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(children: [
-                      _lensBtn('Sections', 'section'),
-                      const SizedBox(width: 8),
-                      _lensBtn('Pages', 'page'),
-                    ]),
-                  ),
-                ],
+                // Header for the browse area + the list ⇄ tiles toggle.
                 if (_articles.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                            _view == 'tiles'
+                                ? 'Browse by section'
+                                : 'All articles',
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: kInk)),
+                        Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFFEFE9DE),
+                              borderRadius: BorderRadius.circular(9)),
+                          child: Row(children: [
+                            _viewBtn(Icons.view_list_rounded, 'list'),
+                            _viewBtn(Icons.grid_view_rounded, 'tiles'),
+                          ]),
+                        ),
+                      ],
+                    ),
+                  ),
+                // Tile view: a colored grid of sections, drilling into a list.
+                if (_articles.isNotEmpty && _view == 'tiles')
+                  GridView.count(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    crossAxisCount: 2,
+                    childAspectRatio: 1.6,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    children: [
+                      for (final k in catKeys)
+                        _sectionTile(k, cats[k]!,
+                            _articles.where((a) => a.category == k).toList()),
+                    ],
+                  )
+                // List view: lens + chips + play-all + flat article list.
+                else if (_articles.isNotEmpty) ...[
+                  if (pageKeys.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(children: [
+                        _lensBtn('Sections', 'section'),
+                        const SizedBox(width: 8),
+                        _lensBtn('Pages', 'page'),
+                      ]),
+                    ),
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Wrap(
@@ -556,46 +696,48 @@ class _TodayScreenState extends State<TodayScreen> {
                       ],
                     ),
                   ),
-                // Play the current section/filter back-to-back, like a playlist.
-                if ((_category != null || _pageSel != null) && visible.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: GestureDetector(
-                      onTap: () => _playList(visible),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.play_circle_fill, color: kAccent, size: 22),
-                        const SizedBox(width: 6),
-                        Text(
-                            'Play all ${_category ?? 'Page $_pageSel'} · ${visible.length}',
-                            style: const TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w500,
-                                color: kAccent)),
-                      ]),
+                  if ((_category != null || _pageSel != null) &&
+                      visible.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: GestureDetector(
+                        onTap: () => _playList(visible),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.play_circle_fill,
+                              color: kAccent, size: 22),
+                          const SizedBox(width: 6),
+                          Text(
+                              'Play all ${_category ?? 'Page $_pageSel'} · ${visible.length}',
+                              style: const TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w500,
+                                  color: kAccent)),
+                        ]),
+                      ),
                     ),
-                  ),
-                for (final a in visible)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(a.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w500,
-                            color: kInk)),
-                    subtitle: Text(
-                        '${a.category} · p${a.page} · '
-                        '${(a.estimatedDurationSeconds / 60).ceil()} min',
-                        style:
-                            const TextStyle(fontSize: 12, color: kMuted)),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.play_circle_fill, color: kAccent),
-                      tooltip: 'Play',
-                      onPressed: () => _playInline(a), // play in place
+                  for (final a in visible)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(a.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w500,
+                              color: kInk)),
+                      subtitle: Text(
+                          '${a.category} · p${a.page} · '
+                          '${(a.estimatedDurationSeconds / 60).ceil()} min',
+                          style: const TextStyle(fontSize: 12, color: kMuted)),
+                      trailing: IconButton(
+                        icon:
+                            const Icon(Icons.play_circle_fill, color: kAccent),
+                        tooltip: 'Play',
+                        onPressed: () => _playInline(a), // play in place
+                      ),
+                      onTap: () => _play(a), // open the full player with text
                     ),
-                    onTap: () => _play(a), // open the full player with text
-                  ),
+                ],
               ],
             ),
           ),
