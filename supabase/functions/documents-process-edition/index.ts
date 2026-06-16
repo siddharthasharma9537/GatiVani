@@ -253,28 +253,32 @@ async function finalizeContinuations(supabase: any, newspaperId: string): Promis
     .order("page_number");
   if (!arts || arts.length < 2) return;
 
-  // ── Front-page teaser / digest drop ──────────────────────────────────────
-  // Front pages carry short promo blurbs ("…full story on page 8") that are
-  // print navigation, meaningless as audio. A SHORT article whose text is
-  // echoed by a LONGER article elsewhere in the edition is a teaser — drop it.
-  const longs = (arts as Array<{ id: string; full_content: string }>)
+  // ── Front-page teaser → stitch its headline onto the full story ───────────
+  // Front pages carry short promo blurbs ("…full story on page 8") whose text is
+  // echoed by the full article elsewhere. Rather than drop them, prepend the
+  // teaser's headline (the front-page kicker) to the full article's headline so
+  // the listener knows this was the front-page lead — then remove the blurb.
+  const longs = (arts as Array<{ id: string; title: string; full_content: string }>)
     .filter((x) => (x.full_content?.length ?? 0) > 500);
   for (const a of arts as Array<{ id: string; title: string; full_content: string }>) {
     const body = a.full_content ?? "";
     if (body.length >= 260 || body.length < 30) continue;
-    let echoed = false;
+    let match: { id: string; title: string; full_content: string } | undefined;
     for (const off of [0, 12, 24, 40, 60]) {
       const probe = body.slice(off, off + 18).trim();
       if (probe.length < 12) continue;
-      if (longs.some((L) => L.id !== a.id && L.full_content.includes(probe))) {
-        echoed = true;
-        break;
-      }
+      match = longs.find((L) => L.id !== a.id && L.full_content.includes(probe));
+      if (match) break;
     }
-    if (echoed) {
-      await supabase.from("articles").delete().eq("id", a.id);
-      console.log(`[edition] dropped front-page teaser "${(a.title ?? "").slice(0, 20)}"`);
+    if (!match) continue;
+    const kicker = (a.title ?? "").trim();
+    // Only stitch a clean, short kicker; otherwise just drop the blurb.
+    if (kicker && kicker.length <= 36 && !(match.title ?? "").includes(kicker)) {
+      await supabase.from("articles")
+        .update({ title: `${kicker} — ${match.title}` }).eq("id", match.id);
+      console.log(`[edition] stitched front-page kicker "${kicker}" → full story`);
     }
+    await supabase.from("articles").delete().eq("id", a.id);
   }
 
   for (const a of arts) {
