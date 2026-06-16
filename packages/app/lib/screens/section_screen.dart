@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/newspaper_article.dart';
 import '../services/playback_service.dart';
+import '../widgets/article_card.dart';
 import '../widgets/mini_player.dart';
 import 'lyrics_player_screen.dart';
 
@@ -59,25 +60,10 @@ class SectionScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
               children: [
                 for (final a in articles)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(a.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w500,
-                            color: kInk)),
-                    subtitle: Text(
-                        '${a.category} · p${a.page} · '
-                        '${(a.estimatedDurationSeconds / 60).ceil()} min',
-                        style: const TextStyle(fontSize: 12, color: kMuted)),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.play_circle_fill, color: kAccent),
-                      tooltip: 'Play',
-                      onPressed: () => PlaybackService.i.playOne(a),
-                    ),
-                    onTap: () => _play(context, a),
+                  ArticleCard(
+                    article: a,
+                    onOpen: () => _play(context, a),
+                    onPlay: () => PlaybackService.i.playOne(a),
                   ),
               ],
             ),

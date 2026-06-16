@@ -7,37 +7,11 @@ import '../config/api_config.dart';
 import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
 import '../services/playback_service.dart';
+import '../design/section_colors.dart';
+import '../widgets/article_card.dart';
 import '../widgets/mini_player.dart';
 import 'lyrics_player_screen.dart';
 import 'section_screen.dart';
-
-// Muted, equal-lightness section tints — editorial, not rainbow. Each section
-// gets its own hue for recognition; all share the same lightness so the grid
-// reads as one cohesive set. [background, title, subtitle].
-const Map<String, List<Color>> kSectionColors = {
-  'State': [Color(0xFFE6F1FB), Color(0xFF042C53), Color(0xFF185FA5)],
-  'National': [Color(0xFFFAECE7), Color(0xFF4A1B0C), Color(0xFF993C1D)],
-  'International': [Color(0xFFE1F5EE), Color(0xFF04342C), Color(0xFF0F6E56)],
-  'District': [Color(0xFFEAF3DE), Color(0xFF173404), Color(0xFF3B6D11)],
-  'Politics': [Color(0xFFEEEDFE), Color(0xFF26215C), Color(0xFF534AB7)],
-  'Editorial': [Color(0xFFF1EFE8), Color(0xFF2C2C2A), Color(0xFF5F5E5A)],
-  'Judiciary': [Color(0xFFFBEAF0), Color(0xFF4B1528), Color(0xFF993556)],
-  'Crime': [Color(0xFFFCEBEB), Color(0xFF501313), Color(0xFFA32D2D)],
-  'Business': [Color(0xFFFAEEDA), Color(0xFF412402), Color(0xFF854F0B)],
-  'Sports': [Color(0xFFFBEAF0), Color(0xFF4B1528), Color(0xFF993556)],
-  'Health': [Color(0xFFE1F5EE), Color(0xFF04342C), Color(0xFF0F6E56)],
-  'Sci-Tech': [Color(0xFFE6F1FB), Color(0xFF042C53), Color(0xFF185FA5)],
-  'Education': [Color(0xFFFAEEDA), Color(0xFF412402), Color(0xFF854F0B)],
-  'Agriculture': [Color(0xFFEAF3DE), Color(0xFF173404), Color(0xFF3B6D11)],
-  'Entertainment': [Color(0xFFFBEAF0), Color(0xFF4B1528), Color(0xFF993556)],
-  'Devotional': [Color(0xFFFAECE7), Color(0xFF4A1B0C), Color(0xFF993C1D)],
-  'Trending': [Color(0xFFFAEEDA), Color(0xFF412402), Color(0xFF854F0B)],
-  'News': [Color(0xFFF1EFE8), Color(0xFF2C2C2A), Color(0xFF5F5E5A)],
-};
-const List<Color> _kSectionFallback = [
-  Color(0xFFF1EFE8), Color(0xFF2C2C2A), Color(0xFF5F5E5A),
-];
-List<Color> _sectionRamp(String s) => kSectionColors[s] ?? _kSectionFallback;
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -227,7 +201,7 @@ class _TodayScreenState extends State<TodayScreen> {
   // A colored section tile: tap the body → open the section; tap the ▶ → play
   // the whole section as a playlist.
   Widget _sectionTile(String section, int count, List<NewspaperArticle> arts) {
-    final r = _sectionRamp(section);
+    final r = sectionRamp(section);
     return GestureDetector(
       onTap: () => _openSection(section, arts),
       child: Container(
@@ -716,26 +690,10 @@ class _TodayScreenState extends State<TodayScreen> {
                       ),
                     ),
                   for (final a in visible)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(a.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w500,
-                              color: kInk)),
-                      subtitle: Text(
-                          '${a.category} · p${a.page} · '
-                          '${(a.estimatedDurationSeconds / 60).ceil()} min',
-                          style: const TextStyle(fontSize: 12, color: kMuted)),
-                      trailing: IconButton(
-                        icon:
-                            const Icon(Icons.play_circle_fill, color: kAccent),
-                        tooltip: 'Play',
-                        onPressed: () => _playInline(a), // play in place
-                      ),
-                      onTap: () => _play(a), // open the full player with text
+                    ArticleCard(
+                      article: a,
+                      onOpen: () => _play(a), // open the full player with text
+                      onPlay: () => _playInline(a), // play in place
                     ),
                 ],
               ],
