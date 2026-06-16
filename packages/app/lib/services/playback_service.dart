@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -7,53 +7,18 @@ import '../config/api_config.dart';
 import '../models/newspaper_article.dart';
 
 /// App-wide singleton: queue + audio, so playback survives navigation.
-/// Bind UI with AnimatedBuilder/ListenableBuilder on PlaybackService.i.
+/// Bind UI with ListenableBuilder on PlaybackService.i.
 class PlaybackService extends ChangeNotifier {
   PlaybackService._() {
     player.playerStateStream.listen((s) {
-      // Only auto-advance on a genuine end-of-track, not the transient
-      // "completed" just_audio emits while a new url is being loaded.
+      // Auto-advance only on a real end-of-track, not the transient "completed"
+      // just_audio emits while a new url is loading.
       if (s.processingState == ProcessingState.completed && !loading) next();
       notifyListeners();
     });
     player.positionStream.listen((_) => notifyListeners());
-    // Preload a silent clip so the first user gesture can "unlock" web audio
-    // (mobile browsers only allow audio that starts inside a user gesture).
-    _preloadSilent();
   }
   static final PlaybackService i = PlaybackService._();
-
-  bool _unlocked = false;
-
-  Future<void> _preloadSilent() async {
-    try {
-      await player.setAudioSource(
-          AudioSource.uri(Uri.dataFromBytes(_silentWav(), mimeType: 'audio/wav')));
-    } catch (_) {}
-  }
-
-  /// Call from the first user tap (a gesture handler) to satisfy the mobile
-  /// autoplay policy. Plays the preloaded silent clip in-gesture; afterwards
-  /// programmatic playback works for the session.
-  void unlock() {
-    if (_unlocked) return;
-    _unlocked = true;
-    player.play().catchError((_) {});
-  }
-
-  static Uint8List _silentWav() {
-    const sr = 8000;
-    const n = sr ~/ 3; // ~0.33s of silence
-    final b = BytesBuilder();
-    void s(String x) => b.add(x.codeUnits);
-    void u32(int v) => b.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
-    void u16(int v) => b.add([v & 0xff, (v >> 8) & 0xff]);
-    s('RIFF'); u32(36 + n); s('WAVE'); s('fmt ');
-    u32(16); u16(1); u16(1); u32(sr); u32(sr); u16(1); u16(8);
-    s('data'); u32(n);
-    b.add(Uint8List(n)..fillRange(0, n, 128));
-    return b.toBytes();
-  }
 
   final AudioPlayer player = AudioPlayer();
   final List<NewspaperArticle> queue = [];
@@ -66,7 +31,10 @@ class PlaybackService extends ChangeNotifier {
   bool get isPlaying => player.playing;
   double get speed => player.speed;
   Duration get position => player.position;
-  Duration get duration => player.duration ?? Duration.zero;
+  // Only report a duration once a real track is loaded (avoids a stale/zero
+  // duration making the lyric highlight race).
+  Duration get duration =>
+      player.processingState == ProcessingState.idle ? Duration.zero : (player.duration ?? Duration.zero);
 
   Future<void> playAll(List<NewspaperArticle> articles, {int start = 0}) async {
     queue
@@ -94,8 +62,6 @@ class PlaybackService extends ChangeNotifier {
   void seek(Duration d) => player.seek(d);
   void setSpeed(double s) => player.setSpeed(s);
 
-  /// Fire-and-forget: record into recent_plays so the Today screen can show
-  /// recently-played history.
   void _recordPlay(NewspaperArticle a) {
     http
         .post(Uri.parse('${ApiConfig.restUrl}/recent_plays'),
@@ -137,15 +103,16 @@ class PlaybackService extends ChangeNotifier {
         url = data['audioUrl'] as String;
         a.audioUrl = url;
       }
-      // Stop the previous track before swapping the source — avoids the web
-      // case where a new setUrl is ignored while the old one is still active.
-      await player.stop();
+      // setUrl completes when the clip is loaded (duration available). Clear the
+      // loading state THEN start playback — play()'s future only completes at
+      // end-of-track, so it must NOT be awaited.
       await player.setUrl(url);
-      await player.play();
       _recordPlay(a);
+      loading = false;
+      notifyListeners();
+      unawaited(player.play());
     } catch (e) {
       error = e.toString();
-    } finally {
       loading = false;
       notifyListeners();
     }

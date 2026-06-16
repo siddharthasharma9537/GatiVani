@@ -202,10 +202,7 @@ class _TodayScreenState extends State<TodayScreen> {
 
     return Scaffold(
       backgroundColor: kPaper,
-      body: Listener(
-        // First tap unlocks mobile web audio (autoplay policy).
-        onPointerDown: (_) => PlaybackService.i.unlock(),
-        child: SafeArea(
+      body: SafeArea(
         child: Column(children: [
           Expanded(
             child: ListView(
@@ -562,7 +559,6 @@ class _TodayScreenState extends State<TodayScreen> {
           ),
           MiniPlayer(onExpand: _openPlayer),
         ]),
-      ),
       ),
     );
   }
