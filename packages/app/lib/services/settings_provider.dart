@@ -11,13 +11,27 @@ class SettingsProvider extends ChangeNotifier {
   String _defaultVoice = 'priya';
   ThemeMode _themeMode = ThemeMode.system;
   double _playbackSpeed = 1.0;
+  // UI language: 'en' (default) | 'te'. Controls all app chrome — header,
+  // tiles, chips, masthead, menu. Article content is always Telugu.
+  String _lang = 'en';
 
   // ── Getters ─────────────────────────────────────────────────────────────────
   String get defaultVoice => _defaultVoice;
   ThemeMode get themeMode => _themeMode;
   double get playbackSpeed => _playbackSpeed;
+  String get lang => _lang;
+  bool get isTelugu => _lang == 'te';
 
   // ── Setters ─────────────────────────────────────────────────────────────────
+  void setLanguage(String l) {
+    if (_lang == l || (l != 'en' && l != 'te')) return;
+    _lang = l;
+    notifyListeners();
+    _save();
+  }
+
+  void toggleLanguage() => setLanguage(_lang == 'en' ? 'te' : 'en');
+
   void setDefaultVoice(String v) {
     if (_defaultVoice == v) return;
     _defaultVoice = v;
@@ -52,6 +66,7 @@ class SettingsProvider extends ChangeNotifier {
       _defaultVoice = json['defaultVoice'] as String? ?? _defaultVoice;
       _themeMode = _themeFromString(json['themeMode'] as String?);
       _playbackSpeed = (json['playbackSpeed'] as num?)?.toDouble() ?? _playbackSpeed;
+      _lang = json['lang'] as String? ?? _lang;
     } catch (_) {}
   }
 
@@ -64,6 +79,7 @@ class SettingsProvider extends ChangeNotifier {
         'defaultVoice': _defaultVoice,
         'themeMode': _themeToString(_themeMode),
         'playbackSpeed': _playbackSpeed,
+        'lang': _lang,
       }));
     } catch (_) {}
   }

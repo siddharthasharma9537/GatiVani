@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/playback_service.dart';
+import '../services/settings_provider.dart';
 import '../widgets/article_card.dart';
 import '../widgets/mini_player.dart';
 import 'lyrics_player_screen.dart';
@@ -32,6 +35,7 @@ class SectionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final lang = context.watch<SettingsProvider>().lang;
     return Scaffold(
       backgroundColor: kPaper,
       appBar: AppBar(
@@ -39,15 +43,15 @@ class SectionScreen extends StatelessWidget {
         surfaceTintColor: kPaper,
         elevation: 0,
         foregroundColor: kInk,
-        title: Text('$section · ${articles.length}',
+        title: Text('${sectionLabel(section, lang)} · ${articles.length}',
             style: const TextStyle(
                 fontSize: 17, fontWeight: FontWeight.w500, color: kInk)),
         actions: [
           TextButton.icon(
             onPressed: _playAll,
             icon: const Icon(Icons.play_circle_fill, color: kAccent, size: 20),
-            label: const Text('Play all',
-                style: TextStyle(
+            label: Text(tr(lang, 'play_all'),
+                style: const TextStyle(
                     color: kAccent, fontWeight: FontWeight.w500, fontSize: 13)),
           ),
         ],

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
+import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
+import '../services/settings_provider.dart';
 
 /// An article row as a soft card tinted in its section's color, so a list of
 /// them carries the same editorial palette as the section tiles. Tapping the
@@ -18,6 +21,7 @@ class ArticleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final lang = context.watch<SettingsProvider>().lang;
     final r = sectionRamp(article.category);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -49,7 +53,8 @@ class ArticleCard extends StatelessWidget {
                               color: r[1])),
                       const SizedBox(height: 4),
                       Text(
-                          '${article.category} · p${article.page} · '
+                          '${sectionLabel(article.category, lang)} · '
+                          'p${article.page} · '
                           '${(article.estimatedDurationSeconds / 60).ceil()} min',
                           style: TextStyle(fontSize: 12, color: r[2])),
                     ],

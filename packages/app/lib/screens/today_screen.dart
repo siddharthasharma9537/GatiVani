@@ -3,14 +3,19 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
 import '../config/api_config.dart';
+import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
 import '../services/playback_service.dart';
+import '../services/settings_provider.dart';
 import '../design/section_colors.dart';
 import '../widgets/article_card.dart';
+import '../widgets/edition_masthead.dart';
 import '../widgets/mini_player.dart';
 import 'lyrics_player_screen.dart';
+import 'menu_screen.dart';
 import 'section_screen.dart';
 
 /// Reimagined home: today's edition front and center, live processing card,
@@ -172,6 +177,45 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
+  // Compact EN/తె language toggle for the header.
+  Widget _langToggle() {
+    final s = context.watch<SettingsProvider>();
+    Widget cell(String label, String code) {
+      final sel = s.lang == code;
+      return GestureDetector(
+        onTap: () => s.setLanguage(code),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          decoration: BoxDecoration(
+            color: sel ? kAccent : Colors.transparent,
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: sel ? kPaper : kMuted)),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+          color: const Color(0xFFEFE9DE),
+          borderRadius: BorderRadius.circular(10)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        cell('EN', 'en'),
+        cell('తె', 'te'),
+      ]),
+    );
+  }
+
+  void _openMenu() {
+    Navigator.push(
+        context, MaterialPageRoute(builder: (_) => const MenuScreen()));
+  }
+
   // List ⇄ tiles toggle, like Google Drive/Files.
   Widget _viewBtn(IconData icon, String view) {
     final sel = _view == view;
@@ -201,6 +245,7 @@ class _TodayScreenState extends State<TodayScreen> {
   // A colored section tile: tap the body → open the section; tap the ▶ → play
   // the whole section as a playlist.
   Widget _sectionTile(String section, int count, List<NewspaperArticle> arts) {
+    final lang = context.watch<SettingsProvider>().lang;
     final r = sectionRamp(section);
     return GestureDetector(
       onTap: () => _openSection(section, arts),
@@ -210,13 +255,13 @@ class _TodayScreenState extends State<TodayScreen> {
         padding: const EdgeInsets.all(13),
         child: Stack(children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(section,
+            Text(sectionLabel(section, lang),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                     fontSize: 15, fontWeight: FontWeight.w500, color: r[1])),
             const SizedBox(height: 2),
-            Text('$count ${count == 1 ? 'story' : 'stories'}',
+            Text(storyCount(count, lang),
                 style: TextStyle(fontSize: 12, color: r[2])),
           ]),
           Positioned(
@@ -287,6 +332,7 @@ class _TodayScreenState extends State<TodayScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final lang = context.watch<SettingsProvider>().lang;
     final cats = <String, int>{};
     final pages = <int, int>{};
     for (final a in _articles) {
@@ -327,26 +373,45 @@ class _TodayScreenState extends State<TodayScreen> {
                               fontSize: 22,
                               fontWeight: FontWeight.w500,
                               color: kInk)),
-                      if (!showHero)
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        _langToggle(),
+                        const SizedBox(width: 8),
+                        if (!showHero) ...[
+                          GestureDetector(
+                            onTap: _upload,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 11, vertical: 7),
+                              decoration: BoxDecoration(
+                                  color: kAccent,
+                                  borderRadius: BorderRadius.circular(20)),
+                              child: Row(children: [
+                                const Icon(Icons.add, color: kPaper, size: 17),
+                                const SizedBox(width: 3),
+                                Text(tr(lang, 'upload'),
+                                    style: const TextStyle(
+                                        color: kPaper,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500)),
+                              ]),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
                         GestureDetector(
-                          onTap: _upload,
+                          onTap: _openMenu,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 7),
+                            width: 36,
+                            height: 36,
+                            alignment: Alignment.center,
                             decoration: BoxDecoration(
-                                color: kAccent,
-                                borderRadius: BorderRadius.circular(20)),
-                            child: const Row(children: [
-                              Icon(Icons.add, color: kPaper, size: 17),
-                              SizedBox(width: 4),
-                              Text('Upload',
-                                  style: TextStyle(
-                                      color: kPaper,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500)),
-                            ]),
+                                color: const Color(0xFFEFE9DE),
+                                borderRadius: BorderRadius.circular(10)),
+                            child: const Icon(Icons.menu_rounded,
+                                color: kInk, size: 20),
                           ),
                         ),
+                      ]),
                     ],
                   ),
                 ),
@@ -398,7 +463,9 @@ class _TodayScreenState extends State<TodayScreen> {
                       ],
                     ),
                   )
-                else if (_articles.isNotEmpty || st != null)
+                // While a fresh upload is still processing, keep the progress
+                // card; once the edition is ready, show the masthead.
+                else if (st != null && !st.isDone)
                   Container(
                     padding: const EdgeInsets.all(16),
                     margin: const EdgeInsets.only(bottom: 12),
@@ -415,36 +482,28 @@ class _TodayScreenState extends State<TodayScreen> {
                                 fontWeight: FontWeight.w500)),
                         const SizedBox(height: 4),
                         Text(
-                            st != null && !st.isDone
-                                ? 'Page ${st.donePages}/${st.totalPages} · '
-                                    '${st.articleCount} articles found'
-                                : '${_articles.length} articles',
+                            'Page ${st.donePages}/${st.totalPages} · '
+                            '${st.articleCount} articles found',
                             style: const TextStyle(
                                 color: Color(0xFFB4B2A9), fontSize: 12)),
-                        if (st != null && !st.isDone) ...[
-                          const SizedBox(height: 10),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(2),
-                            child: LinearProgressIndicator(
-                                value: st.progress,
-                                minHeight: 4,
-                                backgroundColor: const Color(0xFF5F5E5A),
-                                color: kAccent),
-                          ),
-                        ],
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                              backgroundColor: kAccent,
-                              foregroundColor: kPaper),
-                          onPressed: _articles.isEmpty
-                              ? null
-                              : _playAll,
-                          icon: const Icon(Icons.play_arrow, size: 18),
-                          label: const Text('Listen'),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(
+                              value: st.progress,
+                              minHeight: 4,
+                              backgroundColor: const Color(0xFF5F5E5A),
+                              color: kAccent),
                         ),
                       ],
                     ),
+                  )
+                else if (_articles.isNotEmpty)
+                  EditionMasthead(
+                    rawTitle: _editionTitle,
+                    articleCount: _articles.length,
+                    pageCount: pages.length,
+                    onListen: _playAll,
                   )
                 else ...[
                   Container(
@@ -530,10 +589,10 @@ class _TodayScreenState extends State<TodayScreen> {
                   const SizedBox(height: 8),
                 ],
                 if (_recent.isNotEmpty) ...[
-                  const Padding(
-                    padding: EdgeInsets.only(top: 4, bottom: 6),
-                    child: Text('Recently played',
-                        style: TextStyle(
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, bottom: 6),
+                    child: Text(tr(lang, 'recently_played'),
+                        style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
                             color: kInk)),
@@ -559,12 +618,17 @@ class _TodayScreenState extends State<TodayScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text((m['category'] as String? ?? 'News').toUpperCase(),
-                                    style: const TextStyle(
-                                        fontSize: 10,
-                                        letterSpacing: 0.4,
-                                        color: kAccent,
-                                        fontWeight: FontWeight.w500)),
+                                Builder(builder: (_) {
+                                  final c = sectionLabel(
+                                      m['category'] as String? ?? 'News', lang);
+                                  return Text(
+                                      lang == 'en' ? c.toUpperCase() : c,
+                                      style: const TextStyle(
+                                          fontSize: 10,
+                                          letterSpacing: 0.4,
+                                          color: kAccent,
+                                          fontWeight: FontWeight.w500));
+                                }),
                                 const SizedBox(height: 5),
                                 Expanded(
                                   child: Text(m['title'] as String? ?? '',
@@ -575,12 +639,12 @@ class _TodayScreenState extends State<TodayScreen> {
                                           height: 1.3,
                                           color: kInk)),
                                 ),
-                                Row(children: const [
-                                  Icon(Icons.play_circle_fill,
+                                Row(children: [
+                                  const Icon(Icons.play_circle_fill,
                                       color: kAccent, size: 18),
-                                  SizedBox(width: 4),
-                                  Text('Play',
-                                      style: TextStyle(
+                                  const SizedBox(width: 4),
+                                  Text(tr(lang, 'play'),
+                                      style: const TextStyle(
                                           fontSize: 11.5, color: kMuted)),
                                 ]),
                               ],
@@ -600,9 +664,10 @@ class _TodayScreenState extends State<TodayScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                            _view == 'tiles'
-                                ? 'Browse by section'
-                                : 'All articles',
+                            tr(lang,
+                                _view == 'tiles'
+                                    ? 'browse_by_section'
+                                    : 'all_articles'),
                             style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
@@ -641,9 +706,9 @@ class _TodayScreenState extends State<TodayScreen> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(children: [
-                        _lensBtn('Sections', 'section'),
+                        _lensBtn(tr(lang, 'sections'), 'section'),
                         const SizedBox(width: 8),
-                        _lensBtn('Pages', 'page'),
+                        _lensBtn(tr(lang, 'pages'), 'page'),
                       ]),
                     ),
                   Padding(
@@ -653,17 +718,21 @@ class _TodayScreenState extends State<TodayScreen> {
                       runSpacing: 6,
                       children: [
                         if (_lens == 'page') ...[
-                          _chip('All · ${_articles.length}', _pageSel == null,
+                          _chip('${tr(lang, 'all')} · ${_articles.length}',
+                              _pageSel == null,
                               () => setState(() => _pageSel = null)),
                           for (final p in pageKeys)
-                            _chip('Page $p · ${pages[p]}', _pageSel == p,
+                            _chip('${tr(lang, 'page')} $p · ${pages[p]}',
+                                _pageSel == p,
                                 () => setState(
                                     () => _pageSel = _pageSel == p ? null : p)),
                         ] else ...[
-                          _chip('All · ${_articles.length}', _category == null,
+                          _chip('${tr(lang, 'all')} · ${_articles.length}',
+                              _category == null,
                               () => setState(() => _category = null)),
                           for (final k in catKeys)
-                            _chip('$k · ${cats[k]}', _category == k,
+                            _chip('${sectionLabel(k, lang)} · ${cats[k]}',
+                                _category == k,
                                 () => setState(() =>
                                     _category = _category == k ? null : k)),
                         ],
@@ -681,7 +750,9 @@ class _TodayScreenState extends State<TodayScreen> {
                               color: kAccent, size: 22),
                           const SizedBox(width: 6),
                           Text(
-                              'Play all ${_category ?? 'Page $_pageSel'} · ${visible.length}',
+                              '${tr(lang, 'play_all')} '
+                              '${_category != null ? sectionLabel(_category!, lang) : '${tr(lang, 'page')} $_pageSel'}'
+                              ' · ${visible.length}',
                               style: const TextStyle(
                                   fontSize: 13.5,
                                   fontWeight: FontWeight.w500,
