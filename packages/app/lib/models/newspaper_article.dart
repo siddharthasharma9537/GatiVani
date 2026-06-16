@@ -59,6 +59,17 @@ class NewspaperArticle {
     return '${m}m ${s}s';
   }
 
+  /// The text that gets narrated AND highlighted: headline first (as its own
+  /// sentence so TTS pauses), then the body. Used by both TTS and the lyrics
+  /// view so audio and word-sync stay aligned.
+  String get spokenText {
+    final t = title.trim();
+    final b = (content.trim().isNotEmpty ? content : preview).trim();
+    if (t.isEmpty) return b;
+    final sep = RegExp(r'[.?!।॥…]$').hasMatch(t) ? '\n\n' : '.\n\n';
+    return '$t$sep$b';
+  }
+
   /// Returns true if imageUrl points to a displayable image (not a PDF).
   bool get hasImage {
     if (imageUrl.isEmpty) return false;

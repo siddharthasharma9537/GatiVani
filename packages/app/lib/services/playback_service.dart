@@ -91,7 +91,7 @@ class PlaybackService extends ChangeNotifier {
                   'Content-Type': 'application/json'
                 },
                 body: json.encode({
-                  'text': a.content.isNotEmpty ? a.content : a.preview,
+                  'text': a.spokenText,
                   'language': 'te-IN',
                   'articleId': a.id,
                   if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,

@@ -126,7 +126,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
             }
             if (a.id != _forId) {
               _forId = a.id;
-              _prepare(a.content.isNotEmpty ? a.content : a.preview);
+              _prepare(a.spokenText);
             }
             final dur = p.duration.inMilliseconds;
             // TTS clips usually open with ~0.4s of silence before the first word,
