@@ -117,19 +117,55 @@ class _TodayScreenState extends State<TodayScreen> {
     }
   }
 
+  // Tapping the article text → open the full-screen player with the text.
   void _play(NewspaperArticle a) {
-    // Open the player first (synchronously, inside the tap gesture) so the
-    // play control is available immediately — mobile browsers block audio that
-    // starts after an async gap, so the player's own play button is the
-    // reliable path there.
     _openPlayer();
     PlaybackService.i.playOne(a);
     Future.delayed(const Duration(seconds: 2), _loadRecent);
   }
 
+  // Tapping the row's play icon → just start playing (mini-player), no full
+  // screen — like a track list.
+  void _playInline(NewspaperArticle a) {
+    PlaybackService.i.playOne(a);
+    Future.delayed(const Duration(seconds: 2), _loadRecent);
+  }
+
+  // Play a whole section/filter back-to-back, like a playlist.
+  void _playList(List<NewspaperArticle> list) {
+    if (list.isEmpty) return;
+    PlaybackService.i.playAll(list);
+    Future.delayed(const Duration(seconds: 2), _loadRecent);
+  }
+
+  // Sensible chip order: hard news first, the catch-all "News" last.
+  static const _sectionOrder = [
+    'State', 'National', 'International', 'District', 'Politics', 'Editorial',
+    'Judiciary', 'Crime', 'Business', 'Sports', 'Health', 'Sci-Tech',
+    'Education', 'Agriculture', 'Entertainment', 'Devotional', 'Trending', 'News',
+  ];
+  int _sectionRank(String s) {
+    final i = _sectionOrder.indexOf(s);
+    return i < 0 ? _sectionOrder.length : i;
+  }
+
   void _openPlayer() {
     Navigator.push(context,
         MaterialPageRoute(builder: (_) => const LyricsPlayerScreen()));
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) {
+    return ChoiceChip(
+      label: Text(label,
+          style: TextStyle(
+              fontSize: 12,
+              color: selected ? const Color(0xFF993C1D) : kInk)),
+      selected: selected,
+      showCheckmark: false,
+      backgroundColor: Colors.white,
+      selectedColor: const Color(0xFFFAECE7),
+      onSelected: (_) => onTap(),
+    );
   }
 
   Widget _lensBtn(String label, String lens) {
@@ -187,6 +223,8 @@ class _TodayScreenState extends State<TodayScreen> {
       pages[a.page] = (pages[a.page] ?? 0) + 1;
     }
     final pageKeys = pages.keys.toList()..sort();
+    final catKeys = cats.keys.toList()
+      ..sort((a, b) => _sectionRank(a).compareTo(_sectionRank(b)));
     final visible = _lens == 'page'
         ? (_pageSel == null
             ? _articles
@@ -500,39 +538,40 @@ class _TodayScreenState extends State<TodayScreen> {
                       spacing: 6,
                       runSpacing: 6,
                       children: [
-                        if (_lens == 'page')
+                        if (_lens == 'page') ...[
+                          _chip('All · ${_articles.length}', _pageSel == null,
+                              () => setState(() => _pageSel = null)),
                           for (final p in pageKeys)
-                            ChoiceChip(
-                              label: Text('Page $p · ${pages[p]}',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: _pageSel == p
-                                          ? const Color(0xFF993C1D)
-                                          : kInk)),
-                              selected: _pageSel == p,
-                              showCheckmark: false,
-                              backgroundColor: Colors.white,
-                              selectedColor: const Color(0xFFFAECE7),
-                              onSelected: (_) => setState(() =>
-                                  _pageSel = _pageSel == p ? null : p),
-                            )
-                        else
-                          for (final e in cats.entries)
-                            ChoiceChip(
-                              label: Text('${e.key} · ${e.value}',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: _category == e.key
-                                          ? const Color(0xFF993C1D)
-                                          : kInk)),
-                              selected: _category == e.key,
-                              showCheckmark: false,
-                              backgroundColor: Colors.white,
-                              selectedColor: const Color(0xFFFAECE7),
-                              onSelected: (_) => setState(() => _category =
-                                  _category == e.key ? null : e.key),
-                            ),
+                            _chip('Page $p · ${pages[p]}', _pageSel == p,
+                                () => setState(
+                                    () => _pageSel = _pageSel == p ? null : p)),
+                        ] else ...[
+                          _chip('All · ${_articles.length}', _category == null,
+                              () => setState(() => _category = null)),
+                          for (final k in catKeys)
+                            _chip('$k · ${cats[k]}', _category == k,
+                                () => setState(() =>
+                                    _category = _category == k ? null : k)),
+                        ],
                       ],
+                    ),
+                  ),
+                // Play the current section/filter back-to-back, like a playlist.
+                if ((_category != null || _pageSel != null) && visible.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: GestureDetector(
+                      onTap: () => _playList(visible),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Icon(Icons.play_circle_fill, color: kAccent, size: 22),
+                        const SizedBox(width: 6),
+                        Text(
+                            'Play all ${_category ?? 'Page $_pageSel'} · ${visible.length}',
+                            style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w500,
+                                color: kAccent)),
+                      ]),
                     ),
                   ),
                 for (final a in visible)
@@ -550,9 +589,12 @@ class _TodayScreenState extends State<TodayScreen> {
                         '${(a.estimatedDurationSeconds / 60).ceil()} min',
                         style:
                             const TextStyle(fontSize: 12, color: kMuted)),
-                    trailing:
-                        const Icon(Icons.play_arrow, color: kAccent),
-                    onTap: () => _play(a),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.play_circle_fill, color: kAccent),
+                      tooltip: 'Play',
+                      onPressed: () => _playInline(a), // play in place
+                    ),
+                    onTap: () => _play(a), // open the full player with text
                   ),
               ],
             ),
