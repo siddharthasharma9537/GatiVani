@@ -315,8 +315,19 @@ class _TodayScreenState extends State<TodayScreen> {
     PlaybackService.i.playOne(a);
   }
 
-  void _playAll() {
-    PlaybackService.i.playAll(_articles);
+  // "Listen to briefing": a curated handful — top editorial sections first —
+  // instead of all ~175 articles. One tap never synthesizes the whole edition,
+  // and the dozen it does play are cached, so it's cents and free on replay.
+  static const _briefingCount = 12;
+  void _playBriefing() {
+    final ranked = [..._articles]
+      ..sort((a, b) {
+        final r = _sectionRank(a.category).compareTo(_sectionRank(b.category));
+        return r != 0 ? r : a.page.compareTo(b.page);
+      });
+    final pick = ranked.take(_briefingCount).toList();
+    if (pick.isEmpty) return;
+    PlaybackService.i.playAll(pick);
     Future.delayed(const Duration(seconds: 2), _loadRecent);
   }
 
@@ -508,7 +519,7 @@ class _TodayScreenState extends State<TodayScreen> {
                     rawTitle: _editionTitle,
                     articleCount: _articles.length,
                     pageCount: pages.length,
-                    onListen: _playAll,
+                    onListen: _playBriefing,
                   )
                 else ...[
                   Container(
@@ -602,61 +613,10 @@ class _TodayScreenState extends State<TodayScreen> {
                             fontWeight: FontWeight.w500,
                             color: p.ink)),
                   ),
-                  SizedBox(
-                    height: 96,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _recent.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 10),
-                      itemBuilder: (_, i) {
-                        final m = _recent[i];
-                        return GestureDetector(
-                          onTap: () => _playRecent(m['article_id'] as String),
-                          child: Container(
-                            width: 160,
-                            padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
-                            decoration: BoxDecoration(
-                                color: p.surface,
-                                border: Border.all(color: p.line),
-                                borderRadius: BorderRadius.circular(14)),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Builder(builder: (_) {
-                                  final c = sectionLabel(
-                                      m['category'] as String? ?? 'News', lang);
-                                  return Text(
-                                      lang == 'en' ? c.toUpperCase() : c,
-                                      style: const TextStyle(
-                                          fontSize: 10,
-                                          letterSpacing: 0.4,
-                                          color: kAccent,
-                                          fontWeight: FontWeight.w500));
-                                }),
-                                const SizedBox(height: 5),
-                                Expanded(
-                                  child: Text(m['title'] as String? ?? '',
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          fontSize: 13,
-                                          height: 1.3,
-                                          color: p.ink)),
-                                ),
-                                Row(children: [
-                                  const Icon(Icons.play_circle_fill,
-                                      color: kAccent, size: 18),
-                                  const SizedBox(width: 4),
-                                  Text(tr(lang, 'play'),
-                                      style: TextStyle(
-                                          fontSize: 11.5, color: p.muted)),
-                                ]),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                  _RecentlyPlayedMarquee(
+                    items: _recent,
+                    lang: lang,
+                    onTap: (id) => _playRecent(id),
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -776,6 +736,110 @@ class _TodayScreenState extends State<TodayScreen> {
           ),
           MiniPlayer(onExpand: _openPlayer),
         ]),
+      ),
+    );
+  }
+}
+
+/// "Recently played" as a slow right-to-left marquee. The strip auto-scrolls on
+/// its own (no user drag); the items are repeated so the loop is seamless. Tap a
+/// card to play it.
+class _RecentlyPlayedMarquee extends StatefulWidget {
+  const _RecentlyPlayedMarquee(
+      {required this.items, required this.lang, required this.onTap});
+  final List<Map<String, dynamic>> items;
+  final String lang;
+  final void Function(String id) onTap;
+  @override
+  State<_RecentlyPlayedMarquee> createState() => _RecentlyPlayedMarqueeState();
+}
+
+class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
+  final _ctrl = ScrollController();
+  Timer? _timer;
+  static const _cardW = 160.0;
+  static const _gap = 10.0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Drive the scroll a few pixels per tick → a calm ~13 px/s drift.
+    _timer = Timer.periodic(const Duration(milliseconds: 30), (_) {
+      if (!_ctrl.hasClients || widget.items.isEmpty) return;
+      final setW = widget.items.length * (_cardW + _gap);
+      if (setW <= 0) return;
+      var next = _ctrl.offset + 0.4;
+      if (next >= setW) next -= setW; // seamless wrap within the repeated sets
+      _ctrl.jumpTo(next);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = GatiPalette.of(context);
+    final n = widget.items.length;
+    if (n == 0) return const SizedBox.shrink();
+    final reps = n <= 2 ? 4 : 3; // enough repeats to always fill + loop
+    return SizedBox(
+      height: 96,
+      child: ListView.builder(
+        controller: _ctrl,
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: n * reps,
+        itemBuilder: (_, i) {
+          final m = widget.items[i % n];
+          return Padding(
+            padding: const EdgeInsets.only(right: _gap),
+            child: _card(p, m),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _card(GatiPalette p, Map<String, dynamic> m) {
+    final c = sectionLabel(m['category'] as String? ?? 'News', widget.lang);
+    return GestureDetector(
+      onTap: () => widget.onTap(m['article_id'] as String),
+      child: Container(
+        width: _cardW,
+        padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+        decoration: BoxDecoration(
+            color: p.surface,
+            border: Border.all(color: p.line),
+            borderRadius: BorderRadius.circular(14)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.lang == 'en' ? c.toUpperCase() : c,
+                style: const TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 0.4,
+                    color: kAccent,
+                    fontWeight: FontWeight.w500)),
+            const SizedBox(height: 5),
+            Expanded(
+              child: Text(m['title'] as String? ?? '',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, height: 1.3, color: p.ink)),
+            ),
+            Row(children: [
+              const Icon(Icons.play_circle_fill, color: kAccent, size: 18),
+              const SizedBox(width: 4),
+              Text(tr(widget.lang, 'play'),
+                  style: TextStyle(fontSize: 11.5, color: p.muted)),
+            ]),
+          ],
+        ),
       ),
     );
   }
