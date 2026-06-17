@@ -226,7 +226,7 @@ class DocumentService {
       headers: ApiConfig.authHeaders,
     );
     final rows = json.decode(r.body) as List<dynamic>;
-    return rows.map((row) {
+    final all = rows.map((row) {
       final m = row as Map<String, dynamic>;
       return NewspaperArticle.fromJson({
         'id': m['id'],
@@ -239,6 +239,29 @@ class DocumentService {
         'audioUrl': m['audio_url'],
       }, imageUrl: '');
     }).toList();
+    return _dedupe(all);
+  }
+
+  /// Collapse the duplicates a newspaper naturally produces: a front-page teaser
+  /// and the full story carry the same headline, and cross-page continuations
+  /// land as headline-less fragments. Keep the longest version per headline (so
+  /// the teaser yields to the full article) in page order, and drop fragments
+  /// that have no headline of their own.
+  List<NewspaperArticle> _dedupe(List<NewspaperArticle> all) {
+    final byTitle = <String, int>{}; // title → index in out
+    final out = <NewspaperArticle>[];
+    for (final a in all) {
+      final key = a.title.trim();
+      if (key.isEmpty) continue; // continuation fragment, not its own article
+      final at = byTitle[key];
+      if (at == null) {
+        byTitle[key] = out.length;
+        out.add(a);
+      } else if (a.content.length > out[at].content.length) {
+        out[at] = a; // replace the teaser with the fuller story, keep position
+      }
+    }
+    return out;
   }
 
   // ── Legacy: single-article flow (ReviewScreen / PlayerScreen) ─────────────

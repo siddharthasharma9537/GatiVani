@@ -45,19 +45,23 @@ function geminiVoice(speaker: string): string {
 // Sarvam Bulbul:v3 hard limit is 500 chars; stay safely under it.
 
 const SARVAM_CHUNK_LIMIT = 450;
+// Gemini TTS handles ~1.5k chars per call in ~75s; beyond that a single call
+// is slow enough to risk the function wall-clock timeout. Chunk longer text and
+// synthesize chunks in parallel so total time ≈ one chunk, not the sum.
+const GEMINI_CHUNK_LIMIT = 1100;
 
-function chunkText(text: string): string[] {
-  if (text.length <= SARVAM_CHUNK_LIMIT) return [text];
+function chunkText(text: string, limit: number = SARVAM_CHUNK_LIMIT): string[] {
+  if (text.length <= limit) return [text];
   const chunks: string[] = [];
   const sentences = text.split(/(?<=[।॥|.!?\n])\s*/u).filter(s => s.trim());
   let current = "";
   for (const sentence of sentences) {
-    if (sentence.length > SARVAM_CHUNK_LIMIT) {
+    if (sentence.length > limit) {
       if (current.trim()) { chunks.push(current.trim()); current = ""; }
       const words = sentence.split(/\s+/);
       let part = "";
       for (const word of words) {
-        if ((part + " " + word).length > SARVAM_CHUNK_LIMIT) {
+        if ((part + " " + word).length > limit) {
           if (part.trim()) chunks.push(part.trim());
           part = word;
         } else {
@@ -65,7 +69,7 @@ function chunkText(text: string): string[] {
         }
       }
       if (part.trim()) current = part.trim();
-    } else if ((current + " " + sentence).length > SARVAM_CHUNK_LIMIT) {
+    } else if ((current + " " + sentence).length > limit) {
       if (current.trim()) chunks.push(current.trim());
       current = sentence;
     } else {
@@ -152,33 +156,25 @@ function styledText(text: string, readingStyle?: string): string {
 // ── Gemini 2.5 Flash TTS ──────────────────────────────────────────────────────
 // Returns raw PCM int16 LE at 24 kHz mono — no chunking needed.
 
-async function synthesizeWithGemini(
+const GEMINI_SAMPLE_RATE = 24000;
+
+// One Gemini TTS call → a complete WAV for the given text.
+async function geminiOneCall(
   text: string,
-  speaker: string,
+  voiceName: string,
   geminiKey: string,
-  readingStyle?: string,
-): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
-  const voiceName = geminiVoice(speaker);
-  const GEMINI_SAMPLE_RATE = 24000;
-  // Gemini TTS works best with natural content — don't inject English instructions
-  // into Telugu text. Style is handled via Sarvam pace instead.
-  const ttsInput = text;
-
-  console.log(`[gemini-tts] ${text.length} chars, voice=${voiceName}, style=${readingStyle ?? "default"}`);
-
+): Promise<Uint8Array> {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${geminiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: ttsInput }] }],
+        contents: [{ parts: [{ text }] }],
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName },
-            },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName } },
           },
         },
       }),
@@ -195,7 +191,6 @@ async function synthesizeWithGemini(
       content?: { parts?: Array<{ inlineData?: { data?: string } }> };
     }>;
   };
-
   const rawB64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
   if (!rawB64) throw new Error("Gemini TTS: no audio data in response");
 
@@ -204,9 +199,32 @@ async function synthesizeWithGemini(
   const wavBytes = new Uint8Array(44 + pcmBytes.length);
   wavBytes.set(header, 0);
   wavBytes.set(pcmBytes, 44);
+  return wavBytes;
+}
 
-  const durationSec = Math.round(pcmBytes.length / (GEMINI_SAMPLE_RATE * 2));
-  return { wavBytes, durationSec, chunks: 1 };
+async function synthesizeWithGemini(
+  text: string,
+  speaker: string,
+  geminiKey: string,
+  readingStyle?: string,
+): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
+  const voiceName = geminiVoice(speaker);
+  // Gemini TTS works best with natural content — don't inject English
+  // instructions into Telugu text. Style is handled via Sarvam pace instead.
+  const parts = chunkText(text, GEMINI_CHUNK_LIMIT);
+  console.log(
+    `[gemini-tts] ${text.length} chars → ${parts.length} chunk(s), voice=${voiceName}, style=${readingStyle ?? "default"}`,
+  );
+
+  // Synthesize chunks in parallel so a long article's total time ≈ one chunk
+  // (sequential would blow the function wall-clock), then stitch the PCM.
+  const wavs = await Promise.all(
+    parts.map((p) => geminiOneCall(p, voiceName, geminiKey)),
+  );
+  const wavBytes = concatWavBuffers(wavs);
+
+  const durationSec = Math.round((wavBytes.length - 44) / (GEMINI_SAMPLE_RATE * 2));
+  return { wavBytes, durationSec, chunks: parts.length };
 }
 
 // ── Sarvam Bulbul:v3 TTS ──────────────────────────────────────────────────────
