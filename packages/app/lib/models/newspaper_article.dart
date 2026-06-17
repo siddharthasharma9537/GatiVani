@@ -25,6 +25,9 @@ class NewspaperArticle {
   final String imageUrl;
 
   String? audioUrl;
+  // Cached audio of the short "briefing" narration (headline + lede), separate
+  // from the full-article audioUrl.
+  String? summaryAudioUrl;
   ArticleAudioStatus audioStatus;
   bool isDownloaded;
   bool isSelected;
@@ -42,6 +45,7 @@ class NewspaperArticle {
     this.suggestedSpeaker = '',
     this.imageUrl = '',
     this.audioUrl,
+    this.summaryAudioUrl,
     this.audioStatus = ArticleAudioStatus.none,
     this.isDownloaded = false,
     this.isSelected = false,
@@ -68,6 +72,30 @@ class NewspaperArticle {
     if (t.isEmpty) return b;
     final sep = RegExp(r'[.?!।॥…]$').hasMatch(t) ? '\n\n' : '.\n\n';
     return '$t$sep$b';
+  }
+
+  /// Short "briefing" narration: headline + the lede (the first whole sentences
+  /// of the body, snapped to a sentence boundary, ~250 chars). A news lede
+  /// summarizes by convention, so this is a faithful gist — and ~3–4× fewer
+  /// characters than the full body, so ~3–4× cheaper to synthesize.
+  String get briefingText {
+    final t = title.trim();
+    final b = (content.trim().isNotEmpty ? content : preview).trim();
+    String lede;
+    if (b.length <= 300) {
+      lede = b;
+    } else {
+      final sentences = b.split(RegExp(r'(?<=[.?!।॥…])\s+'));
+      final buf = StringBuffer();
+      for (final s in sentences) {
+        if (buf.isNotEmpty && buf.length + s.length > 250) break;
+        buf.write(buf.isEmpty ? s : ' $s');
+      }
+      lede = buf.isEmpty ? b.substring(0, 250) : buf.toString();
+    }
+    if (t.isEmpty) return lede;
+    final sep = RegExp(r'[.?!।॥…]$').hasMatch(t) ? '\n\n' : '.\n\n';
+    return '$t$sep$lede';
   }
 
   /// Returns true if imageUrl points to a displayable image (not a PDF).
@@ -104,12 +132,14 @@ class NewspaperArticle {
       suggestedSpeaker: json['suggestedSpeaker'] as String? ?? '',
       imageUrl: json['imageUrl'] as String? ?? imageUrl,
       audioUrl: json['audioUrl'] as String?,
+      summaryAudioUrl: json['summaryAudioUrl'] as String?,
     );
   }
 
   NewspaperArticle copyWith({
     ArticleAudioStatus? audioStatus,
     String? audioUrl,
+    String? summaryAudioUrl,
     bool? isDownloaded,
     bool? isSelected,
     String? documentType,
@@ -130,6 +160,7 @@ class NewspaperArticle {
         suggestedSpeaker: suggestedSpeaker ?? this.suggestedSpeaker,
         imageUrl: imageUrl ?? this.imageUrl,
         audioUrl: audioUrl ?? this.audioUrl,
+        summaryAudioUrl: summaryAudioUrl ?? this.summaryAudioUrl,
         audioStatus: audioStatus ?? this.audioStatus,
         isDownloaded: isDownloaded ?? this.isDownloaded,
         isSelected: isSelected ?? this.isSelected,

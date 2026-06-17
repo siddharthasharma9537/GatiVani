@@ -310,6 +310,13 @@ Deno.serve(async (req) => {
     // generated audio is stored once in the public "audio" bucket and reused on
     // every later call — TTS is the dominant pipeline cost (~85%).
     const articleId = typeof body.articleId === "string" && body.articleId ? body.articleId : "";
+    // Which cached audio this is: the full article ("audio_url", default) or the
+    // short briefing/summary narration ("summary_audio_url"). They cache to
+    // separate columns + storage paths so a brief and a full clip never collide.
+    const target = body.target === "summary_audio_url"
+      ? "summary_audio_url"
+      : "audio_url";
+    const fileSuffix = target === "summary_audio_url" ? ".brief.wav" : ".wav";
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const supabase = (articleId && SUPABASE_URL && SERVICE_KEY)
@@ -318,15 +325,16 @@ Deno.serve(async (req) => {
 
     if (supabase) {
       const { data: row } = await supabase
-        .from("articles").select("audio_url").eq("id", articleId).maybeSingle();
-      if (row?.audio_url) {
-        console.log(`[synthesize] cache hit for article ${articleId}`);
+        .from("articles").select(target).eq("id", articleId).maybeSingle();
+      const cachedUrl = (row as Record<string, string> | null)?.[target];
+      if (cachedUrl) {
+        console.log(`[synthesize] cache hit (${target}) for article ${articleId}`);
         return json({
           ok: true,
-          audioUrl: row.audio_url,
+          audioUrl: cachedUrl,
           // word-level timings live next to the audio; the app falls back to
           // estimation if this 404s (alignment may still be running)
-          timingsUrl: row.audio_url.replace(/\.wav$/, ".timings.json"),
+          timingsUrl: cachedUrl.replace(/\.wav$/, ".timings.json"),
           provider: "cache",
           language: langKey,
           speaker,
@@ -392,7 +400,7 @@ Deno.serve(async (req) => {
     let audioUrl = "";
     let timingsUrl = "";
     if (supabase) {
-      const path = `articles/${articleId}.wav`;
+      const path = `articles/${articleId}${fileSuffix}`;
       const { error: upErr } = await supabase.storage
         .from("audio")
         .upload(path, wavBytes, { contentType: "audio/wav", upsert: true });
@@ -402,13 +410,14 @@ Deno.serve(async (req) => {
         audioUrl = supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
         timingsUrl = audioUrl.replace(/\.wav$/, ".timings.json");
         const { error: updErr } = await supabase
-          .from("articles").update({ audio_url: audioUrl }).eq("id", articleId);
-        if (updErr) console.warn("[synthesize] audio_url update failed:", updErr.message);
+          .from("articles").update({ [target]: audioUrl }).eq("id", articleId);
+        if (updErr) console.warn(`[synthesize] ${target} update failed:`, updErr.message);
 
         // Background forced alignment (Sarvam STT with word timestamps) for
-        // lyrics-style highlighting. Non-blocking: response returns now, the
-        // timings file appears next to the audio ~30-90s later.
-        if (SARVAM_KEY) {
+        // lyrics-style highlighting. Non-blocking. Only for full articles —
+        // brief clips are short, so the proportional estimate is fine and we
+        // skip the extra STT cost.
+        if (SARVAM_KEY && target === "audio_url") {
           // deno-lint-ignore no-explicit-any
           (globalThis as any).EdgeRuntime?.waitUntil?.(alignAndStore({
             wavBytes,

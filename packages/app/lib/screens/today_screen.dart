@@ -327,7 +327,7 @@ class _TodayScreenState extends State<TodayScreen> {
       });
     final pick = ranked.take(_briefingCount).toList();
     if (pick.isEmpty) return;
-    PlaybackService.i.playAll(pick);
+    PlaybackService.i.playAll(pick, brief: true); // narrate the short version
     Future.delayed(const Duration(seconds: 2), _loadRecent);
   }
 

@@ -198,7 +198,7 @@ class DocumentService {
   Future<NewspaperArticle?> fetchArticleById(String id) async {
     final r = await http.get(
       Uri.parse('${ApiConfig.restUrl}/articles?id=eq.$id'
-          '&select=id,title,content_preview,full_content,section,page_number,audio_url&limit=1'),
+          '&select=id,title,content_preview,full_content,section,page_number,audio_url,summary_audio_url&limit=1'),
       headers: ApiConfig.authHeaders,
     );
     final rows = json.decode(r.body) as List<dynamic>;
@@ -212,6 +212,7 @@ class DocumentService {
       'category': m['section'] ?? 'News',
       'page': m['page_number'] ?? 1,
       'audioUrl': m['audio_url'],
+      'summaryAudioUrl': m['summary_audio_url'],
     }, imageUrl: '');
   }
 
@@ -221,7 +222,7 @@ class DocumentService {
       String newspaperId) async {
     final r = await http.get(
       Uri.parse('${ApiConfig.restUrl}/articles?newspaper_id=eq.$newspaperId'
-          '&select=id,title,content_preview,full_content,section,page_number,audio_url'
+          '&select=id,title,content_preview,full_content,section,page_number,audio_url,summary_audio_url'
           '&order=page_number,created_at'),
       headers: ApiConfig.authHeaders,
     );
@@ -237,6 +238,7 @@ class DocumentService {
         'category': m['section'] ?? 'News',
         'page': m['page_number'] ?? 1,
         'audioUrl': m['audio_url'],
+        'summaryAudioUrl': m['summary_audio_url'],
       }, imageUrl: '');
     }).toList();
     return _dedupe(all);

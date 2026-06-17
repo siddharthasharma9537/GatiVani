@@ -25,6 +25,9 @@ class PlaybackService extends ChangeNotifier {
   int index = -1;
   bool loading = false;
   String? error;
+  // When true, this session narrates the short briefing (headline + lede) and
+  // caches it separately. The lyrics view reads this to show matching text.
+  bool brief = false;
 
   NewspaperArticle? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
@@ -36,14 +39,17 @@ class PlaybackService extends ChangeNotifier {
   Duration get duration =>
       player.processingState == ProcessingState.idle ? Duration.zero : (player.duration ?? Duration.zero);
 
-  Future<void> playAll(List<NewspaperArticle> articles, {int start = 0}) async {
+  Future<void> playAll(List<NewspaperArticle> articles,
+      {int start = 0, bool brief = false}) async {
+    this.brief = brief;
     queue
       ..clear()
       ..addAll(articles);
     await _playIndex(start);
   }
 
-  Future<void> playOne(NewspaperArticle a) async {
+  Future<void> playOne(NewspaperArticle a, {bool brief = false}) async {
+    this.brief = brief;
     final at = queue.indexWhere((x) => x.id == a.id);
     if (at >= 0) return _playIndex(at);
     queue.add(a);
@@ -82,7 +88,8 @@ class PlaybackService extends ChangeNotifier {
     notifyListeners();
     try {
       final a = queue[idx];
-      var url = a.audioUrl;
+      // Briefing sessions narrate + cache the short version separately.
+      var url = brief ? a.summaryAudioUrl : a.audioUrl;
       if (url == null || !url.startsWith('http')) {
         final r = await http
             .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
@@ -91,17 +98,22 @@ class PlaybackService extends ChangeNotifier {
                   'Content-Type': 'application/json'
                 },
                 body: json.encode({
-                  'text': a.spokenText,
+                  'text': brief ? a.briefingText : a.spokenText,
                   'language': 'te-IN',
                   'articleId': a.id,
+                  if (brief) 'target': 'summary_audio_url',
                   if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
                   if (a.readingStyle.isNotEmpty) 'readingStyle': a.readingStyle,
                 }))
-            .timeout(const Duration(seconds: 120));
+            .timeout(const Duration(seconds: 150));
         final data = json.decode(r.body) as Map<String, dynamic>;
         if (data['ok'] != true) throw Exception(data['message'] ?? 'TTS failed');
         url = data['audioUrl'] as String;
-        a.audioUrl = url;
+        if (brief) {
+          a.summaryAudioUrl = url;
+        } else {
+          a.audioUrl = url;
+        }
       }
       // setUrl completes when the clip is loaded (duration available). Clear the
       // loading state THEN start playback — play()'s future only completes at

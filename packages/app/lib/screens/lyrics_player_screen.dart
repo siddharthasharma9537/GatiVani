@@ -134,9 +134,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                   child: Text('Nothing playing',
                       style: TextStyle(color: Gati.muted)));
             }
-            if (a.id != _forId) {
-              _forId = a.id;
-              _prepare(a.spokenText);
+            // In a briefing session the audio is the short version, so the
+            // lyrics must use briefingText too (key includes the mode).
+            final key = '${a.id}:${p.brief}';
+            if (key != _forId) {
+              _forId = key;
+              _prepare(p.brief ? a.briefingText : a.spokenText);
             }
             final dur = p.duration.inMilliseconds;
             // TTS clips usually open with ~0.4s of silence before the first word,
