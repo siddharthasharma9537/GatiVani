@@ -45,10 +45,12 @@ function geminiVoice(speaker: string): string {
 // Sarvam Bulbul:v3 hard limit is 500 chars; stay safely under it.
 
 const SARVAM_CHUNK_LIMIT = 450;
-// Gemini TTS handles ~1.5k chars per call in ~75s; beyond that a single call
-// is slow enough to risk the function wall-clock timeout. Chunk longer text and
-// synthesize chunks in parallel so total time ≈ one chunk, not the sum.
-const GEMINI_CHUNK_LIMIT = 1100;
+// Per-chunk size for Gemini TTS. Gemini handles ~1.5k chars per call in ~75s
+// and truncates well past that, so longer articles are split into chunks that
+// are synthesized in parallel and stitched. Parallelism only pays off if the
+// Gemini API rate limit is high enough for concurrent calls — otherwise they
+// serialize and blow the function's ~150s wall clock (→ 504).
+const GEMINI_CHUNK_LIMIT = 1450;
 
 function chunkText(text: string, limit: number = SARVAM_CHUNK_LIMIT): string[] {
   if (text.length <= limit) return [text];
@@ -209,20 +211,21 @@ async function synthesizeWithGemini(
   readingStyle?: string,
 ): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
   const voiceName = geminiVoice(speaker);
-  // Gemini TTS works best with natural content — don't inject English
-  // instructions into Telugu text. Style is handled via Sarvam pace instead.
+  // Gemini works best with natural content — don't inject English instructions
+  // into Telugu text. Style is handled via Sarvam pace instead.
   const parts = chunkText(text, GEMINI_CHUNK_LIMIT);
   console.log(
     `[gemini-tts] ${text.length} chars → ${parts.length} chunk(s), voice=${voiceName}, style=${readingStyle ?? "default"}`,
   );
 
-  // Synthesize chunks in parallel so a long article's total time ≈ one chunk
-  // (sequential would blow the function wall-clock), then stitch the PCM.
+  // Try Gemini for every article. Chunks run fully in parallel so wall time ≈
+  // one chunk (~75s), not the sum — provided the API rate limit allows real
+  // concurrency. If a chunk rejects it fails the attempt fast, leaving time for
+  // the Sarvam fallback within the function wall clock.
   const wavs = await Promise.all(
     parts.map((p) => geminiOneCall(p, voiceName, geminiKey)),
   );
   const wavBytes = concatWavBuffers(wavs);
-
   const durationSec = Math.round((wavBytes.length - 44) / (GEMINI_SAMPLE_RATE * 2));
   return { wavBytes, durationSec, chunks: parts.length };
 }
