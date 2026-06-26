@@ -5,6 +5,7 @@ import 'screens/section_screen.dart';
 import 'screens/lyrics_player_screen.dart';
 import 'screens/menu_screen.dart';
 import 'screens/auth_screen.dart';
+import 'screens/search_screen.dart';
 import 'services/edition_store.dart';
 
 /// App navigation via go_router so each screen is a real browser history entry.
@@ -16,6 +17,7 @@ final GoRouter appRouter = GoRouter(
     GoRoute(path: '/', builder: (_, __) => const TodayScreen()),
     GoRoute(path: '/player', builder: (_, __) => const LyricsPlayerScreen()),
     GoRoute(path: '/menu', builder: (_, __) => const MenuScreen()),
+    GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
     GoRoute(
       path: '/auth',
       builder: (_, state) =>
