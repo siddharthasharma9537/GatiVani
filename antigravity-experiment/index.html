@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GatiVani — Antigravity Experiment</title>
+  <!-- Google Fonts: Outfit for Display/Headings, Inter for UI/Body -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="app-container">
+    <!-- Simulated Mobile Status Bar -->
+    <div class="status-bar">
+      <span class="time">9:41</span>
+      <div class="status-icons">
+        <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 19.4c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l1.9-1.9C9.07 19.58 10.48 20 12 20c4.97 0 9-4.03 9-9s-4.03-9-9-9zm0 15c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/></svg>
+        <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+        <div class="battery"></div>
+      </div>
+    </div>
+
+    <!-- MAIN VIEWPORT (Where views swap) -->
+    <div class="viewport">
+      
+      <!-- ==================== TAB 0: TODAY (HOME) ==================== -->
+      <section id="tab-today" class="tab-view active">
+        <!-- Header -->
+        <header class="app-header">
+          <button class="header-icon-btn" id="menu-trigger-btn" title="Menu">
+            <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+          </button>
+          <h1 class="logo">GatiVani</h1>
+          <div class="header-actions">
+            <!-- Language Toggle -->
+            <div class="lang-toggle" id="lang-toggle-btn">
+              <span class="lang-option active" data-lang="en">EN</span>
+              <span class="lang-option" data-lang="te">తె</span>
+            </div>
+            <!-- Upload Trigger -->
+            <button class="upload-btn" id="upload-trigger">
+              <svg class="btn-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+              <span class="btn-text" data-en="Upload" data-te="అప్‌లోడ్">Upload</span>
+            </button>
+          </div>
+        </header>
+
+        <!-- Dynamic Masthead / Curator Card -->
+        <div class="masthead-card">
+          <div class="masthead-bg-gradient"></div>
+          <div class="masthead-content">
+            <span class="badge" data-en="TODAY'S EDITION" data-te="నేటి సంచిక">TODAY'S EDITION</span>
+            <h2 class="edition-title">ఈనాడు నల్గొండ</h2>
+            <p class="edition-meta" data-en="May 12, 2026 • 18 articles • 6 pages" data-te="మే 12, 2026 • 18 కథనాలు • 6 పేజీలు">May 12, 2026 • 18 articles • 6 pages</p>
+            <button class="play-briefing-btn" id="play-briefing">
+              <svg class="play-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+              <span data-en="Listen to briefing" data-te="సంక్షిప్తం వినండి">Listen to briefing</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Recently Played Marquee -->
+        <div class="section-label-container">
+          <h3 class="section-title" data-en="Recently played" data-te="ఇటీవల విన్నవి">Recently played</h3>
+        </div>
+        <div class="marquee-container">
+          <div class="marquee-track" id="recent-marquee">
+            <!-- Populated via JavaScript -->
+          </div>
+        </div>
+
+        <!-- Browse Section -->
+        <div class="browse-header">
+          <h3 class="section-title" data-en="Browse by section" data-te="విభాగాల వారీగా">Browse by section</h3>
+          <div class="view-toggle">
+            <button class="toggle-btn active" id="view-tiles" title="Grid View">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 11h5V5H4v6zm0 7h5v-6H4v6zm6 0h5v-6h-5v6zm6 0h5v-6h-5v6zm-6-7h5V5h-5v6zm6-6v6h5V5h-5z"/></svg>
+            </button>
+            <button class="toggle-btn" id="view-list" title="List View">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zm0-10v2h14V7H7z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Section / Article Grid (Dynamic view wrapper) -->
+        <div id="articles-container" class="grid-layout">
+          <!-- Populated via JavaScript (Grid Category Tiles or Flat Article List) -->
+        </div>
+      </section>
+
+      <!-- ==================== TAB 1: SEARCH ==================== -->
+      <section id="tab-search" class="tab-view">
+        <header class="tab-header">
+          <h2 data-en="Search" data-te="శోధన">Search</h2>
+        </header>
+        
+        <div class="search-bar-container">
+          <svg class="search-input-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          <input type="text" id="search-input" placeholder="Search articles, topics..." data-en-placeholder="Search articles, topics..." data-te-placeholder="వార్తలు, శీర్షికల కోసం వెతకండి...">
+          <button class="clear-search-btn" id="clear-search" style="display: none;">&times;</button>
+        </div>
+
+        <!-- Search Suggestion Categories (Shown when search is empty) -->
+        <div id="search-suggestions">
+          <h4 class="sub-section-title" data-en="Popular Categories" data-te="జనాదరణ పొందిన విభాగాలు">Popular Categories</h4>
+          <div class="suggestion-grid">
+            <div class="suggest-tile card-state" data-category="State">
+              <span class="label">రాష్ట్రం</span>
+              <span class="sub">State</span>
+            </div>
+            <div class="suggest-tile card-politics" data-category="Politics">
+              <span class="label">రాజకీయాలు</span>
+              <span class="sub">Politics</span>
+            </div>
+            <div class="suggest-tile card-editorial" data-category="Editorial">
+              <span class="label">సంపాదకేయం</span>
+              <span class="sub">Editorial</span>
+            </div>
+            <div class="suggest-tile card-business" data-category="Business">
+              <span class="label">వాణిజ్యం</span>
+              <span class="sub">Business</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Search Results -->
+        <div id="search-results-list" class="articles-list" style="display: none;">
+          <!-- Populated via JavaScript -->
+        </div>
+      </section>
+
+      <!-- ==================== TAB 2: LIBRARY ==================== -->
+      <section id="tab-library" class="tab-view">
+        <header class="tab-header">
+          <h2 data-en="Library" data-te="లైబ్రరీ">Library</h2>
+        </header>
+
+        <!-- Listening Stats Dashboard -->
+        <div class="stats-dashboard">
+          <div class="stat-card">
+            <span class="stat-value">4.5h</span>
+            <span class="stat-label" data-en="Listened" data-te="వినబడిన సమయం">Listened</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value">28</span>
+            <span class="stat-label" data-en="Processed" data-te="ప్రాసెస్ చేసినవి">Processed</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value">12</span>
+            <span class="stat-label" data-en="Favorites" data-te="ఇష్టమైనవి">Favorites</span>
+          </div>
+        </div>
+
+        <!-- History/Recents Section -->
+        <div class="library-section">
+          <div class="section-label-container flex-between">
+            <h3 class="section-title" data-en="History & Recents" data-te="చరిత్ర మరియు ఇటీవల విన్నవి">History & Recents</h3>
+            <button class="clear-history-btn" id="clear-history" data-en="Clear" data-te="తుడిచివేయి">Clear</button>
+          </div>
+          <div id="library-history-list" class="articles-list">
+            <!-- Populated via JavaScript -->
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ==================== PERSISTENT MINI PLAYER ==================== -->
+    <div class="mini-player" id="global-mini-player">
+      <div class="mini-player-progress-bar">
+        <div class="progress-fill" id="mini-progress-fill" style="width: 0%;"></div>
+      </div>
+      <div class="mini-player-body">
+        <div class="song-info" id="mini-player-info">
+          <p class="title" data-en="Select an article to play" data-te="వినడానికి ఒక కథనాన్ని ఎంచుకోండి">Select an article to play</p>
+          <p class="subtitle" data-en="No source" data-te="మూలాధారం లేదు">No source</p>
+        </div>
+        <div class="player-controls">
+          <button class="player-btn control-prev" id="player-prev" title="Previous">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+          </button>
+          <button class="player-btn control-play-pause" id="player-toggle" title="Play/Pause">
+            <svg class="play-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+            <svg class="pause-icon" viewBox="0 0 24 24" style="display: none;"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          </button>
+          <button class="player-btn control-next" id="player-next" title="Next">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== LYRICS / FULL PLAYER SCREEN (EXPANDABLE) ==================== -->
+    <div class="fullscreen-player" id="lyrics-player">
+      <div class="player-header">
+        <button class="dismiss-btn" id="close-player">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>
+        </button>
+        <span class="player-header-title" data-en="NOW NARRATING" data-te="ప్రస్తుతం వినిపిస్తున్నది">NOW NARRATING</span>
+        <button class="fav-btn" id="toggle-favorite">
+          <svg class="unfav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"/></svg>
+          <svg class="fav-icon" viewBox="0 0 24 24" style="display: none;"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        </button>
+      </div>
+
+      <!-- Scrollable lyrics display -->
+      <div class="lyrics-view" id="lyrics-lines-container">
+        <!-- Lines dynamically populated and highlighted -->
+      </div>
+
+      <!-- Player Controls Footer -->
+      <div class="player-footer">
+        <div class="slider-container">
+          <span class="time-elapsed" id="player-time-elapsed">0:00</span>
+          <input type="range" class="progress-slider" id="progress-slider" min="0" max="100" value="0">
+          <span class="time-total" id="player-time-total">0:00</span>
+        </div>
+
+        <div class="main-controls">
+          <button class="footer-control-btn" id="player-speed-btn">1.0x</button>
+          <button class="footer-control-btn" id="full-prev">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+          </button>
+          <button class="play-pause-circle" id="full-toggle">
+            <svg class="play-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+            <svg class="pause-icon" viewBox="0 0 24 24" style="display: none;"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          </button>
+          <button class="footer-control-btn" id="full-next">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6z"/></svg>
+          </button>
+          <!-- Speaker Suggestion Badge -->
+          <div class="speaker-pill" id="suggested-speaker">
+            <svg class="speaker-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            <span class="speaker-name">Priya</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== UPLOAD MODAL (SIMULATED) ==================== -->
+    <div class="upload-modal-overlay" id="upload-modal">
+      <div class="upload-modal-content">
+        <h3 data-en="Upload Newspaper Edition" data-te="వార్తాపత్రికను అప్‌లోడ్ చేయండి">Upload Newspaper Edition</h3>
+        <p class="modal-description" data-en="Select a newspaper scan PDF or JPEG page to run layout extraction and audio synthesis." data-te="వార్తాపత్రిక లేఅవుట్ మరియు ఆడియోను రూపొందించడానికి పిడిఎఫ్ లేదా జెపెగ్ ఫైల్ ఎంచుకోండి.">Select a newspaper scan PDF or JPEG page to run layout extraction and audio synthesis.</p>
+        
+        <div class="file-drop-zone" id="file-drop-zone">
+          <svg class="zone-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
+          <p class="zone-text" data-en="Drag & drop file here or click to browse" data-te="ఫైల్‌ను ఇక్కడ లాగి వదలండి లేదా బ్రౌజ్ చేయడానికి క్లిక్ చేయండి">Drag & drop file here or click to browse</p>
+          <span class="file-limits">PDF, JPG, PNG (Max 25MB)</span>
+          <input type="file" id="real-file-input" style="display: none;" accept="application/pdf, image/jpeg, image/png">
+        </div>
+
+        <div class="progress-container" id="upload-progress-container" style="display: none;">
+          <div class="progress-header">
+            <span id="upload-progress-text">Uploading page_6.pdf...</span>
+            <span id="upload-progress-percent">0%</span>
+          </div>
+          <div class="progress-bar-outer">
+            <div class="progress-bar-inner" id="upload-progress-inner"></div>
+          </div>
+        </div>
+
+        <div class="modal-buttons">
+          <button class="btn btn-secondary" id="close-upload-modal" data-en="Cancel" data-te="రద్దు చేయి">Cancel</button>
+          <button class="btn btn-primary" id="start-process" data-en="Start Processing" data-te="ప్రాసెస్ ప్రారంభించు" disabled>Start Processing</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== MENU / SETTINGS DRAWER ==================== -->
+    <div class="menu-drawer" id="menu-drawer">
+      <div class="player-header">
+        <button class="dismiss-btn" id="close-menu">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        </button>
+        <span class="player-header-title" data-en="MENU" data-te="మెను">MENU</span>
+        <div style="width: 44px;"></div> <!-- Spacer to align title -->
+      </div>
+      
+      <div class="menu-content">
+        <!-- Account Card -->
+        <div class="menu-account-card">
+          <div class="account-profile-row">
+            <div class="profile-avatar">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            </div>
+            <div class="profile-info">
+              <h4 class="profile-name" id="menu-profile-name" data-en="Guest User" data-te="అతిథి వినియోగదారు">Guest User</h4>
+              <p class="profile-sub" id="menu-profile-sub" data-en="Sign in to sync your library" data-te="మీ లైబ్రరీని సమకాలీకరించడానికి లాగిన్ అవ్వండి">Sign in to sync your library</p>
+            </div>
+          </div>
+          <div class="account-actions" id="menu-account-actions">
+            <button class="account-btn primary-btn" id="menu-signin-btn" data-en="Sign In" data-te="లాగిన్">Sign In</button>
+            <button class="account-btn secondary-btn" id="menu-signup-btn" data-en="Sign Up" data-te="నమోదు చేసుకోండి">Sign Up</button>
+          </div>
+        </div>
+        
+        <!-- Settings Group: Language -->
+        <div class="menu-section">
+          <h3 class="menu-section-label" data-en="Language" data-te="భాష">Language</h3>
+          <div class="menu-settings-card">
+            <div class="settings-row" id="opt-lang-en">
+              <span class="row-label">English</span>
+              <span class="check-icon" id="check-lang-en">✓</span>
+            </div>
+            <div class="line-divider"></div>
+            <div class="settings-row" id="opt-lang-te">
+              <span class="row-label">తెలుగు</span>
+              <span class="check-icon" id="check-lang-te">✓</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings Group: Theme -->
+        <div class="menu-section">
+          <h3 class="menu-section-label" data-en="Theme" data-te="థీమ్">Theme</h3>
+          <div class="menu-settings-card">
+            <div class="settings-row" id="opt-theme-dark">
+              <span class="row-label" data-en="Dark Mode" data-te="డార్క్ మోడ్">Dark Mode</span>
+              <span class="check-icon" id="check-theme-dark">✓</span>
+            </div>
+            <div class="line-divider"></div>
+            <div class="settings-row" id="opt-theme-light">
+              <span class="row-label" data-en="Light Mode" data-te="లైట్ మోడ్">Light Mode</span>
+              <span class="check-icon" id="check-theme-light">✓</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings Group: Playback Speed -->
+        <div class="menu-section">
+          <h3 class="menu-section-label" data-en="Playback Speed" data-te="ప్లేబ్యాక్ వేగం">Playback Speed</h3>
+          <div class="menu-settings-card" id="menu-speed-options">
+            <div class="settings-row" data-menu-speed="0.75">
+              <span class="row-label">0.75x</span>
+              <span class="check-icon">✓</span>
+            </div>
+            <div class="line-divider"></div>
+            <div class="settings-row" data-menu-speed="1.0">
+              <span class="row-label">1.0x (Normal)</span>
+              <span class="check-icon">✓</span>
+            </div>
+            <div class="line-divider"></div>
+            <div class="settings-row" data-menu-speed="1.25">
+              <span class="row-label">1.25x</span>
+              <span class="check-icon">✓</span>
+            </div>
+            <div class="line-divider"></div>
+            <div class="settings-row" data-menu-speed="1.5">
+              <span class="row-label">1.5x</span>
+              <span class="check-icon">✓</span>
+            </div>
+            <div class="line-divider"></div>
+            <div class="settings-row" data-menu-speed="2.0">
+              <span class="row-label">2.0x</span>
+              <span class="check-icon">✓</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- About Section -->
+        <div class="menu-about">
+          <h4 class="about-title">Gativani</h4>
+          <p class="about-version">Version 1.0.0 (Experimental Prototype)</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== BOTTOM TAB NAVIGATION BAR ==================== -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="today">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path class="icon-outline" fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+        </svg>
+        <span class="nav-label" data-en="Home" data-te="హోమ్">Home</span>
+      </button>
+      <button class="nav-item" data-tab="search">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path class="icon-outline" fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+        </svg>
+        <span class="nav-label" data-en="Search" data-te="సెర్చ్">Search</span>
+      </button>
+      <button class="nav-item" data-tab="library">
+        <svg class="nav-icon" viewBox="0 0 24 24">
+          <path class="icon-outline" fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/>
+        </svg>
+        <span class="nav-label" data-en="Library" data-te="లైబ్రరీ">Library</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

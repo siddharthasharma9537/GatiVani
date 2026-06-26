@@ -757,19 +757,30 @@ class _RecentlyPlayedMarquee extends StatefulWidget {
 class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
   final _ctrl = ScrollController();
   Timer? _timer;
+  Timer? _resume;
+  bool _userActive = false; // paused while the user drags / flings
   static const _cardW = 160.0;
   static const _gap = 10.0;
+
+  double get _setW => widget.items.length * (_cardW + _gap);
 
   @override
   void initState() {
     super.initState();
-    // Drive the scroll a few pixels per tick → a calm ~13 px/s drift.
+    // Start one set in, so there's content to scroll into on BOTH sides.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_ctrl.hasClients && _setW > 0) _ctrl.jumpTo(_setW);
+    });
+    // Drive the scroll a few pixels per tick → a calm ~13 px/s drift, unless the
+    // user is scrolling it themselves.
     _timer = Timer.periodic(const Duration(milliseconds: 30), (_) {
-      if (!_ctrl.hasClients || widget.items.isEmpty) return;
-      final setW = widget.items.length * (_cardW + _gap);
-      if (setW <= 0) return;
+      if (_userActive || !_ctrl.hasClients || _setW <= 0) return;
+      final setW = _setW;
       var next = _ctrl.offset + 0.4;
-      if (next >= setW) next -= setW; // seamless wrap within the repeated sets
+      // Keep the offset in the middle set [setW, 2*setW); the repeated content
+      // makes the wrap seamless and leaves a set on each side to drag into.
+      while (next >= 2 * setW) next -= setW;
+      while (next < setW) next += setW;
       _ctrl.jumpTo(next);
     });
   }
@@ -777,6 +788,7 @@ class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
   @override
   void dispose() {
     _timer?.cancel();
+    _resume?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
@@ -786,21 +798,39 @@ class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
     final p = GatiPalette.of(context);
     final n = widget.items.length;
     if (n == 0) return const SizedBox.shrink();
-    final reps = n <= 2 ? 4 : 3; // enough repeats to always fill + loop
+    // ≥3 sets so the middle-set drift always has a set to scroll into either way.
+    final reps = n <= 3 ? 5 : 3;
     return SizedBox(
       height: 96,
-      child: ListView.builder(
-        controller: _ctrl,
-        scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: n * reps,
-        itemBuilder: (_, i) {
-          final m = widget.items[i % n];
-          return Padding(
-            padding: const EdgeInsets.only(right: _gap),
-            child: _card(p, m),
-          );
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notif) {
+          // Pause the auto-drift while the user is dragging, and keep it paused
+          // through any fling until the scroll settles.
+          if (notif is ScrollStartNotification &&
+              notif.dragDetails != null) {
+            _userActive = true;
+            _resume?.cancel();
+          } else if (notif is ScrollEndNotification) {
+            _resume?.cancel();
+            _resume = Timer(const Duration(milliseconds: 1200),
+                () => _userActive = false);
+          }
+          return false;
         },
+        child: ListView.builder(
+          controller: _ctrl,
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics()),
+          itemCount: n * reps,
+          itemBuilder: (_, i) {
+            final m = widget.items[i % n];
+            return Padding(
+              padding: const EdgeInsets.only(right: _gap),
+              child: _card(p, m),
+            );
+          },
+        ),
       ),
     );
   }
