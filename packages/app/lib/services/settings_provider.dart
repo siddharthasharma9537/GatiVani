@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// App-wide user settings, persisted as JSON to ApplicationDocumentsDirectory.
 /// On web, settings are kept in-memory only.
@@ -90,39 +90,28 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   // ── Persistence ──────────────────────────────────────────────────────────────
-  static const _filename = 'gativani_settings.json';
-
+  // SharedPreferences is cross-platform: localStorage on web, native key-value
+  // store on iOS/Android — so settings persist everywhere with one code path
+  // (web used to be in-memory only, which reset theme/language every reload).
   Future<void> load() async {
-    if (!kIsWeb) {
-      try {
-        final dir = await getApplicationDocumentsDirectory();
-        final file = File('${dir.path}/$_filename');
-        if (await file.exists()) {
-          final json =
-              jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-          _defaultVoice = json['defaultVoice'] as String? ?? _defaultVoice;
-          _themeMode = _themeFromString(json['themeMode'] as String?);
-          _playbackSpeed =
-              (json['playbackSpeed'] as num?)?.toDouble() ?? _playbackSpeed;
-          _lang = json['lang'] as String? ?? _lang;
-        }
-      } catch (_) {}
-    }
-    // Arm the day/night flip for the resolved mode (also runs on web).
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _defaultVoice = prefs.getString('defaultVoice') ?? _defaultVoice;
+      _themeMode = _themeFromString(prefs.getString('themeMode'));
+      _playbackSpeed = prefs.getDouble('playbackSpeed') ?? _playbackSpeed;
+      _lang = prefs.getString('lang') ?? _lang;
+    } catch (_) {}
+    // Arm the day/night flip for the resolved mode.
     _scheduleDaylightFlip();
   }
 
   Future<void> _save() async {
-    if (kIsWeb) return;
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$_filename');
-      await file.writeAsString(jsonEncode({
-        'defaultVoice': _defaultVoice,
-        'themeMode': _themeToString(_themeMode),
-        'playbackSpeed': _playbackSpeed,
-        'lang': _lang,
-      }));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('defaultVoice', _defaultVoice);
+      await prefs.setString('themeMode', _themeToString(_themeMode));
+      await prefs.setDouble('playbackSpeed', _playbackSpeed);
+      await prefs.setString('lang', _lang);
     } catch (_) {}
   }
 
