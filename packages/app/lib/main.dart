@@ -27,8 +27,10 @@ class GatiVaniApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // effectiveThemeMode resolves the "Auto" (system) choice to light/dark by
+    // time of day, so the app re-themes when the daylight boundary passes.
     final themeMode = context.select<SettingsProvider, ThemeMode>(
-      (s) => s.themeMode,
+      (s) => s.effectiveThemeMode,
     );
     return MaterialApp.router(
       title: "Gativani",

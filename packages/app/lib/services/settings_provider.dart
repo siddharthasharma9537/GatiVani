@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -22,6 +23,40 @@ class SettingsProvider extends ChangeNotifier {
   String get lang => _lang;
   bool get isTelugu => _lang == 'te';
 
+  // ── "Auto" theme: light by day, dark at night ──────────────────────────────
+  // ThemeMode.system is repurposed as a daylight-driven auto mode (a fixed local
+  // clock window, no location needed): light during the day, dark after.
+  static const int _dayStartHour = 6; // 6:00 → switch to light
+  static const int _dayEndHour = 18; // 18:00 → switch to dark
+  Timer? _daylightTimer;
+
+  bool get isDaylightNow {
+    final h = DateTime.now().hour;
+    return h >= _dayStartHour && h < _dayEndHour;
+  }
+
+  /// What the app should actually render. In auto (system) mode this resolves to
+  /// light/dark by time of day; otherwise it's the explicit choice.
+  ThemeMode get effectiveThemeMode => _themeMode == ThemeMode.system
+      ? (isDaylightNow ? ThemeMode.light : ThemeMode.dark)
+      : _themeMode;
+
+  // Flip the theme live when the day/night boundary passes (no app restart).
+  void _scheduleDaylightFlip() {
+    _daylightTimer?.cancel();
+    if (_themeMode != ThemeMode.system) return;
+    final now = DateTime.now();
+    final next = [
+      DateTime(now.year, now.month, now.day, _dayStartHour),
+      DateTime(now.year, now.month, now.day, _dayEndHour),
+      DateTime(now.year, now.month, now.day + 1, _dayStartHour),
+    ].firstWhere((d) => d.isAfter(now));
+    _daylightTimer = Timer(next.difference(now), () {
+      notifyListeners();
+      _scheduleDaylightFlip();
+    });
+  }
+
   // ── Setters ─────────────────────────────────────────────────────────────────
   void setLanguage(String l) {
     if (_lang == l || (l != 'en' && l != 'te')) return;
@@ -42,6 +77,7 @@ class SettingsProvider extends ChangeNotifier {
   void setThemeMode(ThemeMode m) {
     if (_themeMode == m) return;
     _themeMode = m;
+    _scheduleDaylightFlip(); // (re)arm or cancel the day/night flip
     notifyListeners();
     _save();
   }
@@ -57,17 +93,23 @@ class SettingsProvider extends ChangeNotifier {
   static const _filename = 'gativani_settings.json';
 
   Future<void> load() async {
-    if (kIsWeb) return;
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$_filename');
-      if (!await file.exists()) return;
-      final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      _defaultVoice = json['defaultVoice'] as String? ?? _defaultVoice;
-      _themeMode = _themeFromString(json['themeMode'] as String?);
-      _playbackSpeed = (json['playbackSpeed'] as num?)?.toDouble() ?? _playbackSpeed;
-      _lang = json['lang'] as String? ?? _lang;
-    } catch (_) {}
+    if (!kIsWeb) {
+      try {
+        final dir = await getApplicationDocumentsDirectory();
+        final file = File('${dir.path}/$_filename');
+        if (await file.exists()) {
+          final json =
+              jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+          _defaultVoice = json['defaultVoice'] as String? ?? _defaultVoice;
+          _themeMode = _themeFromString(json['themeMode'] as String?);
+          _playbackSpeed =
+              (json['playbackSpeed'] as num?)?.toDouble() ?? _playbackSpeed;
+          _lang = json['lang'] as String? ?? _lang;
+        }
+      } catch (_) {}
+    }
+    // Arm the day/night flip for the resolved mode (also runs on web).
+    _scheduleDaylightFlip();
   }
 
   Future<void> _save() async {

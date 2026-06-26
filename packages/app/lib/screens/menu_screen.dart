@@ -116,7 +116,8 @@ class MenuScreen extends StatelessWidget {
             _card(p, Column(children: [
               _choiceRow(p, tr(lang, 'theme_system'),
                   s.themeMode == ThemeMode.system,
-                  () => s.setThemeMode(ThemeMode.system)),
+                  () => s.setThemeMode(ThemeMode.system),
+                  subtitle: tr(lang, 'theme_auto_sub')),
               Divider(height: 1, color: p.line),
               _choiceRow(p, tr(lang, 'theme_light'),
                   s.themeMode == ThemeMode.light,
@@ -185,15 +186,27 @@ class MenuScreen extends StatelessWidget {
       );
 
   Widget _choiceRow(GatiPalette p, String label, bool selected,
-          VoidCallback onTap) =>
+          VoidCallback onTap,
+          {String? subtitle}) =>
       InkWell(
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(children: [
             Expanded(
-                child: Text(label,
-                    style: TextStyle(fontSize: 14.5, color: p.ink))),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: TextStyle(fontSize: 14.5, color: p.ink)),
+                  if (subtitle != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(subtitle,
+                          style: TextStyle(fontSize: 12, color: p.muted)),
+                    ),
+                ],
+              ),
+            ),
             if (selected)
               const Icon(Icons.check_rounded, color: kAccent, size: 20),
           ]),
