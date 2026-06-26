@@ -5,11 +5,25 @@ import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import '../config/api_config.dart';
 import '../models/newspaper_article.dart';
+import 'media_session_stub.dart'
+    if (dart.library.html) 'media_session_web.dart';
 
 /// App-wide singleton: queue + audio, so playback survives navigation.
 /// Bind UI with ListenableBuilder on PlaybackService.i.
 class PlaybackService extends ChangeNotifier {
   PlaybackService._() {
+    // OS lock-screen / headphone media controls (web Media Session API).
+    initMediaSession(
+      onPlay: () => player.play(),
+      onPause: () {
+        player.pause();
+        _saveProgress();
+      },
+      onNext: next,
+      onPrev: previous,
+      onSeekForward: () => seek(position + const Duration(seconds: 15)),
+      onSeekBackward: () => seek(position - const Duration(seconds: 15)),
+    );
     player.playerStateStream.listen((s) {
       // Auto-advance only on a GENUINE end-of-track. just_audio also emits
       // `completed` transiently while a new url loads and (on web) can emit it
@@ -34,6 +48,7 @@ class PlaybackService extends ChangeNotifier {
           }
         }
       }
+      _updateMedia();
       notifyListeners();
     });
     player.positionStream.listen((pos) {
@@ -161,6 +176,17 @@ class PlaybackService extends ChangeNotifier {
     _sleepAtTrackEnd = false;
   }
 
+  // Push current track + state to the OS media controls.
+  void _updateMedia() {
+    final a = current;
+    if (a == null) return;
+    updateMediaSession(
+      title: a.title,
+      artist: '${a.category} · Gativani',
+      playing: player.playing,
+    );
+  }
+
   void seek(Duration d) => player.seek(d);
   void setSpeed(double s) => player.setSpeed(s);
 
@@ -250,6 +276,7 @@ class PlaybackService extends ChangeNotifier {
       loading = false;
       notifyListeners();
       unawaited(player.play());
+      _updateMedia(); // push now-playing to the lock screen
     } catch (e) {
       if (epoch != _playEpoch) return;
       error = e.toString();
