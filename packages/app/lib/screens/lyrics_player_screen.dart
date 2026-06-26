@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../services/playback_service.dart';
 import '../design/tokens.dart';
 import '../widgets/assistant_sheet.dart';
@@ -167,7 +168,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                   onNotification: (n) {
                     if (n.metrics.pixels < -90 && !_dismissing) {
                       _dismissing = true;
-                      Navigator.maybePop(context);
+                      if (context.canPop()) context.pop();
                     }
                     return false;
                   },
@@ -248,7 +249,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
       child: Row(children: [
         IconButton(
           icon: const Icon(Icons.keyboard_arrow_down, color: Gati.onInkMuted),
-          onPressed: () => Navigator.maybePop(context),
+          onPressed: () => context.pop(),
         ),
         Expanded(
           child: Text('${a.category} · p${a.page}',

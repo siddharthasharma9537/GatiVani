@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/api_config.dart';
@@ -123,7 +124,7 @@ class _AuthScreenState extends State<AuthScreen> {
             const SizedBox(height: 8),
             Center(
               child: TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => context.pop(),
                 child: Text(tr(lang, 'continue_guest'),
                     style: TextStyle(fontSize: 13, color: p.muted)),
               ),

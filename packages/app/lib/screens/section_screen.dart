@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
@@ -6,7 +7,6 @@ import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/article_card.dart';
 import '../widgets/mini_player.dart';
-import 'lyrics_player_screen.dart';
 
 /// A single section's article list, reached by tapping a section tile on the
 /// home grid. Same split tap as the home list: tap the text → full player,
@@ -18,10 +18,7 @@ class SectionScreen extends StatelessWidget {
   final String section;
   final List<NewspaperArticle> articles;
 
-  void _openPlayer(BuildContext context) {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const LyricsPlayerScreen()));
-  }
+  void _openPlayer(BuildContext context) => context.push('/player');
 
   void _play(BuildContext context, NewspaperArticle a) {
     _openPlayer(context);

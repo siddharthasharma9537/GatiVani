@@ -1,14 +1,16 @@
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
-import "screens/today_screen.dart";
-import "screens/home_screen.dart";
 import "design/app_theme.dart";
+import "router.dart";
 import "services/settings_provider.dart";
 import "ssl_override_stub.dart"
     if (dart.library.io) "ssl_override_io.dart";
+import "url_strategy_stub.dart"
+    if (dart.library.html) "url_strategy_web.dart";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  useCleanUrls(); // path URL strategy on web so the browser Back button works
   installSslOverride();
   final settings = SettingsProvider();
   await settings.load();
@@ -28,18 +30,13 @@ class GatiVaniApp extends StatelessWidget {
     final themeMode = context.select<SettingsProvider, ThemeMode>(
       (s) => s.themeMode,
     );
-    return MaterialApp(
+    return MaterialApp.router(
       title: "Gativani",
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,
-      home: const TodayScreen(),
-      routes: {
-        '/article-list': (context) {
-          return const HomeScreen();
-        },
-      },
+      routerConfig: appRouter,
     );
   }
 }

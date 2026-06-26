@@ -2,21 +2,20 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../config/api_config.dart';
 import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
+import '../services/edition_store.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../design/section_colors.dart';
 import '../widgets/article_card.dart';
 import '../widgets/edition_masthead.dart';
 import '../widgets/mini_player.dart';
-import 'lyrics_player_screen.dart';
-import 'menu_screen.dart';
-import 'section_screen.dart';
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -56,6 +55,7 @@ class _TodayScreenState extends State<TodayScreen> {
   Future<void> _loadFeatured() async {
     final ed = await _svc.fetchFeaturedEdition();
     if (ed == null || !mounted || _job != null || _articles.isNotEmpty) return;
+    EditionStore.i.articles = ed.articles;
     setState(() {
       _articles = ed.articles;
       _editionTitle = ed.title;
@@ -158,10 +158,7 @@ class _TodayScreenState extends State<TodayScreen> {
     return i < 0 ? _sectionOrder.length : i;
   }
 
-  void _openPlayer() {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const LyricsPlayerScreen()));
-  }
+  void _openPlayer() => context.push('/player');
 
   Widget _chip(String label, bool selected, VoidCallback onTap) {
     final p = GatiPalette.of(context);
@@ -213,10 +210,7 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
-  void _openMenu() {
-    Navigator.push(
-        context, MaterialPageRoute(builder: (_) => const MenuScreen()));
-  }
+  void _openMenu() => context.push('/menu');
 
   // List ⇄ tiles toggle, like Google Drive/Files.
   Widget _viewBtn(IconData icon, String view) {
@@ -237,12 +231,11 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
-  // Drill down: tapping a section tile opens that section's article list.
-  void _openSection(String section, List<NewspaperArticle> arts) {
-    Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => SectionScreen(section: section, articles: arts)));
+  // Drill down: tapping a section tile opens that section's article list. The
+  // section name goes in the URL so the browser Back button can return here;
+  // the articles are resolved from EditionStore (extra isn't back-safe).
+  void _openSection(String section) {
+    context.push('/section/${Uri.encodeComponent(section)}');
   }
 
   // A colored section tile: tap the body → open the section; tap the ▶ → play
@@ -251,7 +244,7 @@ class _TodayScreenState extends State<TodayScreen> {
     final lang = context.watch<SettingsProvider>().lang;
     final r = sectionRamp(section, dark: GatiPalette.of(context).dark);
     return GestureDetector(
-      onTap: () => _openSection(section, arts),
+      onTap: () => _openSection(section),
       child: Container(
         decoration: BoxDecoration(
             color: r[0], borderRadius: BorderRadius.circular(14)),
@@ -337,6 +330,7 @@ class _TodayScreenState extends State<TodayScreen> {
     try {
       final st = await _svc.pollEdition(job.jobId);
       final arts = await _svc.fetchEditionArticles(job.newspaperId);
+      EditionStore.i.articles = arts;
       setState(() {
         _jobStatus = st;
         _articles = arts;

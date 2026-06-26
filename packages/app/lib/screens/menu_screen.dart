@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../services/settings_provider.dart';
-import 'auth_screen.dart';
 
 /// The menu / account hub: account (guest + sign in / sign up scaffolding),
 /// language, theme, playback and about. Reachable from the home header.
@@ -161,8 +161,7 @@ class MenuScreen extends StatelessWidget {
   }
 
   void _openAuth(BuildContext context, {required bool signUp}) {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => AuthScreen(signUp: signUp)));
+    context.push('/auth', extra: signUp);
   }
 
   Widget _sectionLabel(GatiPalette p, String text) => Padding(
