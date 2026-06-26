@@ -73,7 +73,8 @@ class _TodayScreenState extends State<TodayScreen> {
     try {
       final r = await http.get(
         Uri.parse('${ApiConfig.restUrl}/recent_plays'
-            '?select=article_id,title,category&order=played_at.desc&limit=20'),
+            '?select=article_id,title,category,position_seconds,duration_seconds,completed'
+            '&order=played_at.desc&limit=20'),
         headers: ApiConfig.authHeaders,
       );
       final rows = (json.decode(r.body) as List).cast<Map<String, dynamic>>();
@@ -301,11 +302,16 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
-  Future<void> _playRecent(String id) async {
+  // Tapping a recently-played tile: resume a partially-heard article at its
+  // saved spot, or replay a finished one from the top.
+  Future<void> _playRecent(Map<String, dynamic> m) async {
     _openPlayer();
-    final a = await _svc.fetchArticleById(id);
+    final a = await _svc.fetchArticleById(m['article_id'] as String);
     if (a == null) return;
-    PlaybackService.i.playOne(a);
+    final done = m['completed'] as bool? ?? false;
+    final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
+    PlaybackService.i.playOne(a,
+        resumeAt: done ? Duration.zero : Duration(seconds: pos));
   }
 
   // "Listen to briefing": a curated handful — top editorial sections first —
@@ -610,7 +616,7 @@ class _TodayScreenState extends State<TodayScreen> {
                   _RecentlyPlayedMarquee(
                     items: _recent,
                     lang: lang,
-                    onTap: (id) => _playRecent(id),
+                    onTap: _playRecent,
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -743,7 +749,7 @@ class _RecentlyPlayedMarquee extends StatefulWidget {
       {required this.items, required this.lang, required this.onTap});
   final List<Map<String, dynamic>> items;
   final String lang;
-  final void Function(String id) onTap;
+  final void Function(Map<String, dynamic> item) onTap;
   @override
   State<_RecentlyPlayedMarquee> createState() => _RecentlyPlayedMarqueeState();
 }
@@ -831,8 +837,32 @@ class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
 
   Widget _card(GatiPalette p, Map<String, dynamic> m) {
     final c = sectionLabel(m['category'] as String? ?? 'News', widget.lang);
+    final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
+    final dur = (m['duration_seconds'] as num?)?.toInt() ?? 0;
+    final completed = m['completed'] as bool? ?? false;
+    final started = !completed && pos > 0 && dur > 0;
+    final frac = completed ? 1.0 : (dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0);
+
+    // Action label + length: Replay (finished) / Resume · N left (partial) / Play.
+    final IconData icon;
+    final String label;
+    final String? meta;
+    if (completed) {
+      icon = Icons.refresh_rounded;
+      label = tr(widget.lang, 'replay');
+      meta = dur > 0 ? '${(dur / 60).ceil()} ${tr(widget.lang, 'min')}' : null;
+    } else if (started) {
+      icon = Icons.play_arrow_rounded;
+      label = tr(widget.lang, 'resume');
+      meta = '${((dur - pos) / 60).ceil()} ${tr(widget.lang, 'min_left')}';
+    } else {
+      icon = Icons.play_arrow_rounded;
+      label = tr(widget.lang, 'play');
+      meta = dur > 0 ? '${(dur / 60).ceil()} ${tr(widget.lang, 'min')}' : null;
+    }
+
     return GestureDetector(
-      onTap: () => widget.onTap(m['article_id'] as String),
+      onTap: () => widget.onTap(m),
       child: Container(
         width: _cardW,
         padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
@@ -856,11 +886,35 @@ class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 13, height: 1.3, color: p.ink)),
             ),
+            if (dur > 0) ...[
+              const SizedBox(height: 7),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                    value: frac,
+                    minHeight: 3,
+                    backgroundColor: p.line,
+                    color: completed ? p.muted : kAccent),
+              ),
+            ],
+            const SizedBox(height: 6),
             Row(children: [
-              const Icon(Icons.play_circle_fill, color: kAccent, size: 18),
-              const SizedBox(width: 4),
-              Text(tr(widget.lang, 'play'),
-                  style: TextStyle(fontSize: 11.5, color: p.muted)),
+              Icon(icon, color: completed ? p.muted : kAccent, size: 17),
+              const SizedBox(width: 3),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                      color: started ? p.ink : p.muted)),
+              if (meta != null) ...[
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text('· $meta',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11.5, color: p.muted)),
+                ),
+              ],
             ]),
           ],
         ),
