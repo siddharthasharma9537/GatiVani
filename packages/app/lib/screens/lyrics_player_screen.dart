@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
+import '../l10n/strings.dart';
 import '../services/playback_service.dart';
+import '../services/settings_provider.dart';
 import '../design/tokens.dart';
 import '../widgets/assistant_sheet.dart';
 
@@ -243,6 +246,55 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
     );
   }
 
+  void _openSleepSheet(BuildContext context) {
+    final lang = context.read<SettingsProvider>().lang;
+    final p = PlaybackService.i;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Gati.ink,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) {
+        Widget row(String label, VoidCallback onTap, {bool selected = false}) =>
+            ListTile(
+              title: Text(label,
+                  style: TextStyle(
+                      color: selected ? Gati.accent : Gati.onInk,
+                      fontSize: 15)),
+              trailing: selected
+                  ? const Icon(Icons.check_rounded, color: Gati.accent, size: 20)
+                  : null,
+              onTap: () {
+                onTap();
+                Navigator.pop(ctx);
+              },
+            );
+        return SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(tr(lang, 'sleep_timer'),
+                    style: const TextStyle(
+                        color: Gati.onInkMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500)),
+              ),
+            ),
+            row(tr(lang, 'sleep_off'), p.cancelSleep, selected: !p.sleepActive),
+            for (final m in [15, 30, 45, 60])
+              row('$m ${tr(lang, 'min')}',
+                  () => p.setSleepTimer(Duration(minutes: m))),
+            row(tr(lang, 'sleep_end'), p.setSleepAtTrackEnd,
+                selected: p.sleepAtTrackEnd),
+            const SizedBox(height: 8),
+          ]),
+        );
+      },
+    );
+  }
+
   Widget _header(BuildContext context, dynamic a) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 12, 4),
@@ -255,6 +307,18 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
           child: Text('${a.category} · p${a.page}',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Gati.onInkMuted, fontSize: 12)),
+        ),
+        IconButton(
+          icon: Icon(
+              PlaybackService.i.sleepActive
+                  ? Icons.bedtime
+                  : Icons.bedtime_outlined,
+              color: PlaybackService.i.sleepActive
+                  ? Gati.accent
+                  : Gati.onInkMuted,
+              size: 20),
+          tooltip: 'Sleep timer',
+          onPressed: () => _openSleepSheet(context),
         ),
         IconButton(
           icon: const Icon(Icons.auto_awesome, color: Gati.accent, size: 20),

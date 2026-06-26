@@ -26,8 +26,12 @@ class PlaybackService extends ChangeNotifier {
             pos.inMilliseconds >= dur.inMilliseconds - 800;
         if (reachedEnd) {
           _saveProgress(completed: true); // mark this one finished → "Replay"
-          _advancing = true;
-          next().whenComplete(() => _advancing = false);
+          if (_sleepAtTrackEnd) {
+            _clearSleep(); // stop here per the sleep timer
+          } else {
+            _advancing = true;
+            next().whenComplete(() => _advancing = false);
+          }
         }
       }
       notifyListeners();
@@ -62,6 +66,10 @@ class PlaybackService extends ChangeNotifier {
   // how recently progress was persisted.
   Duration? _pendingSeek;
   int _lastSaveSec = -999;
+  // Sleep timer: pause after a duration, or at the end of the current article.
+  Timer? _sleepTimer;
+  DateTime? _sleepAt;
+  bool _sleepAtTrackEnd = false;
 
   NewspaperArticle? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
@@ -112,6 +120,45 @@ class PlaybackService extends ChangeNotifier {
     } else {
       player.play();
     }
+  }
+
+  // ── Sleep timer ─────────────────────────────────────────────────────────────
+  bool get sleepActive => _sleepTimer != null || _sleepAtTrackEnd;
+  bool get sleepAtTrackEnd => _sleepAtTrackEnd;
+  Duration? get sleepRemaining =>
+      _sleepAt == null ? null : _sleepAt!.difference(DateTime.now());
+
+  /// Pause after [d]. Pass null to cancel.
+  void setSleepTimer(Duration? d) {
+    _clearSleep();
+    if (d != null) {
+      _sleepAt = DateTime.now().add(d);
+      _sleepTimer = Timer(d, () {
+        player.pause();
+        _saveProgress();
+        _clearSleep();
+      });
+    }
+    notifyListeners();
+  }
+
+  /// Stop at the end of the current article instead of after a fixed time.
+  void setSleepAtTrackEnd() {
+    _clearSleep();
+    _sleepAtTrackEnd = true;
+    notifyListeners();
+  }
+
+  void cancelSleep() {
+    _clearSleep();
+    notifyListeners();
+  }
+
+  void _clearSleep() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepAt = null;
+    _sleepAtTrackEnd = false;
   }
 
   void seek(Duration d) => player.seek(d);
