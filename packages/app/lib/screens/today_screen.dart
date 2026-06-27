@@ -33,6 +33,9 @@ class _TodayScreenState extends State<TodayScreen> {
   int? _pageSel;
   String _lens = 'section'; // 'section' | 'page'
   String _view = 'tiles'; // 'tiles' | 'list'
+  // Multi-select (list view): batch articles into the Up Next queue.
+  bool _selectMode = false;
+  final Set<String> _selected = {};
   EditionJob? _job;
   EditionJobStatus? _jobStatus;
   Timer? _poll;
@@ -328,6 +331,155 @@ class _TodayScreenState extends State<TodayScreen> {
     if (pick.isEmpty) return;
     PlaybackService.i.playAll(pick, brief: true); // narrate the short version
     Future.delayed(const Duration(seconds: 2), _loadRecent);
+  }
+
+  // ── Multi-select → Up Next queue ───────────────────────────────────────────
+  void _toggleSelect(String id) => setState(() {
+        if (!_selected.remove(id)) _selected.add(id);
+      });
+
+  void _exitSelect() => setState(() {
+        _selectMode = false;
+        _selected.clear();
+      });
+
+  void _toast(String lang, String key) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(tr(lang, key)), duration: const Duration(seconds: 2)));
+  }
+
+  Widget _selectionBar(
+      GatiPalette p, String lang, List<NewspaperArticle> visible) {
+    final picked = visible.where((a) => _selected.contains(a.id)).toList();
+    final n = picked.length;
+    return Material(
+      color: p.surface,
+      elevation: 8,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 8, 10, 8),
+          child: Row(children: [
+            Text('$n ${tr(lang, 'selected_count')}',
+                style: TextStyle(
+                    color: p.ink, fontSize: 13, fontWeight: FontWeight.w500)),
+            const Spacer(),
+            TextButton(
+              onPressed: n == 0
+                  ? null
+                  : () {
+                      PlaybackService.i.playNext(picked);
+                      _exitSelect();
+                      _toast(lang, 'added_play_next');
+                    },
+              child: Text(tr(lang, 'play_next'),
+                  style: const TextStyle(color: kAccent)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: kAccent, foregroundColor: kPaper),
+              onPressed: n == 0
+                  ? null
+                  : () {
+                      PlaybackService.i.addToQueue(picked);
+                      _exitSelect();
+                      _toast(lang, 'added_queue');
+                    },
+              child: Text(tr(lang, 'add_to_queue')),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ── Long-press → per-article options ───────────────────────────────────────
+  void _showArticleSheet(NewspaperArticle a) {
+    final lang = context.read<SettingsProvider>().lang;
+    final p = GatiPalette.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: p.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) {
+        Widget item(IconData icon, String label, VoidCallback onTap) =>
+            ListTile(
+              leading: Icon(icon, color: p.ink, size: 22),
+              title:
+                  Text(label, style: TextStyle(color: p.ink, fontSize: 15)),
+              onTap: () {
+                Navigator.pop(ctx);
+                onTap();
+              },
+            );
+        return SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(a.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: p.ink,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500)),
+              ),
+            ),
+            item(Icons.play_arrow_rounded, tr(lang, 'play_now'),
+                () => _play(a)),
+            item(Icons.queue_play_next_rounded, tr(lang, 'play_next'), () {
+              PlaybackService.i.playNext([a]);
+              _toast(lang, 'added_play_next');
+            }),
+            item(Icons.playlist_add_rounded, tr(lang, 'add_to_queue'), () {
+              PlaybackService.i.addToQueue([a]);
+              _toast(lang, 'added_queue');
+            }),
+            item(Icons.download_rounded, tr(lang, 'download'),
+                () => _download(a)),
+            const SizedBox(height: 8),
+          ]),
+        );
+      },
+    );
+  }
+
+  // Download = pre-generate the full audio so it's cached and instant to play
+  // later. (True offline-bytes storage is a follow-up.)
+  Future<void> _download(NewspaperArticle a) async {
+    final lang = context.read<SettingsProvider>().lang;
+    if (a.audioUrl != null && a.audioUrl!.startsWith('http')) {
+      _toast(lang, 'downloaded');
+      return;
+    }
+    _toast(lang, 'downloading');
+    try {
+      final r = await http
+          .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
+              headers: {
+                ...ApiConfig.authHeaders,
+                'Content-Type': 'application/json'
+              },
+              body: json.encode({
+                'text': a.spokenText,
+                'language': 'te-IN',
+                'articleId': a.id,
+              }))
+          .timeout(const Duration(seconds: 150));
+      final data = json.decode(r.body) as Map<String, dynamic>;
+      if (data['ok'] == true) {
+        a.audioUrl = data['audioUrl'] as String?;
+        _toast(lang, 'downloaded');
+      } else {
+        _toast(lang, 'download_failed');
+      }
+    } catch (_) {
+      _toast(lang, 'download_failed');
+    }
   }
 
   Future<void> _refresh() async {
@@ -650,16 +802,38 @@ class _TodayScreenState extends State<TodayScreen> {
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
                                 color: p.ink)),
-                        Container(
-                          padding: const EdgeInsets.all(3),
-                          decoration: BoxDecoration(
-                              color: p.chip,
-                              borderRadius: BorderRadius.circular(9)),
-                          child: Row(children: [
-                            _viewBtn(Icons.view_list_rounded, 'list'),
-                            _viewBtn(Icons.grid_view_rounded, 'tiles'),
-                          ]),
-                        ),
+                        Row(mainAxisSize: MainAxisSize.min, children: [
+                          if (_view == 'list')
+                            GestureDetector(
+                              onTap: () => setState(() {
+                                _selectMode = !_selectMode;
+                                if (!_selectMode) _selected.clear();
+                              }),
+                              child: Container(
+                                width: 32,
+                                height: 28,
+                                alignment: Alignment.center,
+                                margin: const EdgeInsets.only(right: 8),
+                                decoration: BoxDecoration(
+                                    color:
+                                        _selectMode ? kAccent : p.chip,
+                                    borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.checklist_rounded,
+                                    size: 17,
+                                    color: _selectMode ? kPaper : p.muted),
+                              ),
+                            ),
+                          Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                                color: p.chip,
+                                borderRadius: BorderRadius.circular(9)),
+                            child: Row(children: [
+                              _viewBtn(Icons.view_list_rounded, 'list'),
+                              _viewBtn(Icons.grid_view_rounded, 'tiles'),
+                            ]),
+                          ),
+                        ]),
                       ],
                     ),
                   ),
@@ -743,11 +917,16 @@ class _TodayScreenState extends State<TodayScreen> {
                       article: a,
                       onOpen: () => _play(a), // open the full player with text
                       onPlay: () => _playInline(a), // play in place
+                      onLongPress: () => _showArticleSheet(a),
+                      selectionMode: _selectMode,
+                      selected: _selected.contains(a.id),
+                      onToggleSelect: () => _toggleSelect(a.id),
                     ),
                 ],
               ],
             ),
           ),
+          if (_selectMode) _selectionBar(p, lang, visible),
           MiniPlayer(onExpand: _openPlayer),
         ]),
       ),

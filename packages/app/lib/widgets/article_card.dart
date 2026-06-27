@@ -14,10 +14,20 @@ class ArticleCard extends StatelessWidget {
       {super.key,
       required this.article,
       required this.onOpen,
-      required this.onPlay});
+      required this.onPlay,
+      this.onLongPress,
+      this.selectionMode = false,
+      this.selected = false,
+      this.onToggleSelect});
   final NewspaperArticle article;
   final VoidCallback onOpen;
   final VoidCallback onPlay;
+  // Long-press → options sheet (play next, queue, save, download).
+  final VoidCallback? onLongPress;
+  // Multi-select mode: tapping the card toggles selection; the ▶ becomes a tick.
+  final bool selectionMode;
+  final bool selected;
+  final VoidCallback? onToggleSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -30,13 +40,18 @@ class ArticleCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: r[0],
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: r[1].withValues(alpha: 0.07)),
+          border: Border.all(
+              color: selected
+                  ? const Color(0xFF1D9E75)
+                  : r[1].withValues(alpha: 0.07),
+              width: selected ? 1.5 : 1),
         ),
         clipBehavior: Clip.antiAlias,
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: onOpen,
+            onTap: selectionMode ? onToggleSelect : onOpen,
+            onLongPress: onLongPress,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
               child: Row(children: [
@@ -62,17 +77,41 @@ class ArticleCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                GestureDetector(
-                  onTap: onPlay,
-                  child: Container(
-                    width: 36,
-                    height: 36,
+                if (selectionMode)
+                  // Selection tick: green check when selected, empty ring else.
+                  Container(
+                    width: 30,
+                    height: 30,
                     alignment: Alignment.center,
-                    decoration: const BoxDecoration(
-                        color: kAccent, shape: BoxShape.circle),
-                    child: const Icon(Icons.play_arrow, color: kPaper, size: 20),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: selected
+                          ? const Color(0xFF1D9E75)
+                          : Colors.transparent,
+                      border: Border.all(
+                          color: selected
+                              ? const Color(0xFF1D9E75)
+                              : r[2],
+                          width: 1.5),
+                    ),
+                    child: selected
+                        ? const Icon(Icons.check_rounded,
+                            color: Colors.white, size: 18)
+                        : null,
+                  )
+                else
+                  GestureDetector(
+                    onTap: onPlay,
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                          color: kAccent, shape: BoxShape.circle),
+                      child:
+                          const Icon(Icons.play_arrow, color: kPaper, size: 20),
+                    ),
                   ),
-                ),
               ]),
             ),
           ),

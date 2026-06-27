@@ -120,6 +120,37 @@ class PlaybackService extends ChangeNotifier {
     await _playIndex(queue.length - 1);
   }
 
+  /// How many tracks are queued after the current one.
+  int get upNextCount => index < 0 ? 0 : (queue.length - index - 1);
+
+  /// Append to the Up Next queue without interrupting playback. Starts the
+  /// first one only if nothing is currently playing. Skips dups already queued.
+  void addToQueue(Iterable<NewspaperArticle> arts) {
+    final ids = queue.map((a) => a.id).toSet();
+    final toAdd = arts.where((a) => !ids.contains(a.id)).toList();
+    if (toAdd.isEmpty) return;
+    final startNow = index < 0 || queue.isEmpty;
+    queue.addAll(toAdd);
+    notifyListeners();
+    if (startNow) {
+      brief = false;
+      _playIndex(0);
+    }
+  }
+
+  /// Insert right after the current track (jump the queue).
+  void playNext(Iterable<NewspaperArticle> arts) {
+    if (index < 0 || queue.isEmpty) {
+      addToQueue(arts);
+      return;
+    }
+    final ids = queue.map((a) => a.id).toSet();
+    final toAdd = arts.where((a) => !ids.contains(a.id)).toList();
+    if (toAdd.isEmpty) return;
+    queue.insertAll(index + 1, toAdd);
+    notifyListeners();
+  }
+
   Future<void> next() async {
     if (index + 1 < queue.length) await _playIndex(index + 1);
   }
