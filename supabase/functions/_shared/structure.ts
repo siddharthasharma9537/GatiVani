@@ -30,8 +30,9 @@ interface AssignedBlock {
 
 export const CATEGORIES = [
   "International", "National", "State", "District", "Politics", "Editorial",
-  "Business", "Sports", "Entertainment", "Health", "Sci-Tech", "Education",
-  "Agriculture", "Crime", "Judiciary", "Devotional", "Trending", "News",
+  "Opinion", "Business", "Sports", "Entertainment", "Health", "Sci-Tech",
+  "Education", "Agriculture", "Crime", "Judiciary", "Devotional", "Trending",
+  "News",
 ] as const;
 
 interface Assignment {
@@ -216,11 +217,16 @@ Rules:
   article ids — do NOT guess silently.
 
 For each article also set "category" — exactly one of:
-International | National | State | District | Politics | Editorial | Business |
-Sports | Entertainment | Health | Sci-Tech | Education | Agriculture | Crime |
-Judiciary | Devotional | Trending | News
+International | National | State | District | Politics | Editorial | Opinion |
+Business | Sports | Entertainment | Health | Sci-Tech | Education | Agriculture |
+Crime | Judiciary | Devotional | Trending | News
 (District = hyperlocal town/mandal news; State = state-level news; use News only
 when nothing else fits.)
+- Editorial = the paper's own unsigned leader/editorial — usually under a
+  "సంపాదకీయం" header on the editorial page; there is normally just one or two.
+- Opinion = signed op-eds, columns and analysis pieces (a named author byline,
+  often on or beside the editorial page) expressing a viewpoint rather than
+  reporting news. Letters to the editor are also Opinion.
 
 Return ONLY this JSON:
 {"articles":[{"article_id":"a1","category":"Agriculture","blocks":[{"id":5,"role":"headline"},

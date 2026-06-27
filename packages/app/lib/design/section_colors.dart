@@ -10,6 +10,7 @@ const Map<String, List<Color>> kSectionColors = {
   'District': [Color(0xFFEAF3DE), Color(0xFF173404), Color(0xFF3B6D11)],
   'Politics': [Color(0xFFEEEDFE), Color(0xFF26215C), Color(0xFF534AB7)],
   'Editorial': [Color(0xFFF1EFE8), Color(0xFF2C2C2A), Color(0xFF5F5E5A)],
+  'Opinion': [Color(0xFFFBF0E2), Color(0xFF3A2A0A), Color(0xFF7A5A18)],
   'Judiciary': [Color(0xFFFBEAF0), Color(0xFF4B1528), Color(0xFF993556)],
   'Crime': [Color(0xFFFCEBEB), Color(0xFF501313), Color(0xFFA32D2D)],
   'Business': [Color(0xFFFAEEDA), Color(0xFF412402), Color(0xFF854F0B)],

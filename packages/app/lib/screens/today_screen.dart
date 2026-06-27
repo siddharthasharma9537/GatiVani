@@ -153,8 +153,8 @@ class _TodayScreenState extends State<TodayScreen> {
 
   // Sensible chip order: hard news first, the catch-all "News" last.
   static const _sectionOrder = [
-    'State', 'National', 'International', 'District', 'Politics', 'Editorial',
-    'Judiciary', 'Crime', 'Business', 'Sports', 'Health', 'Sci-Tech',
+    'Editorial', 'Opinion', 'State', 'National', 'International', 'District',
+    'Politics', 'Judiciary', 'Crime', 'Business', 'Sports', 'Health', 'Sci-Tech',
     'Education', 'Agriculture', 'Entertainment', 'Devotional', 'Trending', 'News',
   ];
   int _sectionRank(String s) {
@@ -482,6 +482,185 @@ class _TodayScreenState extends State<TodayScreen> {
     }
   }
 
+  // ── Front page (Editorial / Editor's pick) ──────────────────────────────────
+  // The editor's pick = the day's lead: the paper's own editorial if present,
+  // else the front-page lead (earliest page, longest story).
+  NewspaperArticle? get _editorsPick {
+    if (_articles.isEmpty) return null;
+    final ed = _articles.where((a) => a.category == 'Editorial').toList();
+    final pool = ed.isNotEmpty ? ed : _articles;
+    final sorted = [...pool]
+      ..sort((a, b) {
+        final p = a.page.compareTo(b.page);
+        return p != 0 ? p : b.spokenText.length.compareTo(a.spokenText.length);
+      });
+    return sorted.first;
+  }
+
+  // The paper's fixed opinion pages, in editorial order.
+  List<NewspaperArticle> get _opinionRail {
+    final list = _articles
+        .where((a) => a.category == 'Editorial' || a.category == 'Opinion')
+        .toList()
+      ..sort((a, b) => _sectionRank(a.category).compareTo(_sectionRank(b.category)));
+    return list;
+  }
+
+  Widget _frontPageBand(GatiPalette p, String lang) {
+    final pick = _editorsPick;
+    if (pick == null) return const SizedBox.shrink();
+    final rail = _opinionRail.where((a) => a.id != pick.id).toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 8),
+        child: Text(tr(lang, 'front_page'),
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w600, color: p.ink)),
+      ),
+      _editorsPickCard(p, lang, pick),
+      if (rail.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(tr(lang, 'editorial_opinion'),
+              style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: p.muted)),
+        ),
+        SizedBox(
+          height: 134,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: rail.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (_, i) => _opinionCard(p, lang, rail[i]),
+          ),
+        ),
+      ],
+      const SizedBox(height: 18),
+    ]);
+  }
+
+  Widget _editorsPickCard(GatiPalette p, String lang, NewspaperArticle a) {
+    final r = sectionRamp(a.category, dark: p.dark);
+    final mins = (a.estimatedDurationSeconds / 60).ceil();
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _play(a),
+        onLongPress: () => _showArticleSheet(a),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: r[0],
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: r[1].withValues(alpha: 0.10)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.star_rounded, size: 15, color: kAccent),
+              const SizedBox(width: 5),
+              Text(tr(lang, 'editors_pick').toUpperCase(),
+                  style: const TextStyle(
+                      fontSize: 10.5,
+                      letterSpacing: 0.6,
+                      fontWeight: FontWeight.w600,
+                      color: kAccent)),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                    color: r[1].withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20)),
+                child: Text(sectionLabel(a.category, lang),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: r[1],
+                        fontWeight: FontWeight.w500)),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            Text(a.title,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 18,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                    color: r[1])),
+            const SizedBox(height: 12),
+            Row(children: [
+              GestureDetector(
+                onTap: () => _playInline(a),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                  decoration: const BoxDecoration(
+                      color: kAccent,
+                      borderRadius: BorderRadius.all(Radius.circular(22))),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.play_arrow_rounded,
+                        color: kPaper, size: 19),
+                    const SizedBox(width: 4),
+                    Text(tr(lang, 'play'),
+                        style: const TextStyle(
+                            color: kPaper,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500)),
+                  ]),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text('p${a.page} · $mins ${tr(lang, 'min')}',
+                  style: TextStyle(fontSize: 12.5, color: r[2])),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _opinionCard(GatiPalette p, String lang, NewspaperArticle a) {
+    final r = sectionRamp(a.category, dark: p.dark);
+    return GestureDetector(
+      onTap: () => _play(a),
+      onLongPress: () => _showArticleSheet(a),
+      child: Container(
+        width: 220,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+            color: r[0],
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: r[1].withValues(alpha: 0.08))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(sectionLabel(a.category, lang).toUpperCase(),
+              style: const TextStyle(
+                  fontSize: 9.5,
+                  letterSpacing: 0.4,
+                  color: kAccent,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          Expanded(
+            child: Text(a.title,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13.5, height: 1.3, color: r[1])),
+          ),
+          const SizedBox(height: 6),
+          Row(children: [
+            const Icon(Icons.play_arrow_rounded, size: 16, color: kAccent),
+            const SizedBox(width: 3),
+            Text(tr(lang, 'play'),
+                style: TextStyle(fontSize: 11.5, color: p.muted)),
+          ]),
+        ]),
+      ),
+    );
+  }
+
   Future<void> _refresh() async {
     final job = _job;
     if (job == null) return;
@@ -770,6 +949,9 @@ class _TodayScreenState extends State<TodayScreen> {
                     ),
                   const SizedBox(height: 8),
                 ],
+                // Front page: the editor's pick lead + Editorial/Opinion when
+                // the edition carries those fixed sections.
+                if (_articles.isNotEmpty) _frontPageBand(p, lang),
                 if (_recent.isNotEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 4, bottom: 6),
