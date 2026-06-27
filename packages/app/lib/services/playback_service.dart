@@ -88,7 +88,14 @@ class PlaybackService extends ChangeNotifier {
 
   NewspaperArticle? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
-  bool get isPlaying => player.playing;
+  // The track played to its end and there's nothing auto-advancing. just_audio
+  // leaves `playing == true` at completion, so guard the play/pause UI on this
+  // (require a real duration so the transient zero-length completes web emits
+  // while loading a new url don't count).
+  bool get ended =>
+      player.processingState == ProcessingState.completed &&
+      (player.duration?.inMilliseconds ?? 0) > 500;
+  bool get isPlaying => player.playing && !ended;
   double get speed => player.speed;
   Duration get position => player.position;
   // Only report a duration once a real track is loaded (avoids a stale/zero
@@ -160,6 +167,12 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void toggle() {
+    // At the end of an article the button is a "replay" — restart from the top.
+    if (ended) {
+      player.seek(Duration.zero);
+      player.play();
+      return;
+    }
     if (player.playing) {
       player.pause();
       _saveProgress(); // remember the spot when paused

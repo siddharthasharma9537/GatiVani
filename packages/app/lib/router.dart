@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'screens/today_screen.dart';
+import 'screens/home_drawer_shell.dart';
 import 'screens/section_screen.dart';
 import 'screens/lyrics_player_screen.dart';
 import 'screens/menu_screen.dart';
@@ -14,7 +14,7 @@ import 'services/edition_store.dart';
 /// Navigator.push, since those create no history entries on web).
 final GoRouter appRouter = GoRouter(
   routes: [
-    GoRoute(path: '/', builder: (_, __) => const TodayScreen()),
+    GoRoute(path: '/', builder: (_, __) => const HomeDrawerShell()),
     GoRoute(path: '/player', builder: (_, __) => const LyricsPlayerScreen()),
     GoRoute(path: '/menu', builder: (_, __) => const MenuScreen()),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),

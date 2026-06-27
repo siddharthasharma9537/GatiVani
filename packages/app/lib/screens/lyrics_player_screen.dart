@@ -356,54 +356,61 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
         ),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(fmt(pos), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
-          // speed cycle — small, where the eye already is (the time row)
-          GestureDetector(
-            onTap: () {
-              const steps = [1.0, 1.25, 1.5, 2.0, 0.75];
-              p.setSpeed(steps[(steps.indexOf(p.speed) + 1) % steps.length]);
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                  border: Border.all(color: Gati.onInkTrack),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Text('${_fmtSpeed(p.speed)}×',
-                  style: const TextStyle(
-                      color: Gati.onInkFuture, fontSize: 11.5, fontWeight: FontWeight.w500)),
-            ),
-          ),
           Text(fmt(dur), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
         ]),
-        const SizedBox(height: 10),
-        // Transport: prev article · −15s · play · +15s · next article
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          IconButton(
-            icon: const Icon(Icons.skip_previous, color: Gati.onInkFuture, size: 26),
-            onPressed: p.previous,
-          ),
-          const SizedBox(width: 4),
-          _seekBtn(p, -15),
-          const SizedBox(width: 8),
-          Container(
-            width: 64,
-            height: 64,
-            decoration: const BoxDecoration(color: Gati.accent, shape: BoxShape.circle),
-            child: IconButton(
-              icon: p.loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(18),
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Gati.onInk))
-                  : Icon(p.isPlaying ? Icons.pause : Icons.play_arrow,
-                      color: Gati.onInk, size: 32),
-              onPressed: p.toggle,
+        const SizedBox(height: 8),
+        // Transport stays centered (prev · −15s · play · +15s · next); the speed
+        // chip rides the right edge so it's not stacked above the play button.
+        Stack(alignment: Alignment.center, children: [
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            IconButton(
+              icon: const Icon(Icons.skip_previous, color: Gati.onInkFuture, size: 26),
+              onPressed: p.previous,
             ),
-          ),
-          const SizedBox(width: 8),
-          _seekBtn(p, 15),
-          const SizedBox(width: 4),
-          IconButton(
-            icon: const Icon(Icons.skip_next, color: Gati.onInkFuture, size: 26),
-            onPressed: p.next,
+            const SizedBox(width: 4),
+            _seekBtn(p, -15),
+            const SizedBox(width: 8),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(color: Gati.accent, shape: BoxShape.circle),
+              child: IconButton(
+                icon: p.loading
+                    ? const Padding(
+                        padding: EdgeInsets.all(18),
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Gati.onInk))
+                    : Icon(p.isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: Gati.onInk, size: 32),
+                onPressed: p.toggle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            _seekBtn(p, 15),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(Icons.skip_next, color: Gati.onInkFuture, size: 26),
+              onPressed: p.next,
+            ),
+          ]),
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              onTap: () {
+                const steps = [1.0, 1.25, 1.5, 2.0, 0.75];
+                p.setSpeed(steps[(steps.indexOf(p.speed) + 1) % steps.length]);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                    border: Border.all(color: Gati.onInkTrack),
+                    borderRadius: BorderRadius.circular(12)),
+                child: Text('${_fmtSpeed(p.speed)}×',
+                    style: const TextStyle(
+                        color: Gati.onInkFuture,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500)),
+              ),
+            ),
           ),
         ]),
       ]),

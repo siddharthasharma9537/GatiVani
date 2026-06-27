@@ -20,7 +20,10 @@ import '../widgets/mini_player.dart';
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
 class TodayScreen extends StatefulWidget {
-  const TodayScreen({super.key});
+  const TodayScreen({super.key, this.onMenu});
+  // When hosted inside the reveal drawer, the header menu button toggles the
+  // drawer instead of pushing a /menu route.
+  final VoidCallback? onMenu;
   @override
   State<TodayScreen> createState() => _TodayScreenState();
 }
@@ -214,7 +217,13 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
-  void _openMenu() => context.push('/menu');
+  void _openMenu() {
+    if (widget.onMenu != null) {
+      widget.onMenu!();
+    } else {
+      context.push('/menu');
+    }
+  }
 
   // List ⇄ tiles toggle, like Google Drive/Files.
   Widget _viewBtn(IconData icon, String view) {
