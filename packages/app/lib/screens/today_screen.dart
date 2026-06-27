@@ -510,24 +510,31 @@ class _TodayScreenState extends State<TodayScreen> {
     final pick = _editorsPick;
     if (pick == null) return const SizedBox.shrink();
     final rail = _opinionRail.where((a) => a.id != pick.id).toList();
+    // When the lead itself is the paper's editorial/opinion, the whole band is
+    // one "Editorial & Opinion" group (hero + rail under it). When the lead is a
+    // news story, it's the "Front page" lead, and any opinion pages get their
+    // own labelled rail beneath.
+    final pickIsOpinion =
+        pick.category == 'Editorial' || pick.category == 'Opinion';
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
         padding: const EdgeInsets.only(top: 2, bottom: 8),
-        child: Text(tr(lang, 'front_page'),
+        child: Text(tr(lang, pickIsOpinion ? 'editorial_opinion' : 'front_page'),
             style: TextStyle(
                 fontSize: 13, fontWeight: FontWeight.w600, color: p.ink)),
       ),
       _editorsPickCard(p, lang, pick),
       if (rail.isNotEmpty) ...[
-        const SizedBox(height: 14),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(tr(lang, 'editorial_opinion'),
-              style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                  color: p.muted)),
-        ),
+        const SizedBox(height: 12),
+        if (!pickIsOpinion)
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 8),
+            child: Text(tr(lang, 'editorial_opinion'),
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                    color: p.muted)),
+          ),
         SizedBox(
           height: 134,
           child: ListView.separated(
