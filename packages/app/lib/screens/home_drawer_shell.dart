@@ -55,19 +55,24 @@ class _HomeDrawerShellState extends State<HomeDrawerShell>
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final lang = context.watch<SettingsProvider>().lang;
+    // A recessed "floor" behind the page so the Today card reads as lifted above
+    // the menu (the Claude-iOS depth cue) instead of two same-colour panels.
+    final recessed =
+        p.dark ? const Color(0xFF0E0D0B) : const Color(0xFFE3DCCD);
     return LayoutBuilder(builder: (context, cons) {
       final w = cons.maxWidth;
       _openX = w * _revealFraction;
       return Material(
-        color: p.paper,
+        color: recessed,
         child: Stack(children: [
-          // Back layer: the menu, pinned to the right, perfectly fixed.
+          // Back layer: the menu, pinned to the right, full-height + fixed, on
+          // the recessed floor.
           Positioned(
             top: 0,
             bottom: 0,
             right: 0,
             width: _openX,
-            child: _menuPanel(p, lang),
+            child: _menuPanel(p, lang, recessed),
           ),
           // Front layer: the Today page, sliding left to reveal the menu.
           AnimatedBuilder(
@@ -79,7 +84,9 @@ class _HomeDrawerShellState extends State<HomeDrawerShell>
               return Transform.translate(
                 offset: Offset(-t * _openX, 0),
                 child: Transform.scale(
-                  scale: 1 - 0.08 * t,
+                  // Shrink only a little so it stays page-like, but enough to gain
+                  // top/bottom margins that show the recessed floor behind it.
+                  scale: 1 - 0.055 * t,
                   alignment: Alignment.centerRight,
                   child: Container(
                     decoration: BoxDecoration(
@@ -87,9 +94,11 @@ class _HomeDrawerShellState extends State<HomeDrawerShell>
                       boxShadow: t > 0.01
                           ? [
                               BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.30 * t),
-                                  blurRadius: 38,
-                                  offset: const Offset(-6, 12)),
+                                  color: Colors.black
+                                      .withValues(alpha: (p.dark ? 0.55 : 0.32) * t),
+                                  blurRadius: 44,
+                                  spreadRadius: 2,
+                                  offset: const Offset(-10, 16)),
                             ]
                           : const [],
                     ),
@@ -143,9 +152,9 @@ class _HomeDrawerShellState extends State<HomeDrawerShell>
     });
   }
 
-  Widget _menuPanel(GatiPalette p, String lang) {
+  Widget _menuPanel(GatiPalette p, String lang, Color recessed) {
     return Container(
-      color: p.paper,
+      color: recessed,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
