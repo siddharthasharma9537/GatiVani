@@ -141,10 +141,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
             }
             // In a briefing session the audio is the short version, so the
             // lyrics must use briefingText too (key includes the mode).
-            final key = '${a.id}:${p.brief}';
+            final key = '${a.id}:${p.brief}:${a.summaryText != null}';
             if (key != _forId) {
               _forId = key;
-              _prepare(p.brief ? a.briefingText : a.spokenText);
+              _prepare(p.brief
+                  ? (a.summaryText ?? a.briefingText)
+                  : a.spokenText);
             }
             final dur = p.duration.inMilliseconds;
             // TTS clips usually open with ~0.4s of silence before the first word,

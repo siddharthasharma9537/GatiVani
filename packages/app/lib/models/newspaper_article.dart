@@ -28,6 +28,9 @@ class NewspaperArticle {
   // Cached audio of the short "briefing" narration (headline + lede), separate
   // from the full-article audioUrl.
   String? summaryAudioUrl;
+  // A real (AI) abstractive summary, when generated via long-press → Summarize.
+  // When set, brief playback narrates + highlights this instead of the lede.
+  String? summaryText;
   ArticleAudioStatus audioStatus;
   bool isDownloaded;
   bool isSelected;
@@ -46,6 +49,7 @@ class NewspaperArticle {
     this.imageUrl = '',
     this.audioUrl,
     this.summaryAudioUrl,
+    this.summaryText,
     this.audioStatus = ArticleAudioStatus.none,
     this.isDownloaded = false,
     this.isSelected = false,

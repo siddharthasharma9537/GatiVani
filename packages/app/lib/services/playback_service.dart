@@ -127,6 +127,15 @@ class PlaybackService extends ChangeNotifier {
     await _playIndex(queue.length - 1);
   }
 
+  /// Play an AI summary of [a] in the mini-player: store the summary text, force
+  /// a fresh short synthesis of it (clearing any stale lede-briefing audio), and
+  /// narrate it in brief mode so the read-along matches if expanded.
+  Future<void> playSummary(NewspaperArticle a, String summary) async {
+    a.summaryText = summary.trim();
+    a.summaryAudioUrl = null; // regenerate audio from the summary, not the lede
+    await playOne(a, brief: true);
+  }
+
   /// How many tracks are queued after the current one.
   int get upNextCount => index < 0 ? 0 : (queue.length - index - 1);
 
@@ -305,7 +314,9 @@ class PlaybackService extends ChangeNotifier {
                   'Content-Type': 'application/json'
                 },
                 body: json.encode({
-                  'text': brief ? a.briefingText : a.spokenText,
+                  'text': brief
+                      ? (a.summaryText ?? a.briefingText)
+                      : a.spokenText,
                   'language': 'te-IN',
                   'articleId': a.id,
                   if (brief) 'target': 'summary_audio_url',

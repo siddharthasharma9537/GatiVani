@@ -440,6 +440,8 @@ class _TodayScreenState extends State<TodayScreen> {
             ),
             item(Icons.play_arrow_rounded, tr(lang, 'play_now'),
                 () => _play(a)),
+            item(Icons.auto_awesome, tr(lang, 'summarize'),
+                () => _summarize(a)),
             item(Icons.queue_play_next_rounded, tr(lang, 'play_next'), () {
               PlaybackService.i.playNext([a]);
               _toast(lang, 'added_play_next');
@@ -455,6 +457,28 @@ class _TodayScreenState extends State<TodayScreen> {
         );
       },
     );
+  }
+
+  // Summarize = an AI gist (a few sentences) narrated in the mini-player.
+  // Grounded-Gemini writes a short Telugu summary, then it's synthesized + cached
+  // and played. Much shorter than the full article, so it's quick and cheap.
+  Future<void> _summarize(NewspaperArticle a) async {
+    final lang = context.read<SettingsProvider>().lang;
+    _toast(lang, 'summarizing');
+    try {
+      final summary = await _svc.ask(
+        a.id,
+        'ఈ వ్యాసాన్ని తెలుగులో 3-4 చిన్న వాక్యాల్లో సంక్షిప్త సారాంశంగా చెప్పు. '
+        'ఉపోద్ఘాతం, అదనపు వ్యాఖ్యలు వద్దు — కేవలం సారాంశం మాత్రమే.',
+      );
+      if (summary.trim().isEmpty) {
+        _toast(lang, 'summary_failed');
+        return;
+      }
+      await PlaybackService.i.playSummary(a, summary);
+    } catch (_) {
+      if (mounted) _toast(lang, 'summary_failed');
+    }
   }
 
   // Download = pre-generate the full audio so it's cached and instant to play
