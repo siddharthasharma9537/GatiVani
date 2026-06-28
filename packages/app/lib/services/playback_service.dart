@@ -166,6 +166,23 @@ class PlaybackService extends ChangeNotifier {
     if (index > 0) await _playIndex(index - 1);
   }
 
+  /// Stop playback and dismiss the now-playing bar entirely (queue cleared so
+  /// `current` is null and the mini-player hides). Saves the spot first so the
+  /// article can still be resumed from "Recently played".
+  Future<void> stop() async {
+    _saveProgress();
+    _clearSleep();
+    queue.clear();
+    index = -1;
+    brief = false;
+    _advancing = false;
+    _pendingSeek = null;
+    notifyListeners();
+    await player.stop();
+    updateMediaSession(title: '', artist: '', playing: false);
+    notifyListeners();
+  }
+
   void toggle() {
     // At the end of an article the button is a "replay" — restart from the top.
     if (ended) {
