@@ -27,6 +27,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
   final _keys = <int, GlobalKey>{};
   int _lastScrolled = -1;
   bool _dismissing = false;
+  double _dragDy = 0; // accumulated pull on the header → minimize
 
   // Per-article cache, recomputed when the playing article changes.
   String _forId = '';
@@ -157,12 +158,30 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                 .addPostFrameCallback((_) => _autoScroll(activeLine));
 
             return Column(children: [
-              _header(context, a),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                child: Text(a.title,
-                    style: const TextStyle(
-                        color: Gati.onInk, fontSize: 20, fontWeight: FontWeight.w500)),
+              // Pull the header/title down to minimize back to the mini-player
+              // (audio keeps playing) — on a drag of ≳70px or a downward flick.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragStart: (_) => _dragDy = 0,
+                onVerticalDragUpdate: (d) => _dragDy += d.primaryDelta ?? 0,
+                onVerticalDragEnd: (d) {
+                  final v = d.primaryVelocity ?? 0;
+                  if ((_dragDy > 70 || v > 250) && !_dismissing) {
+                    _dismissing = true;
+                    if (context.canPop()) context.pop();
+                  }
+                },
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  _header(context, a),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                    child: Text(a.title,
+                        style: const TextStyle(
+                            color: Gati.onInk,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w500)),
+                  ),
+                ]),
               ),
               Expanded(
                 child: NotificationListener<ScrollNotification>(
