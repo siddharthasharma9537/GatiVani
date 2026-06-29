@@ -42,8 +42,6 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   late final AnimationController _queue = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 300));
 
-  static const _queueFraction = 0.58; // panel height as a share of the viewport
-
   @override
   void dispose() {
     _lyrics.dispose();
@@ -184,7 +182,25 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
 
             return LayoutBuilder(builder: (context, c) {
               final vh = c.maxHeight;
-              final panelH = vh * _queueFraction;
+              const topBar = 72.0;
+              final maxPanelH = (vh - topBar).clamp(1.0, vh);
+              // Two open detents for the queue sheet: ~58% (player still shown)
+              // and full (player collapsed into a top mini-bar). Snap to the
+              // nearest, or the next one in a fling's direction.
+              const detents = [0.0, 0.6, 1.0];
+              double snapTarget(double val, double vel) {
+                if (vel < -350) {
+                  return detents.firstWhere((d) => d > val + 0.02,
+                      orElse: () => 1.0);
+                }
+                if (vel > 350) {
+                  return detents.lastWhere((d) => d < val - 0.02,
+                      orElse: () => 0.0);
+                }
+                return detents.reduce(
+                    (a, b) => (val - a).abs() <= (val - b).abs() ? a : b);
+              }
+
               return Stack(children: [
                 // ── The player ──
                 Column(children: [
@@ -222,7 +238,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                       top: 0,
                       left: 0,
                       right: 0,
-                      bottom: panelH * _queue.value,
+                      bottom: maxPanelH * _queue.value,
                       child: GestureDetector(
                         behavior: HitTestBehavior.translucent,
                         onVerticalDragStart: (_) {
@@ -234,7 +250,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                           if (_dragDy < 0 ||
                               _queue.value > 0 ||
                               _queueStart > 0) {
-                            _queue.value = (_queueStart - _dragDy / panelH)
+                            _queue.value = (_queueStart - _dragDy / maxPanelH)
                                 .clamp(0.0, 1.0);
                           }
                         },
@@ -243,9 +259,8 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                           if (_queue.value > 0 ||
                               _queueStart > 0 ||
                               _dragDy < 0) {
-                            (_queue.value > 0.35 || v < -350)
-                                ? _queue.animateTo(1, curve: Curves.easeOut)
-                                : _queue.animateTo(0, curve: Curves.easeOut);
+                            _queue.animateTo(snapTarget(_queue.value, v),
+                                curve: Curves.easeOut);
                           } else if ((_dragDy > 70 || v > 250) &&
                               !_dismissing) {
                             _dismissing = true;
@@ -266,10 +281,94 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                       left: 0,
                       right: 0,
                       bottom: 0,
-                      height: panelH,
+                      height: maxPanelH,
                       child: Transform.translate(
-                        offset: Offset(0, panelH * (1 - _queue.value)),
+                        offset: Offset(0, maxPanelH * (1 - _queue.value)),
                         child: _queuePanel(context, p),
+                      ),
+                    );
+                  },
+                ),
+                // ── Top mini-bar — fades in as the queue reaches full, so the
+                // player has collapsed into a thumbnail + title + play strip. ──
+                AnimatedBuilder(
+                  animation: Listenable.merge([_queue, p]),
+                  builder: (context, _) {
+                    final op = ((_queue.value - 0.72) / 0.28).clamp(0.0, 1.0);
+                    if (op <= 0.001) return const SizedBox.shrink();
+                    final lang = context.read<SettingsProvider>().lang;
+                    return Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: topBar,
+                      child: Opacity(
+                        opacity: op,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () =>
+                              _queue.animateTo(0, curve: Curves.easeOut),
+                          onVerticalDragStart: (_) {
+                            _dragDy = 0;
+                            _queueStart = _queue.value;
+                          },
+                          onVerticalDragUpdate: (d) {
+                            _dragDy += d.primaryDelta ?? 0;
+                            _queue.value = (_queueStart - _dragDy / maxPanelH)
+                                .clamp(0.0, 1.0);
+                          },
+                          onVerticalDragEnd: (d) {
+                            _queue.animateTo(
+                                snapTarget(_queue.value, d.primaryVelocity ?? 0),
+                                curve: Curves.easeOut);
+                            _dragDy = 0;
+                          },
+                          child: Container(
+                            color: Gati.ink,
+                            padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
+                            child: Row(children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: SizedBox(
+                                    width: 46,
+                                    height: 46,
+                                    child: _coverWidget(a, lang)),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(a.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: Gati.onInk,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w500)),
+                                    Text(sectionLabel(a.category, lang),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: Gati.onInkMuted,
+                                            fontSize: 12)),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                    p.isPlaying
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                    color: Gati.onInk,
+                                    size: 30),
+                                onPressed: p.toggle,
+                              ),
+                            ]),
+                          ),
+                        ),
                       ),
                     );
                   },
