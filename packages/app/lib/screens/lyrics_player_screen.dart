@@ -25,14 +25,25 @@ class LyricsPlayerScreen extends StatefulWidget {
   State<LyricsPlayerScreen> createState() => _LyricsPlayerScreenState();
 }
 
-class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
+class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
+    with SingleTickerProviderStateMixin {
   final _scroll = ScrollController();
   final _keys = <int, GlobalKey>{};
   int _lastScrolled = -1;
   bool _dismissing = false;
   double _dragDy = 0; // accumulated pull on the header → minimize
-  bool _readMode = false; // false = album-art player; true = read-along lyrics
   bool _downloading = false;
+  // 0 = album-art player; 1 = lyrics open (art collapsed into the top strip).
+  // One value drives the whole coordinated transition (YouTube-Music style).
+  late final AnimationController _lyrics = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 360));
+
+  @override
+  void dispose() {
+    _lyrics.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
 
   // Per-article cache, recomputed when the playing article changes.
   String _forId = '';
@@ -181,9 +192,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                 child: _header(context, a),
               ),
               Expanded(
-                child: _readMode
-                    ? _readView(context, p, a, activeLine, activeWord, dur)
-                    : _artView(context, a),
+                child: _stage(context, p, a, activeLine, activeWord, dur),
               ),
               _controls(p),
             ]);
@@ -193,123 +202,164 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
     );
   }
 
-  // ── Album-art player (default) ──────────────────────────────────────────────
-  Widget _artView(BuildContext context, NewspaperArticle a) {
+  // ── Coordinated player ⇄ lyrics stage (YouTube-Music style) ──────────────────
+  // One value (_lyrics 0→1) drives it: the cover art morphs from the big centred
+  // square into a small top-left thumbnail while the read-along rises from below.
+  Widget _stage(BuildContext context, PlaybackService p, NewspaperArticle a,
+      int activeLine, int activeWord, int dur) {
     final lang = context.read<SettingsProvider>().lang;
+    return LayoutBuilder(builder: (context, c) {
+      final w = c.maxWidth, h = c.maxHeight;
+      final side = (w - 48).clamp(0.0, h * 0.46);
+      final big = Rect.fromLTWH((w - side) / 2, 6, side, side);
+      const small = Rect.fromLTWH(2, 8, 46, 46);
+      return AnimatedBuilder(
+        animation: _lyrics,
+        builder: (context, _) {
+          final t = Curves.easeInOutCubic.transform(_lyrics.value);
+          final rect = Rect.lerp(big, small, t)!;
+          return Stack(clipBehavior: Clip.none, children: [
+            // Read-along — fades + rises from below, clearing the top strip.
+            if (t > 0.01)
+              Positioned.fill(
+                child: Opacity(
+                  opacity: ((t - 0.25) / 0.75).clamp(0.0, 1.0),
+                  child: Transform.translate(
+                    offset: Offset(0, (1 - t) * 48),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 62),
+                      child:
+                          _lyricsList(context, p, activeLine, activeWord, dur),
+                    ),
+                  ),
+                ),
+              ),
+            // Player meta (title + meta + pills) under the big art — fades out.
+            Positioned(
+              top: big.bottom + 18,
+              left: 24,
+              right: 24,
+              child: IgnorePointer(
+                ignoring: t > 0.2,
+                child: Opacity(
+                  opacity: (1 - t * 1.8).clamp(0.0, 1.0),
+                  child: _playerMeta(context, a, lang),
+                ),
+              ),
+            ),
+            // Top strip title + close — fades in beside the small thumbnail.
+            Positioned(
+              top: 8,
+              height: 46,
+              left: small.right + 12,
+              right: 6,
+              child: IgnorePointer(
+                ignoring: t < 0.5,
+                child: Opacity(
+                  opacity: ((t - 0.4) / 0.6).clamp(0.0, 1.0),
+                  child: Row(children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(a.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Gati.onInk,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500)),
+                          Text(sectionLabel(a.category, lang),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Gati.onInkMuted, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded,
+                          color: Gati.onInkMuted, size: 20),
+                      onPressed: () => _lyrics.reverse(),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+            // Shared cover art — morphs big-centre → small top-left thumbnail.
+            Positioned.fromRect(
+              rect: rect,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18 - 10 * t),
+                child: _coverWidget(a, lang),
+              ),
+            ),
+          ]);
+        },
+      );
+    });
+  }
+
+  Widget _playerMeta(BuildContext context, NewspaperArticle a, String lang) {
     final mins = (a.estimatedDurationSeconds / 60).ceil();
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-      child: Column(children: [
-        _albumArt(a, lang),
-        const SizedBox(height: 22),
-        Text(a.title,
-            textAlign: TextAlign.center,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-                color: Gati.onInk,
-                fontSize: 19,
-                fontWeight: FontWeight.w500,
-                height: 1.3)),
-        const SizedBox(height: 6),
-        Text('${sectionLabel(a.category, lang)} · p${a.page} · $mins ${tr(lang, 'min')}',
-            style: const TextStyle(color: Gati.onInkMuted, fontSize: 12.5)),
-        const SizedBox(height: 20),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          alignment: WrapAlignment.center,
-          children: [
-            _chip(Icons.article_outlined, tr(lang, 'read'),
-                () => setState(() => _readMode = true),
-                filled: true),
-            _chip(Icons.bookmark_border_rounded, tr(lang, 'save'),
-                () => _snack(context, tr(lang, 'save_soon'))),
-            _chip(Icons.shuffle_rounded, tr(lang, 'mix'),
-                () => _mix(context, a)),
-            _chip(Icons.download_outlined, tr(lang, 'download'),
-                () => _download(context, a),
-                busy: _downloading),
-          ],
-        ),
-      ]),
-    );
-  }
-
-  Widget _albumArt(NewspaperArticle a, String lang) {
-    final r = sectionRamp(a.category, dark: true);
-    return AspectRatio(
-      aspectRatio: 1,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: a.hasImage
-            ? Image.network(a.imageUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _coverArt(a, r, lang))
-            : _coverArt(a, r, lang),
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Text(a.title,
+          textAlign: TextAlign.center,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+              color: Gati.onInk,
+              fontSize: 19,
+              fontWeight: FontWeight.w500,
+              height: 1.3)),
+      const SizedBox(height: 6),
+      Text(
+          '${sectionLabel(a.category, lang)} · p${a.page} · $mins ${tr(lang, 'min')}',
+          style: const TextStyle(color: Gati.onInkMuted, fontSize: 12.5)),
+      const SizedBox(height: 18),
+      // Uniform pill row — identical pills, icon + label, single scrolling row.
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          _pill(Icons.format_quote_rounded, tr(lang, 'read'),
+              () => _lyrics.forward()),
+          const SizedBox(width: 8),
+          _pill(Icons.shuffle_rounded, tr(lang, 'mix'), () => _mix(context, a)),
+          const SizedBox(width: 8),
+          _pill(Icons.bookmark_border_rounded, tr(lang, 'save'),
+              () => _snack(context, tr(lang, 'save_soon'))),
+          const SizedBox(width: 8),
+          _pill(Icons.download_outlined, tr(lang, 'download'),
+              () => _download(context, a),
+              busy: _downloading),
+        ]),
       ),
-    );
+    ]);
   }
 
-  // Generated cover when the article has no real clipping: section-tinted card.
-  Widget _coverArt(NewspaperArticle a, List<Color> r, String lang) {
-    return Container(
-      color: r[0],
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text('Gativani',
-              style: TextStyle(
-                  color: r[2], fontSize: 12.5, letterSpacing: 0.5)),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.article_rounded, color: Gati.accent, size: 42),
-              const SizedBox(height: 12),
-              Text(sectionLabel(a.category, lang),
-                  style: TextStyle(
-                      color: r[1],
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      height: 1.1)),
-            ],
-          ),
-          Text('p${a.page}',
-              style: TextStyle(color: r[2], fontSize: 12)),
-        ],
-      ),
-    );
-  }
-
-  Widget _chip(IconData icon, String label, VoidCallback onTap,
-      {bool filled = false, bool busy = false}) {
+  Widget _pill(IconData icon, String label, VoidCallback onTap,
+      {bool busy = false}) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
-          color: filled ? Gati.accent : Colors.transparent,
-          borderRadius: BorderRadius.circular(22),
-          border: filled ? null : Border.all(color: Gati.onInkTrack),
-        ),
+            color: const Color(0xFF35322B),
+            borderRadius: BorderRadius.circular(22)),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           busy
-              ? SizedBox(
+              ? const SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: filled ? Gati.onInk : Gati.accent))
-              : Icon(icon,
-                  size: 16, color: filled ? Gati.onInk : Gati.onInkFuture),
+                      strokeWidth: 2, color: Gati.accent))
+              : Icon(icon, size: 16, color: Gati.onInk),
           const SizedBox(width: 6),
           Text(label,
-              style: TextStyle(
-                  color: filled ? Gati.onInk : Gati.onInkFuture,
+              style: const TextStyle(
+                  color: Gati.onInk,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w500)),
         ]),
@@ -317,104 +367,124 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
     );
   }
 
-  // ── Read-along (the old default, now behind the Read chip) ───────────────────
-  Widget _readView(BuildContext context, PlaybackService p, NewspaperArticle a,
-      int activeLine, int activeWord, int dur) {
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 8, 6),
-        child: Row(children: [
-          Expanded(
-            child: Text(a.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: Gati.onInk,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500)),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close_rounded,
-                color: Gati.onInkMuted, size: 20),
-            onPressed: () => setState(() => _readMode = false),
-          ),
-        ]),
-      ),
-      Expanded(
-        child: NotificationListener<ScrollNotification>(
-          // Pull the lyrics down past the top to minimize the player.
-          onNotification: (n) {
-            if (n.metrics.pixels < -90 && !_dismissing) {
-              _dismissing = true;
-              if (context.canPop()) context.pop();
-            }
-            return false;
-          },
-          child: ShaderMask(
-            shaderCallback: (rect) => const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Colors.transparent, Colors.black, Colors.black, Colors.transparent],
-              stops: [0.0, 0.06, 0.9, 1.0],
-            ).createShader(rect),
-            blendMode: BlendMode.dstIn,
-            child: ListView.builder(
-              controller: _scroll,
-              physics: const BouncingScrollPhysics(
-                  parent: AlwaysScrollableScrollPhysics()),
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-              itemCount: _lines.length,
-              itemBuilder: (context, li) {
-                final k = _keys.putIfAbsent(li, () => GlobalKey());
-                final firstWord = _lineFirstWord[li];
-                final isActiveLine = li == activeLine;
-                final spans = <TextSpan>[];
-                for (var w = 0; w < _lines[li].length; w++) {
-                  final gi = firstWord + w;
-                  final isActive = gi == activeWord;
-                  final isPast = gi < activeWord;
-                  spans.add(TextSpan(
-                    text: _lines[li][w] +
-                        (w == _lines[li].length - 1 ? '' : ' '),
-                    style: TextStyle(
-                      color: isActive
-                          ? Gati.accent
-                          : isPast
-                              ? Gati.onInkPast
-                              : Gati.onInkFuture,
-                      fontWeight:
-                          isActive ? FontWeight.w500 : FontWeight.w400,
-                    ),
-                  ));
-                }
-                return GestureDetector(
-                  key: k,
-                  onTap: () => p.seek(Duration(
-                      milliseconds: (_wordStart[firstWord] * dur).round())),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isActiveLine
-                          ? const Color(0x1AD85A30)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: RichText(
-                      text: TextSpan(
-                          style: const TextStyle(fontSize: 18, height: 1.6),
-                          children: spans),
-                    ),
-                  ),
-                );
-              },
-            ),
+  // Cover content sized to fill its rect (scales as one unit during the morph):
+  // the real clipping when present, else the section-tinted cover.
+  Widget _coverWidget(NewspaperArticle a, String lang) {
+    if (a.hasImage) {
+      return Image.network(a.imageUrl,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _coverArt(a, lang));
+    }
+    return _coverArt(a, lang);
+  }
+
+  Widget _coverArt(NewspaperArticle a, String lang) {
+    final r = sectionRamp(a.category, dark: true);
+    return FittedBox(
+      fit: BoxFit.cover,
+      child: SizedBox(
+        width: 300,
+        height: 300,
+        child: Container(
+          color: r[0],
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Gativani',
+                  style:
+                      TextStyle(color: r[2], fontSize: 14, letterSpacing: 0.5)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.article_rounded,
+                      color: Gati.accent, size: 46),
+                  const SizedBox(height: 12),
+                  Text(sectionLabel(a.category, lang),
+                      style: TextStyle(
+                          color: r[1],
+                          fontSize: 30,
+                          fontWeight: FontWeight.w600,
+                          height: 1.1)),
+                ],
+              ),
+              Text('p${a.page}', style: TextStyle(color: r[2], fontSize: 14)),
+            ],
           ),
         ),
       ),
-    ]);
+    );
+  }
+
+  // Read-along list (word-sync, tap-to-seek). Over-pulling the top closes lyrics.
+  Widget _lyricsList(BuildContext context, PlaybackService p, int activeLine,
+      int activeWord, int dur) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if (n.metrics.pixels < -90 && _lyrics.value == 1.0) _lyrics.reverse();
+        return false;
+      },
+      child: ShaderMask(
+        shaderCallback: (rect) => const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.transparent, Colors.black, Colors.black, Colors.transparent],
+          stops: [0.0, 0.06, 0.9, 1.0],
+        ).createShader(rect),
+        blendMode: BlendMode.dstIn,
+        child: ListView.builder(
+          controller: _scroll,
+          physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics()),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          itemCount: _lines.length,
+          itemBuilder: (context, li) {
+            final k = _keys.putIfAbsent(li, () => GlobalKey());
+            final firstWord = _lineFirstWord[li];
+            final isActiveLine = li == activeLine;
+            final spans = <TextSpan>[];
+            for (var ww = 0; ww < _lines[li].length; ww++) {
+              final gi = firstWord + ww;
+              final isActive = gi == activeWord;
+              final isPast = gi < activeWord;
+              spans.add(TextSpan(
+                text: _lines[li][ww] + (ww == _lines[li].length - 1 ? '' : ' '),
+                style: TextStyle(
+                  color: isActive
+                      ? Gati.accent
+                      : isPast
+                          ? Gati.onInkPast
+                          : Gati.onInkFuture,
+                  fontWeight: isActive ? FontWeight.w500 : FontWeight.w400,
+                ),
+              ));
+            }
+            return GestureDetector(
+              key: k,
+              onTap: () => p.seek(
+                  Duration(milliseconds: (_wordStart[firstWord] * dur).round())),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color:
+                      isActiveLine ? const Color(0x1AD85A30) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: RichText(
+                  text: TextSpan(
+                      style: const TextStyle(fontSize: 18, height: 1.6),
+                      children: spans),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   void _mix(BuildContext context, NewspaperArticle a) {
