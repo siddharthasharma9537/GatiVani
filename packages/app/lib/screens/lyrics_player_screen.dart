@@ -289,11 +289,16 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               ),
             ),
             // Shared cover art — morphs big-centre → small top-left thumbnail.
+            // Tapping it toggles: collapse the lyrics when open, expand when not.
             Positioned.fromRect(
               rect: rect,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(18 - 10 * t),
-                child: _coverWidget(a, lang),
+              child: GestureDetector(
+                onTap: () =>
+                    _lyrics.value > 0.5 ? _lyrics.reverse() : _lyrics.forward(),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18 - 10 * t),
+                  child: _coverWidget(a, lang),
+                ),
               ),
             ),
           ]);

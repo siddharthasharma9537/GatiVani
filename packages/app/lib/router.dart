@@ -15,7 +15,27 @@ import 'services/edition_store.dart';
 final GoRouter appRouter = GoRouter(
   routes: [
     GoRoute(path: '/', builder: (_, __) => const HomeDrawerShell()),
-    GoRoute(path: '/player', builder: (_, __) => const LyricsPlayerScreen()),
+    // The player rises up from the bottom (where the mini-player sits) so it
+    // reads as expanding out of it — like YouTube Music — instead of the
+    // default slide-in-from-the-right page transition.
+    GoRoute(
+      path: '/player',
+      pageBuilder: (context, state) => CustomTransitionPage<void>(
+        key: state.pageKey,
+        child: const LyricsPlayerScreen(),
+        transitionDuration: const Duration(milliseconds: 340),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+        transitionsBuilder: (context, animation, secondary, child) {
+          final curved =
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+          return SlideTransition(
+            position: Tween(begin: const Offset(0, 1), end: Offset.zero)
+                .animate(curved),
+            child: child,
+          );
+        },
+      ),
+    ),
     GoRoute(path: '/menu', builder: (_, __) => const MenuScreen()),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
     GoRoute(
