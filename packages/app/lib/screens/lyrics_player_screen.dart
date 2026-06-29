@@ -26,21 +26,28 @@ class LyricsPlayerScreen extends StatefulWidget {
 }
 
 class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _scroll = ScrollController();
   final _keys = <int, GlobalKey>{};
   int _lastScrolled = -1;
   bool _dismissing = false;
-  double _dragDy = 0; // accumulated pull on the header → minimize
+  double _dragDy = 0; // accumulated pull → minimize
+  double _queueStart = 0; // _queue value at the start of a drag
   bool _downloading = false;
   // 0 = album-art player; 1 = lyrics open (art collapsed into the top strip).
   // One value drives the whole coordinated transition (YouTube-Music style).
   late final AnimationController _lyrics = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 360));
+  // 0 = closed; 1 = "Your Queue" panel open (~58% of the viewport).
+  late final AnimationController _queue = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 300));
+
+  static const _queueFraction = 0.58; // panel height as a share of the viewport
 
   @override
   void dispose() {
     _lyrics.dispose();
+    _queue.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -175,27 +182,100 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
             WidgetsBinding.instance
                 .addPostFrameCallback((_) => _autoScroll(activeLine));
 
-            return Column(children: [
-              // Pull the header down to minimize back to the mini-player (audio
-              // keeps playing) — on a drag of ≳70px or a downward flick.
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onVerticalDragStart: (_) => _dragDy = 0,
-                onVerticalDragUpdate: (d) => _dragDy += d.primaryDelta ?? 0,
-                onVerticalDragEnd: (d) {
-                  final v = d.primaryVelocity ?? 0;
-                  if ((_dragDy > 70 || v > 250) && !_dismissing) {
-                    _dismissing = true;
-                    if (context.canPop()) context.pop();
-                  }
-                },
-                child: _header(context, a),
-              ),
-              Expanded(
-                child: _stage(context, p, a, activeLine, activeWord, dur),
-              ),
-              _controls(p),
-            ]);
+            return LayoutBuilder(builder: (context, c) {
+              final vh = c.maxHeight;
+              final panelH = vh * _queueFraction;
+              return Stack(children: [
+                // ── The player ──
+                Column(children: [
+                  _header(context, a),
+                  Expanded(
+                    child: _stage(context, p, a, activeLine, activeWord, dur),
+                  ),
+                  // Bottom controls collapse away as the lyrics open.
+                  AnimatedBuilder(
+                    animation: _lyrics,
+                    builder: (context, _) {
+                      final t = Curves.easeInOutCubic.transform(_lyrics.value);
+                      return ClipRect(
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          heightFactor: (1 - t).clamp(0.0, 1.0),
+                          child: Opacity(
+                            opacity: (1 - t).clamp(0.0, 1.0),
+                            child: IgnorePointer(
+                                ignoring: t > 0.5, child: _controls(p)),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ]),
+                // ── Drag catcher (art mode): up → queue, down → minimize ──
+                // Translucent so taps fall through to the pills/controls; only
+                // claims vertical drags. Covers the area above the queue panel.
+                AnimatedBuilder(
+                  animation: Listenable.merge([_lyrics, _queue]),
+                  builder: (context, _) {
+                    if (_lyrics.value > 0.01) return const SizedBox.shrink();
+                    return Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: panelH * _queue.value,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onVerticalDragStart: (_) {
+                          _dragDy = 0;
+                          _queueStart = _queue.value;
+                        },
+                        onVerticalDragUpdate: (d) {
+                          _dragDy += d.primaryDelta ?? 0;
+                          if (_dragDy < 0 ||
+                              _queue.value > 0 ||
+                              _queueStart > 0) {
+                            _queue.value = (_queueStart - _dragDy / panelH)
+                                .clamp(0.0, 1.0);
+                          }
+                        },
+                        onVerticalDragEnd: (d) {
+                          final v = d.primaryVelocity ?? 0;
+                          if (_queue.value > 0 ||
+                              _queueStart > 0 ||
+                              _dragDy < 0) {
+                            (_queue.value > 0.35 || v < -350)
+                                ? _queue.animateTo(1, curve: Curves.easeOut)
+                                : _queue.animateTo(0, curve: Curves.easeOut);
+                          } else if ((_dragDy > 70 || v > 250) &&
+                              !_dismissing) {
+                            _dismissing = true;
+                            if (context.canPop()) context.pop();
+                          }
+                          _dragDy = 0;
+                        },
+                      ),
+                    );
+                  },
+                ),
+                // ── "Your Queue" panel — rises from the bottom to ~58% ──
+                AnimatedBuilder(
+                  animation: _queue,
+                  builder: (context, _) {
+                    if (_queue.value < 0.001) return const SizedBox.shrink();
+                    return Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: panelH,
+                      child: Transform.translate(
+                        offset: Offset(0, panelH * (1 - _queue.value)),
+                        child: _queuePanel(context, p),
+                      ),
+                    );
+                  },
+                ),
+              ]);
+            });
           },
         ),
       ),
@@ -247,7 +327,8 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                 ),
               ),
             ),
-            // Top strip title + close — fades in beside the small thumbnail.
+            // Top strip (the collapsed mini-player): title + a play/pause button,
+            // beside the small thumbnail. No full transport below in lyrics mode.
             Positioned(
               top: 8,
               height: 46,
@@ -280,27 +361,42 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close_rounded,
-                          color: Gati.onInkMuted, size: 20),
-                      onPressed: () => _lyrics.reverse(),
+                      icon: Icon(
+                          p.isPlaying
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Gati.onInk,
+                          size: 28),
+                      onPressed: p.toggle,
                     ),
                   ]),
                 ),
               ),
             ),
             // Shared cover art — morphs big-centre → small top-left thumbnail.
-            // Tapping it toggles: collapse the lyrics when open, expand when not.
+            // (Not tappable: only the Read chip opens the lyrics.)
             Positioned.fromRect(
               rect: rect,
-              child: GestureDetector(
-                onTap: () =>
-                    _lyrics.value > 0.5 ? _lyrics.reverse() : _lyrics.forward(),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18 - 10 * t),
-                  child: _coverWidget(a, lang),
-                ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(18 - 10 * t),
+                child: _coverWidget(a, lang),
               ),
             ),
+            // Lyrics mode: swiping down on the top strip brings the player back
+            // down (closes the lyrics). Translucent so the play button still taps.
+            if (t > 0.5)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 60,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onVerticalDragEnd: (d) {
+                    if ((d.primaryVelocity ?? 0) > 180) _lyrics.reverse();
+                  },
+                ),
+              ),
           ]);
         },
       );
@@ -518,6 +614,135 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   void _snack(BuildContext context, String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
+  }
+
+  // ── "Your Queue" panel ──────────────────────────────────────────────────────
+  Widget _queuePanel(BuildContext context, PlaybackService p) {
+    final lang = context.read<SettingsProvider>().lang;
+    final q = p.queue;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF1A1714),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(children: [
+        // Grab handle — drag down to close the panel.
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragStart: (_) => _dragDy = 0,
+          onVerticalDragUpdate: (d) => _dragDy += d.primaryDelta ?? 0,
+          onVerticalDragEnd: (d) {
+            final v = d.primaryVelocity ?? 0;
+            if (_dragDy > 50 || v > 280) {
+              _queue.animateTo(0, curve: Curves.easeOut);
+            }
+            _dragDy = 0;
+          },
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.only(top: 10, bottom: 8),
+            alignment: Alignment.center,
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Gati.onInkTrack,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 2, 16, 10),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(tr(lang, 'playing_from'),
+                    style:
+                        const TextStyle(color: Gati.onInkMuted, fontSize: 12)),
+                Text(tr(lang, 'your_queue'),
+                    style: const TextStyle(
+                        color: Gati.onInk,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child: q.isEmpty
+              ? Center(
+                  child: Text(tr(lang, 'queue_empty'),
+                      style: const TextStyle(color: Gati.onInkMuted)))
+              : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  itemCount: q.length,
+                  itemBuilder: (context, i) {
+                    final art = q[i];
+                    final isCurrent = i == p.index;
+                    final r = sectionRamp(art.category, dark: true);
+                    final mins = (art.estimatedDurationSeconds / 60).ceil();
+                    return InkWell(
+                      onTap: () => p.playAt(i),
+                      child: Container(
+                        color: isCurrent
+                            ? const Color(0x1AD85A30)
+                            : Colors.transparent,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        child: Row(children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                                color: r[0],
+                                borderRadius: BorderRadius.circular(8)),
+                            child: Icon(
+                                isCurrent
+                                    ? Icons.equalizer_rounded
+                                    : Icons.article_rounded,
+                                color: isCurrent
+                                    ? Gati.accent
+                                    : Gati.onInkMuted,
+                                size: isCurrent ? 20 : 18),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(art.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: isCurrent
+                                            ? Gati.accent
+                                            : Gati.onInk,
+                                        fontSize: 14.5,
+                                        fontWeight: FontWeight.w500)),
+                                Text(
+                                    '${sectionLabel(art.category, lang)} · $mins ${tr(lang, 'min')}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: Gati.onInkMuted, fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.drag_handle_rounded,
+                              color: Gati.onInkTrack, size: 22),
+                        ]),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ]),
+    );
   }
 
   void _openSleepSheet(BuildContext context) {

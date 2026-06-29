@@ -196,6 +196,11 @@ class PlaybackService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Jump to a specific queue position (tapping a row in "Your Queue").
+  Future<void> playAt(int i) async {
+    if (i >= 0 && i < queue.length) await _playIndex(i);
+  }
+
   Future<void> next() async {
     if (index + 1 < queue.length) await _playIndex(index + 1);
   }
