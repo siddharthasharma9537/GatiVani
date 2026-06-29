@@ -4,7 +4,10 @@ import 'package:provider/provider.dart';
 import '../l10n/strings.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
+import '../services/edition_store.dart';
 import '../design/tokens.dart';
+import '../design/section_colors.dart';
+import '../models/newspaper_article.dart';
 import '../widgets/assistant_sheet.dart';
 
 /// Full-screen player: the article text scrolls like lyrics with the current
@@ -28,6 +31,8 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
   int _lastScrolled = -1;
   bool _dismissing = false;
   double _dragDy = 0; // accumulated pull on the header → minimize
+  bool _readMode = false; // false = album-art player; true = read-along lyrics
+  bool _downloading = false;
 
   // Per-article cache, recomputed when the playing article changes.
   String _forId = '';
@@ -160,8 +165,8 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                 .addPostFrameCallback((_) => _autoScroll(activeLine));
 
             return Column(children: [
-              // Pull the header/title down to minimize back to the mini-player
-              // (audio keeps playing) — on a drag of ≳70px or a downward flick.
+              // Pull the header down to minimize back to the mini-player (audio
+              // keeps playing) — on a drag of ≳70px or a downward flick.
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onVerticalDragStart: (_) => _dragDy = 0,
@@ -173,91 +178,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
                     if (context.canPop()) context.pop();
                   }
                 },
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  _header(context, a),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                    child: Text(a.title,
-                        style: const TextStyle(
-                            color: Gati.onInk,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w500)),
-                  ),
-                ]),
+                child: _header(context, a),
               ),
               Expanded(
-                child: NotificationListener<ScrollNotification>(
-                  // Pull the lyrics down past the top to minimize the player —
-                  // the iOS now-playing gesture, without fighting normal scroll.
-                  onNotification: (n) {
-                    if (n.metrics.pixels < -90 && !_dismissing) {
-                      _dismissing = true;
-                      if (context.canPop()) context.pop();
-                    }
-                    return false;
-                  },
-                  child: ShaderMask(
-                  // Soft fade at top and bottom so lines glide under the title
-                  // and controls — premium, Apple-Music-like.
-                  shaderCallback: (rect) => const LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black, Colors.black, Colors.transparent],
-                    stops: [0.0, 0.06, 0.9, 1.0],
-                  ).createShader(rect),
-                  blendMode: BlendMode.dstIn,
-                  child: ListView.builder(
-                    controller: _scroll,
-                    physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics()),
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    itemCount: _lines.length,
-                    itemBuilder: (context, li) {
-                      final k = _keys.putIfAbsent(li, () => GlobalKey());
-                      final firstWord = _lineFirstWord[li];
-                      final isActiveLine = li == activeLine;
-                      final spans = <TextSpan>[];
-                      for (var w = 0; w < _lines[li].length; w++) {
-                        final gi = firstWord + w;
-                        final isActive = gi == activeWord;
-                        final isPast = gi < activeWord;
-                        spans.add(TextSpan(
-                          text: _lines[li][w] + (w == _lines[li].length - 1 ? '' : ' '),
-                          style: TextStyle(
-                            color: isActive
-                                ? Gati.accent
-                                : isPast
-                                    ? Gati.onInkPast
-                                    : Gati.onInkFuture,
-                            fontWeight: isActive ? FontWeight.w500 : FontWeight.w400,
-                          ),
-                        ));
-                      }
-                      return GestureDetector(
-                        key: k,
-                        onTap: () => p.seek(Duration(
-                            milliseconds: (_wordStart[firstWord] * dur).round())),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 250),
-                          margin: const EdgeInsets.symmetric(vertical: 4),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: isActiveLine
-                                ? const Color(0x1AD85A30) // accent @ ~10%
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: RichText(
-                            text: TextSpan(
-                                style: const TextStyle(fontSize: 18, height: 1.6),
-                                children: spans),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
+                child: _readMode
+                    ? _readView(context, p, a, activeLine, activeWord, dur)
+                    : _artView(context, a),
               ),
               _controls(p),
             ]);
@@ -265,6 +191,258 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen> {
         ),
       ),
     );
+  }
+
+  // ── Album-art player (default) ──────────────────────────────────────────────
+  Widget _artView(BuildContext context, NewspaperArticle a) {
+    final lang = context.read<SettingsProvider>().lang;
+    final mins = (a.estimatedDurationSeconds / 60).ceil();
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+      child: Column(children: [
+        _albumArt(a, lang),
+        const SizedBox(height: 22),
+        Text(a.title,
+            textAlign: TextAlign.center,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                color: Gati.onInk,
+                fontSize: 19,
+                fontWeight: FontWeight.w500,
+                height: 1.3)),
+        const SizedBox(height: 6),
+        Text('${sectionLabel(a.category, lang)} · p${a.page} · $mins ${tr(lang, 'min')}',
+            style: const TextStyle(color: Gati.onInkMuted, fontSize: 12.5)),
+        const SizedBox(height: 20),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.center,
+          children: [
+            _chip(Icons.article_outlined, tr(lang, 'read'),
+                () => setState(() => _readMode = true),
+                filled: true),
+            _chip(Icons.bookmark_border_rounded, tr(lang, 'save'),
+                () => _snack(context, tr(lang, 'save_soon'))),
+            _chip(Icons.shuffle_rounded, tr(lang, 'mix'),
+                () => _mix(context, a)),
+            _chip(Icons.download_outlined, tr(lang, 'download'),
+                () => _download(context, a),
+                busy: _downloading),
+          ],
+        ),
+      ]),
+    );
+  }
+
+  Widget _albumArt(NewspaperArticle a, String lang) {
+    final r = sectionRamp(a.category, dark: true);
+    return AspectRatio(
+      aspectRatio: 1,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: a.hasImage
+            ? Image.network(a.imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _coverArt(a, r, lang))
+            : _coverArt(a, r, lang),
+      ),
+    );
+  }
+
+  // Generated cover when the article has no real clipping: section-tinted card.
+  Widget _coverArt(NewspaperArticle a, List<Color> r, String lang) {
+    return Container(
+      color: r[0],
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Gativani',
+              style: TextStyle(
+                  color: r[2], fontSize: 12.5, letterSpacing: 0.5)),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.article_rounded, color: Gati.accent, size: 42),
+              const SizedBox(height: 12),
+              Text(sectionLabel(a.category, lang),
+                  style: TextStyle(
+                      color: r[1],
+                      fontSize: 26,
+                      fontWeight: FontWeight.w600,
+                      height: 1.1)),
+            ],
+          ),
+          Text('p${a.page}',
+              style: TextStyle(color: r[2], fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(IconData icon, String label, VoidCallback onTap,
+      {bool filled = false, bool busy = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: filled ? Gati.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(22),
+          border: filled ? null : Border.all(color: Gati.onInkTrack),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          busy
+              ? SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: filled ? Gati.onInk : Gati.accent))
+              : Icon(icon,
+                  size: 16, color: filled ? Gati.onInk : Gati.onInkFuture),
+          const SizedBox(width: 6),
+          Text(label,
+              style: TextStyle(
+                  color: filled ? Gati.onInk : Gati.onInkFuture,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500)),
+        ]),
+      ),
+    );
+  }
+
+  // ── Read-along (the old default, now behind the Read chip) ───────────────────
+  Widget _readView(BuildContext context, PlaybackService p, NewspaperArticle a,
+      int activeLine, int activeWord, int dur) {
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 8, 6),
+        child: Row(children: [
+          Expanded(
+            child: Text(a.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Gati.onInk,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500)),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded,
+                color: Gati.onInkMuted, size: 20),
+            onPressed: () => setState(() => _readMode = false),
+          ),
+        ]),
+      ),
+      Expanded(
+        child: NotificationListener<ScrollNotification>(
+          // Pull the lyrics down past the top to minimize the player.
+          onNotification: (n) {
+            if (n.metrics.pixels < -90 && !_dismissing) {
+              _dismissing = true;
+              if (context.canPop()) context.pop();
+            }
+            return false;
+          },
+          child: ShaderMask(
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.transparent, Colors.black, Colors.black, Colors.transparent],
+              stops: [0.0, 0.06, 0.9, 1.0],
+            ).createShader(rect),
+            blendMode: BlendMode.dstIn,
+            child: ListView.builder(
+              controller: _scroll,
+              physics: const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics()),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              itemCount: _lines.length,
+              itemBuilder: (context, li) {
+                final k = _keys.putIfAbsent(li, () => GlobalKey());
+                final firstWord = _lineFirstWord[li];
+                final isActiveLine = li == activeLine;
+                final spans = <TextSpan>[];
+                for (var w = 0; w < _lines[li].length; w++) {
+                  final gi = firstWord + w;
+                  final isActive = gi == activeWord;
+                  final isPast = gi < activeWord;
+                  spans.add(TextSpan(
+                    text: _lines[li][w] +
+                        (w == _lines[li].length - 1 ? '' : ' '),
+                    style: TextStyle(
+                      color: isActive
+                          ? Gati.accent
+                          : isPast
+                              ? Gati.onInkPast
+                              : Gati.onInkFuture,
+                      fontWeight:
+                          isActive ? FontWeight.w500 : FontWeight.w400,
+                    ),
+                  ));
+                }
+                return GestureDetector(
+                  key: k,
+                  onTap: () => p.seek(Duration(
+                      milliseconds: (_wordStart[firstWord] * dur).round())),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isActiveLine
+                          ? const Color(0x1AD85A30)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: RichText(
+                      text: TextSpan(
+                          style: const TextStyle(fontSize: 18, height: 1.6),
+                          children: spans),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  void _mix(BuildContext context, NewspaperArticle a) {
+    final lang = context.read<SettingsProvider>().lang;
+    var related =
+        EditionStore.i.forSection(a.category).where((x) => x.id != a.id).toList();
+    if (related.isEmpty) {
+      related =
+          EditionStore.i.articles.where((x) => x.id != a.id).take(12).toList();
+    }
+    if (related.isEmpty) return;
+    PlaybackService.i.addToQueue(related.take(12));
+    _snack(context, tr(lang, 'mix_added'));
+  }
+
+  Future<void> _download(BuildContext context, NewspaperArticle a) async {
+    final lang = context.read<SettingsProvider>().lang;
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    final ok = await PlaybackService.i.preload(a);
+    if (!mounted) return;
+    setState(() => _downloading = false);
+    _snack(context, tr(lang, ok ? 'downloaded' : 'download_failed'));
+  }
+
+  void _snack(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
   }
 
   void _openSleepSheet(BuildContext context) {

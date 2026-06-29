@@ -136,6 +136,35 @@ class PlaybackService extends ChangeNotifier {
     await playOne(a, brief: true);
   }
 
+  /// Pre-synthesize the full audio without playing, so it's cached and instant
+  /// later (the Download chip). Returns true if audio is ready.
+  Future<bool> preload(NewspaperArticle a) async {
+    if (a.audioUrl != null && a.audioUrl!.startsWith('http')) return true;
+    try {
+      final r = await http
+          .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
+              headers: {
+                ...ApiConfig.authHeaders,
+                'Content-Type': 'application/json'
+              },
+              body: json.encode({
+                'text': a.spokenText,
+                'language': 'te-IN',
+                'articleId': a.id,
+                if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
+                if (a.readingStyle.isNotEmpty) 'readingStyle': a.readingStyle,
+              }))
+          .timeout(const Duration(seconds: 150));
+      final data = json.decode(r.body) as Map<String, dynamic>;
+      if (data['ok'] == true) {
+        a.audioUrl = data['audioUrl'] as String?;
+        notifyListeners();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   /// How many tracks are queued after the current one.
   int get upNextCount => index < 0 ? 0 : (queue.length - index - 1);
 
