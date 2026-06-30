@@ -153,7 +153,14 @@ class _HomeDrawerShellState extends State<HomeDrawerShell>
   }
 
   Widget _menuPanel(GatiPalette p, String lang, Color recessed) {
-    return Container(
+    // Tapping empty menu space closes the drawer and returns to Today. The
+    // translucent behavior lets the actual option controls (choice rows,
+    // buttons) win the gesture arena, so tapping an option does NOT close —
+    // only taps that land on non-interactive areas reach this _close.
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _close,
+      child: Container(
       color: recessed,
       child: SafeArea(
         child: Column(
@@ -172,6 +179,7 @@ class _HomeDrawerShellState extends State<HomeDrawerShell>
             ),
           ],
         ),
+      ),
       ),
     );
   }
