@@ -341,6 +341,13 @@ class PlaybackService extends ChangeNotifier {
       // Briefing sessions narrate + cache the short version separately.
       var url = brief ? a.summaryAudioUrl : a.audioUrl;
       if (url == null || !url.startsWith('http')) {
+        // Nothing cached → we're about to synthesize, which can take many
+        // seconds. Stop the previous track NOW so its audio doesn't keep
+        // bleeding over the newly-selected article during the wait (otherwise
+        // the last-played clip — usually the editorial demo — appears to play
+        // for whatever article you pick).
+        await player.stop();
+        if (epoch != _playEpoch) return;
         final r = await http
             .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
                 headers: {
