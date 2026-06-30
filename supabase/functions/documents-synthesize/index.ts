@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { SarvamAIClient } from "npm:sarvamai@1.1.7";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { alignAndStore } from "./alignment.ts";
+// Sarvam STT forced-alignment (./alignment.ts) is disabled for cost — see the
+// commented-out alignAndStore call in the handler.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,19 +17,9 @@ const LANGUAGE_CONFIG: Record<string, { code: string; sampleRate: number; speake
   en: { code: "en-IN", sampleRate: 22050, speaker: "amit" },
 };
 
-// ── Tier → TTS provider routing ────────────────────────────────────────────────
-// free / standard / premium   → Gemini 2.5 Flash TTS  (~8× cheaper, no chunking)
-// super_premium+               → Sarvam Bulbul:v3     (best Telugu phonetics)
-
-type TtsProvider = "gemini-2.5" | "sarvam";
-
-const TIER_PROVIDER: Record<string, TtsProvider> = {
-  free:                   "gemini-2.5",
-  standard:               "gemini-2.5",
-  premium:                "gemini-2.5",
-  super_premium:          "sarvam",
-  super_premium_advanced: "sarvam",
-};
+// ── TTS provider ────────────────────────────────────────────────────────────────
+// Gemini 2.5 Flash TTS for every tier. Sarvam TTS was removed (cost) — see the
+// main handler; there is no Sarvam TTS fallback.
 
 // ── Gemini voice mapping ───────────────────────────────────────────────────────
 // Sarvam female voices → Kore (clear, warm female)
@@ -230,51 +220,6 @@ async function synthesizeWithGemini(
   return { wavBytes, durationSec, chunks: parts.length };
 }
 
-// ── Sarvam Bulbul:v3 TTS ──────────────────────────────────────────────────────
-
-async function synthesizeWithSarvam(
-  text: string,
-  speaker: string,
-  langCode: string,
-  sampleRate: number,
-  sarvamKey: string,
-  readingStyle?: string,
-): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
-  const pace = readingStyle === "devotional_slow" ? 0.85
-    : readingStyle === "mantra_clear" ? 0.75
-    : 1.1;
-  const sarvam = new SarvamAIClient({ apiSubscriptionKey: sarvamKey });
-  const chunks = chunkText(text);
-  console.log(`[sarvam-tts] ${text.length} chars → ${chunks.length} chunk(s), voice=${speaker}`);
-
-  const wavBuffers: Uint8Array[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    console.log(`[sarvam-tts] chunk ${i + 1}/${chunks.length}: ${chunk.length} chars`);
-    const resp = await sarvam.textToSpeech.convert({
-      text: chunk,
-      target_language_code: langCode,
-      speaker,
-      pace,
-      speech_sample_rate: sampleRate,
-      enable_preprocessing: true,
-      model: "bulbul:v3",
-    });
-
-    let audioB64: string | null = null;
-    if (resp?.audios?.length) audioB64 = resp.audios[0];
-    else if (typeof resp === "string") audioB64 = resp;
-    if (!audioB64) { console.warn(`[sarvam-tts] no audio chunk ${i + 1}, skipping`); continue; }
-    wavBuffers.push(base64ToBytes(audioB64));
-  }
-
-  if (wavBuffers.length === 0) throw new Error("All Sarvam chunks failed to synthesize");
-
-  const combined = concatWavBuffers(wavBuffers);
-  const durationSec = Math.round(combined.length / (sampleRate * 2));
-  return { wavBytes: combined, durationSec, chunks: chunks.length };
-}
-
 // ── Response helper ───────────────────────────────────────────────────────────
 
 function json(body: unknown, status = 200) {
@@ -291,7 +236,6 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   try {
-    const SARVAM_KEY = Deno.env.get("SARVAM_API_KEY");
     const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
 
     const body = await req.json().catch(() => null);
@@ -345,53 +289,18 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Determine provider from tier header; default "free" → Gemini 2.5
-    const tier = (req.headers.get("x-subscription-tier") || "free").toLowerCase();
-    const desiredProvider: TtsProvider = TIER_PROVIDER[tier] ?? "gemini-2.5";
-
-    // Graceful fallback if a key is missing
-    const effectiveProvider: TtsProvider =
-      desiredProvider === "gemini-2.5" && !GEMINI_KEY ? "sarvam"
-      : desiredProvider === "sarvam" && !SARVAM_KEY ? "gemini-2.5"
-      : desiredProvider;
-
-    if (effectiveProvider === "gemini-2.5" && !GEMINI_KEY) {
+    // TTS is Gemini 2.5 Flash ONLY. Sarvam TTS is disabled (cost): no tier
+    // routes to it, and there is NO Sarvam fallback when Gemini fails — we
+    // surface the error instead of silently (and expensively) falling back.
+    if (!GEMINI_KEY) {
       return json({ error: "config_missing", message: "GEMINI_API_KEY not configured" }, 500);
     }
-    if (effectiveProvider === "sarvam" && !SARVAM_KEY) {
-      return json({ error: "config_missing", message: "SARVAM_API_KEY not configured" }, 500);
-    }
 
-    console.log(`[synthesize] tier=${tier} provider=${effectiveProvider} chars=${text.length} speaker=${speaker}`);
+    console.log(`[synthesize] provider=gemini-2.5 chars=${text.length} speaker=${speaker}`);
 
-    let wavBytes: Uint8Array;
-    let durationSec: number;
-    let chunks: number;
-    let usedProvider = effectiveProvider;
-
-    if (effectiveProvider === "gemini-2.5") {
-      try {
-        ({ wavBytes, durationSec, chunks } = await synthesizeWithGemini(text, speaker, GEMINI_KEY!, readingStyle));
-      } catch (geminiErr) {
-        const errMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-        console.warn(`[synthesize] Gemini failed: ${errMsg.slice(0, 100)}`);
-
-        // Fall back to Sarvam if available (handles rate limits, content blocks, quota exhaustion)
-        if (SARVAM_KEY) {
-          console.log("[synthesize] Falling back to Sarvam TTS");
-          usedProvider = "sarvam";
-          ({ wavBytes, durationSec, chunks } = await synthesizeWithSarvam(
-            text, speaker, cfg.code, cfg.sampleRate, SARVAM_KEY, readingStyle,
-          ));
-        } else {
-          throw geminiErr;
-        }
-      }
-    } else {
-      ({ wavBytes, durationSec, chunks } = await synthesizeWithSarvam(
-        text, speaker, cfg.code, cfg.sampleRate, SARVAM_KEY!, readingStyle,
-      ));
-    }
+    const usedProvider = "gemini-2.5";
+    const { wavBytes, durationSec, chunks } =
+      await synthesizeWithGemini(text, speaker, GEMINI_KEY, readingStyle);
 
     console.log(`[synthesize] done: ${Math.round(wavBytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
 
@@ -413,20 +322,17 @@ Deno.serve(async (req) => {
           .from("articles").update({ [target]: audioUrl }).eq("id", articleId);
         if (updErr) console.warn(`[synthesize] ${target} update failed:`, updErr.message);
 
-        // Background forced alignment (Sarvam STT with word timestamps) for
-        // lyrics-style highlighting. Non-blocking. Only for full articles —
-        // brief clips are short, so the proportional estimate is fine and we
-        // skip the extra STT cost.
-        if (SARVAM_KEY && target === "audio_url") {
-          // deno-lint-ignore no-explicit-any
-          (globalThis as any).EdgeRuntime?.waitUntil?.(alignAndStore({
-            wavBytes,
-            articleId,
-            languageCode: body.language || "te-IN",
-            sarvamKey: SARVAM_KEY,
-            supabase,
-          }));
-        }
+        // Forced alignment (Sarvam STT word timestamps) for lyric highlighting
+        // is DISABLED to avoid Sarvam cost — it ran a speech-to-text pass on
+        // every full article. The player falls back to its built-in
+        // proportional timing estimate, so read-along still works (just less
+        // word-precise). To re-enable, restore the alignAndStore call here.
+        // if (SARVAM_KEY && target === "audio_url") {
+        //   (globalThis as any).EdgeRuntime?.waitUntil?.(alignAndStore({
+        //     wavBytes, articleId, languageCode: body.language || "te-IN",
+        //     sarvamKey: SARVAM_KEY, supabase,
+        //   }));
+        // }
       }
     }
     if (!audioUrl) audioUrl = `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
