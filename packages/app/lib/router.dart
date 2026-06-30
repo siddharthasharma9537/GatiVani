@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'screens/home_drawer_shell.dart';
+import 'screens/live_feed_screen.dart';
 import 'screens/section_screen.dart';
 import 'screens/lyrics_player_screen.dart';
 import 'screens/menu_screen.dart';
@@ -14,7 +15,11 @@ import 'services/edition_store.dart';
 /// Navigator.push, since those create no history entries on web).
 final GoRouter appRouter = GoRouter(
   routes: [
-    GoRoute(path: '/', builder: (_, __) => const HomeDrawerShell()),
+    // v2 landing: the Live/Discovery feed sits in front of the newspaper.
+    GoRoute(path: '/', builder: (_, __) => const LiveFeedScreen()),
+    // The untouched Today experience (newspaper + reveal drawer), now reached
+    // by tapping the Newspaper tile on the Live feed.
+    GoRoute(path: '/newspaper', builder: (_, __) => const HomeDrawerShell()),
     // The player rises up from the bottom (where the mini-player sits) so it
     // reads as expanding out of it — like YouTube Music — instead of the
     // default slide-in-from-the-right page transition.
@@ -48,7 +53,7 @@ final GoRouter appRouter = GoRouter(
     // store is empty (cold deep-link/refresh), fall back to home.
     GoRoute(
       path: '/section/:name',
-      redirect: (_, __) => EditionStore.i.articles.isEmpty ? '/' : null,
+      redirect: (_, __) => EditionStore.i.articles.isEmpty ? '/newspaper' : null,
       builder: (_, state) {
         final name = Uri.decodeComponent(state.pathParameters['name'] ?? '');
         return SectionScreen(
