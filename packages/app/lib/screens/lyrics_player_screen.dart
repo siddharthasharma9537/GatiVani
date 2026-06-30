@@ -229,7 +229,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               final bgTint = Color.lerp(const Color(0xFF0E0D0B), hue, 0.22)!;
               final panelTint = Color.lerp(const Color(0xFF15120E), hue, 0.18)!;
 
-              return Stack(children: [
+              // StackFit.expand: every child here is Positioned, so without it
+              // the Stack collapses to zero height (loose fit → smallest size)
+              // and the whole player renders blank.
+              return Stack(fit: StackFit.expand, children: [
                 Positioned.fill(child: ColoredBox(color: bgTint)),
                 // ── The player — compresses upward as the queue sheet rises so
                 // the transport stays visible above it (YouTube-Music style), and
