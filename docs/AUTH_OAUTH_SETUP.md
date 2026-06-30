@@ -1,17 +1,17 @@
 # OAuth setup (Google / Apple / Microsoft)
 
-The app ships the **frontend** OAuth flow: the Sign in / Create account screen has
-"Continue with Google / Apple / Microsoft" buttons that redirect through Supabase's
-hosted authorize endpoint:
+The app uses the **`supabase_flutter` SDK** for auth. Tapping "Continue with
+Google" calls `signInWithOAuth(OAuthProvider.google)`, which redirects through
+Supabase → Google → back to the app; the SDK then **captures and persists the
+session automatically**, and the menu's account card updates to the signed-in
+user (with Log out). No manual token handling.
 
-```
-https://jjoxowdvzmlchtfarpbs.supabase.co/auth/v1/authorize?provider=<google|apple|azure>&redirect_to=<app origin>
-```
-
-For the round-trip to actually log a user in, **each provider must be enabled in
-the Supabase dashboard with its client id + secret.** That step requires entering
-secrets and registering apps on each provider's console, so it has to be done by
-you — it can't be automated from here.
+**Google is the one wired for v1** (Apple / Microsoft buttons exist but need
+their own provider config). For the round-trip to actually log a user in, **the
+provider must be enabled in the Supabase dashboard with its client id + secret.**
+That step requires entering secrets and registering an app in Google Cloud, so it
+must be done by you — it can't be automated from here. Once the steps below are
+done, sign-in works end-to-end with no code changes.
 
 ## 1. Supabase redirect URLs (once)
 

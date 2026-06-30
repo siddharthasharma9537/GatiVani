@@ -24,6 +24,9 @@ dependencies:
   http: ^1.1.0
   dio: ^5.3.1
 
+  # Auth (Supabase GoTrue — OAuth + session persistence)
+  supabase_flutter: ^2.8.0
+
   # Firebase
   firebase_core: ^4.8.0
   cloud_firestore: ^6.4.0

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
+import '../services/auth_service.dart';
 import '../services/settings_provider.dart';
 
 /// The menu / account hub as a standalone route (kept for deep-links / native).
@@ -45,74 +46,8 @@ class MenuBody extends StatelessWidget {
     return ListView(
       padding: padding ?? const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
-        // ── Account (guest) ────────────────────────────────────────────────
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-              color: kInk, borderRadius: BorderRadius.circular(16)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  alignment: Alignment.center,
-                  decoration: const BoxDecoration(
-                      color: Color(0xFF43221A), shape: BoxShape.circle),
-                  child: const Icon(Icons.person_outline,
-                      color: Color(0xFFF0997B), size: 24),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(tr(lang, 'guest'),
-                        style: const TextStyle(
-                            color: kPaper,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500)),
-                    Text(tr(lang, 'guest_sub'),
-                        style: const TextStyle(
-                            color: Color(0xFFB4B2A9), fontSize: 12.5)),
-                  ],
-                ),
-              ]),
-              const SizedBox(height: 14),
-              Row(children: [
-                Expanded(
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: kAccent,
-                        foregroundColor: kPaper,
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12))),
-                    onPressed: () => _openAuth(context, signUp: false),
-                    child: Text(tr(lang, 'sign_in'),
-                        style: const TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w500)),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                        foregroundColor: kPaper,
-                        side: const BorderSide(color: Color(0xFF4A4A47)),
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12))),
-                    onPressed: () => _openAuth(context, signUp: true),
-                    child: Text(tr(lang, 'sign_up'),
-                        style: const TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w500)),
-                  ),
-                ),
-              ]),
-            ],
-          ),
-        ),
+        // ── Account ────────────────────────────────────────────────────────
+        _accountCard(context, lang),
         const SizedBox(height: 20),
 
         // ── Language ───────────────────────────────────────────────────────
@@ -167,6 +102,135 @@ class MenuBody extends StatelessWidget {
           ]),
         ),
       ],
+    );
+  }
+
+  // Signed-in user (avatar + name/email + log out) or the guest sign-in card.
+  Widget _accountCard(BuildContext context, String lang) {
+    final auth = context.watch<AuthService>();
+    if (auth.signedIn) {
+      final name = auth.name ?? auth.email ?? tr(lang, 'account');
+      final email = auth.email ?? '';
+      final avatar = auth.avatarUrl;
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration:
+            BoxDecoration(color: kInk, borderRadius: BorderRadius.circular(16)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            CircleAvatar(
+              radius: 23,
+              backgroundColor: const Color(0xFF43221A),
+              backgroundImage: (avatar != null && avatar.isNotEmpty)
+                  ? NetworkImage(avatar)
+                  : null,
+              child: (avatar == null || avatar.isEmpty)
+                  ? const Icon(Icons.person, color: Color(0xFFF0997B), size: 24)
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: kPaper,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500)),
+                  if (email.isNotEmpty)
+                    Text(email,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Color(0xFFB4B2A9), fontSize: 12.5)),
+                ],
+              ),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: kPaper,
+                  side: const BorderSide(color: Color(0xFF4A4A47)),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12))),
+              onPressed: () => context.read<AuthService>().signOut(),
+              child: Text(tr(lang, 'log_out'),
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w500)),
+            ),
+          ),
+        ]),
+      );
+    }
+    // Guest — sign in / create account.
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration:
+          BoxDecoration(color: kInk, borderRadius: BorderRadius.circular(16)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+                color: Color(0xFF43221A), shape: BoxShape.circle),
+            child: const Icon(Icons.person_outline,
+                color: Color(0xFFF0997B), size: 24),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr(lang, 'guest'),
+                  style: const TextStyle(
+                      color: kPaper, fontSize: 16, fontWeight: FontWeight.w500)),
+              Text(tr(lang, 'guest_sub'),
+                  style: const TextStyle(
+                      color: Color(0xFFB4B2A9), fontSize: 12.5)),
+            ],
+          ),
+        ]),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: kAccent,
+                  foregroundColor: kPaper,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12))),
+              onPressed: () => _openAuth(context, signUp: false),
+              child: Text(tr(lang, 'sign_in'),
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w500)),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: kPaper,
+                  side: const BorderSide(color: Color(0xFF4A4A47)),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12))),
+              onPressed: () => _openAuth(context, signUp: true),
+              child: Text(tr(lang, 'sign_up'),
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w500)),
+            ),
+          ),
+        ]),
+      ]),
     );
   }
 

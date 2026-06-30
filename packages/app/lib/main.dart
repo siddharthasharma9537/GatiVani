@@ -1,7 +1,10 @@
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
+import "package:supabase_flutter/supabase_flutter.dart";
+import "config/api_config.dart";
 import "design/app_theme.dart";
 import "router.dart";
+import "services/auth_service.dart";
 import "services/settings_provider.dart";
 import "ssl_override_stub.dart"
     if (dart.library.io) "ssl_override_io.dart";
@@ -12,11 +15,20 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   useCleanUrls(); // path URL strategy on web so the browser Back button works
   installSslOverride();
+  // Supabase auth (GoTrue) — also picks up the session from the URL after an
+  // OAuth redirect on web, and persists it across reloads.
+  await Supabase.initialize(
+    url: ApiConfig.projectUrl,
+    anonKey: ApiConfig.anonKey,
+  );
   final settings = SettingsProvider();
   await settings.load();
   runApp(
-    ChangeNotifierProvider.value(
-      value: settings,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: settings),
+        ChangeNotifierProvider(create: (_) => AuthService()),
+      ],
       child: const GatiVaniApp(),
     ),
   );

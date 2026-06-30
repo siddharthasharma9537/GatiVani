@@ -1,11 +1,10 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../config/api_config.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show OAuthProvider;
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
+import '../services/auth_service.dart';
 import '../services/settings_provider.dart';
 
 /// Login / signup. OAuth (Google / Apple / Microsoft) is wired to Supabase's
@@ -31,13 +30,24 @@ class _AuthScreenState extends State<AuthScreen> {
     ('azure', 'Microsoft', Icons.window),
   ];
 
+  static const _providerMap = {
+    'google': OAuthProvider.google,
+    'apple': OAuthProvider.apple,
+    'azure': OAuthProvider.azure,
+  };
+
   Future<void> _oauth(String provider) async {
-    // On web, return to wherever the app is being served; native would use a
-    // deep link / custom scheme (configured separately).
-    final redirect = kIsWeb ? Uri.base.origin : 'https://gativani.vercel.app';
-    final uri = Uri.parse(ApiConfig.oauthAuthorizeUrl(provider, redirect));
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, webOnlyWindowName: '_self');
+    final prov = _providerMap[provider];
+    if (prov == null) return;
+    try {
+      // The SDK redirects (web) and, on return, picks up the session — the
+      // menu's account card then reflects the signed-in user.
+      await context.read<AuthService>().signIn(prov);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Sign-in failed: $e')));
+      }
     }
   }
 
