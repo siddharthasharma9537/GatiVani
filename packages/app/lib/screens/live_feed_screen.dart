@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
+import '../services/news_feed_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/mini_player.dart';
 
@@ -25,44 +27,115 @@ import '../widgets/mini_player.dart';
 ///   - marquee + stories + latest  → RSS (PIB / Google News / TeluguOne)
 ///   - podcasts                     → AIR / Prasar Bharati direct MP3 feeds
 ///   - cricket                      → CricketData.org facts → Gemini → TTS
-class LiveFeedScreen extends StatelessWidget {
+class LiveFeedScreen extends StatefulWidget {
   const LiveFeedScreen({super.key});
 
+  @override
+  State<LiveFeedScreen> createState() => _LiveFeedScreenState();
+}
+
+class _LiveFeedScreenState extends State<LiveFeedScreen> {
   // Toggle until the live-score backend exists; hides the cricket card on
   // rest days so it never shows a stale match.
   static const bool _cricketLive = true;
+
+  final _feed = NewsFeedService();
+  List<NewsItem> _items = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final items = await _feed.fetch(topic: 'top', limit: 20);
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
+  }
+
+  // First few headlines scroll in the marquee; the rest fill Latest stories so
+  // the two sections don't repeat the same items.
+  List<String> get _marqueeTitles =>
+      _items.take(6).map((e) => e.title).toList();
+  List<NewsItem> get _latest =>
+      _items.length > 6 ? _items.sublist(6) : _items;
+
+  Future<void> _open(String link) async {
+    final uri = Uri.tryParse(link);
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final lang = context.watch<SettingsProvider>().lang;
+    final marquee = _marqueeTitles.isEmpty
+        ? [_t(lang, 'Loading latest news…', 'తాజా వార్తలు లోడ్ అవుతున్నాయి…')]
+        : _marqueeTitles;
     return Scaffold(
       backgroundColor: p.paper,
       body: SafeArea(
         bottom: false,
         child: Column(children: [
           _Header(lang: lang),
-          const _BreakingMarquee(items: _demoBreaking),
+          _BreakingMarquee(items: marquee),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: Gati.s6),
-              children: [
-                const SizedBox(height: Gati.s4),
-                _StoriesRow(items: _demoStories),
-                if (_cricketLive) ...[
+            child: RefreshIndicator(
+              onRefresh: _load,
+              color: kAccent,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: Gati.s6),
+                children: [
+                  const SizedBox(height: Gati.s4),
+                  _StoriesRow(items: _demoStories),
+                  if (_cricketLive) ...[
+                    const SizedBox(height: Gati.s5),
+                    _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
+                    const _CricketCard(),
+                  ],
                   const SizedBox(height: Gati.s5),
-                  _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
-                  const _CricketCard(),
+                  _SectionLabel(_t(lang, 'Podcasts', 'పాడ్‌క్యాస్ట్‌లు')),
+                  _PodcastsGrid(items: _demoPodcasts),
+                  const SizedBox(height: Gati.s5),
+                  _NewspaperTile(lang: lang),
+                  const SizedBox(height: Gati.s5),
+                  _SectionLabel(_t(lang, 'Latest stories', 'తాజా వార్తలు')),
+                  if (_loading)
+                    const Padding(
+                      padding: EdgeInsets.all(Gati.s6),
+                      child: Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: kAccent),
+                        ),
+                      ),
+                    )
+                  else if (_latest.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: Gati.s5, vertical: Gati.s3),
+                      child: Text(
+                          _t(lang, 'No stories right now. Pull to refresh.',
+                              'వార్తలు లేవు. రిఫ్రెష్ చేయండి.'),
+                          style: TextStyle(fontSize: 13, color: p.muted)),
+                    )
+                  else
+                    ..._latest.take(10).map((it) => _StoryRow(
+                          item: it,
+                          age: relativeAge(it.pubDate, lang),
+                          onTap: () => _open(it.link),
+                        )),
                 ],
-                const SizedBox(height: Gati.s5),
-                _SectionLabel(_t(lang, 'Podcasts', 'పాడ్‌క్యాస్ట్‌లు')),
-                _PodcastsGrid(items: _demoPodcasts),
-                const SizedBox(height: Gati.s5),
-                _NewspaperTile(lang: lang),
-                const SizedBox(height: Gati.s5),
-                _SectionLabel(_t(lang, 'Latest stories', 'తాజా వార్తలు')),
-                ..._demoLatest.map((s) => _StoryRow(story: s)),
-              ],
+              ),
             ),
           ),
           MiniPlayer(onExpand: () => context.push('/player')),
@@ -409,15 +482,18 @@ class _NewspaperTile extends StatelessWidget {
 // ── Latest story row ────────────────────────────────────────────────────────
 
 class _StoryRow extends StatelessWidget {
-  const _StoryRow({required this.story});
-  final ({String title, String source, String age}) story;
+  const _StoryRow(
+      {required this.item, required this.age, required this.onTap});
+  final NewsItem item;
+  final String age;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     return GestureDetector(
-      // TODO: tap → article detail with audio play button.
-      onTap: () {},
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s5, Gati.s3),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -425,20 +501,25 @@ class _StoryRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(story.title,
+                Text(item.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                         fontSize: 14.5, height: 1.3, color: p.ink)),
                 const SizedBox(height: Gati.s1),
                 Row(children: [
-                  Text(story.source,
-                      style: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w500,
-                          color: kAccent)),
-                  Text('  ·  ${story.age}',
-                      style: TextStyle(fontSize: 11.5, color: p.muted)),
+                  Flexible(
+                    child: Text(item.source,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                            color: kAccent)),
+                  ),
+                  if (age.isNotEmpty)
+                    Text('  ·  $age',
+                        style: TextStyle(fontSize: 11.5, color: p.muted)),
                 ]),
               ],
             ),
@@ -450,7 +531,7 @@ class _StoryRow extends StatelessWidget {
             alignment: Alignment.center,
             decoration: BoxDecoration(
                 color: Gati.accentSoft, shape: BoxShape.circle),
-            child: const Icon(Icons.play_arrow, color: kAccent, size: 18),
+            child: const Icon(Icons.open_in_new, color: kAccent, size: 16),
           ),
         ]),
       ),
@@ -481,14 +562,9 @@ class _SectionLabel extends StatelessWidget {
 /// Tiny inline bilingual helper so the scaffold doesn't need new l10n keys yet.
 String _t(String lang, String en, String te) => lang == 'te' ? te : en;
 
-// ── Demo content (replace with live feeds) ──────────────────────────────────
-
-const _demoBreaking = <String>[
-  'Heavy rain alert issued for coastal Andhra districts',
-  'Assembly session begins today; key bills tabled',
-  'India announce playing XI for the second Test',
-  'Gold prices ease slightly in Hyderabad market',
-];
+// ── Placeholder content (Stories + Podcasts await audio sources) ────────────
+// Marquee + Latest stories are now live (feeds-news). These two still await
+// their audio backends: Stories = AIR clips, Podcasts = AIR/PB MP3 feeds.
 
 const _demoStories = <({String label, String section})>[
   (label: 'Politics', section: 'politics'),
@@ -504,22 +580,4 @@ const _demoPodcasts = <({String title, String meta, String section})>[
   (title: 'Mann Ki Baat', meta: '30 min · monthly', section: 'politics'),
   (title: 'Bhagavad Gita', meta: '12 min · daily', section: 'devotional'),
   (title: 'Cinema Talk', meta: '18 min · weekly', section: 'entertainment'),
-];
-
-const _demoLatest = <({String title, String source, String age})>[
-  (
-    title: 'State cabinet clears new irrigation project for Rayalaseema',
-    source: 'PIB',
-    age: '5m'
-  ),
-  (
-    title: 'Hyderabad metro phase II gets central nod',
-    source: 'Google News',
-    age: '22m'
-  ),
-  (
-    title: 'Telugu film industry announces relief fund for daily workers',
-    source: 'TeluguOne',
-    age: '1h'
-  ),
 ];

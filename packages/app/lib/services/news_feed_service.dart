@@ -1,0 +1,80 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../config/api_config.dart';
+
+/// One headline from the feeds-news edge function (Google News Telugu RSS).
+class NewsItem {
+  NewsItem({
+    required this.title,
+    required this.link,
+    required this.source,
+    required this.pubDate,
+  });
+
+  final String title;
+  final String link;
+  final String source;
+  final String pubDate; // RFC822, e.g. "Tue, 30 Jun 2026 18:50:51 GMT"
+
+  factory NewsItem.fromJson(Map<String, dynamic> j) => NewsItem(
+        title: (j['title'] as String?) ?? '',
+        link: (j['link'] as String?) ?? '',
+        source: (j['source'] as String?) ?? '',
+        pubDate: (j['pubDate'] as String?) ?? '',
+      );
+}
+
+/// Fetches normalised Telugu news headlines from the feeds-news edge function.
+/// The function does the cross-origin fetch + RSS parse server-side, so the web
+/// app never hits a CORS wall.
+class NewsFeedService {
+  Future<List<NewsItem>> fetch({String topic = 'top', int limit = 12}) async {
+    final uri = Uri.parse(
+        '${ApiConfig.functionsUrl}/feeds-news?topic=$topic&limit=$limit');
+    try {
+      final r = await http.get(uri, headers: ApiConfig.authHeaders);
+      if (r.statusCode != 200) return [];
+      final d = json.decode(r.body) as Map<String, dynamic>;
+      final items = (d['items'] as List?) ?? const [];
+      return items
+          .map((e) => NewsItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+}
+
+const _months = <String, int>{
+  'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+  'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+};
+
+/// Parse an RFC822 pubDate ("Tue, 30 Jun 2026 18:50:51 GMT") to UTC. dart:io's
+/// HttpDate isn't available on web, so parse the fixed shape directly.
+DateTime? parseRfc822(String s) {
+  final m =
+      RegExp(r'(\d{1,2}) (\w{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2})').firstMatch(s);
+  if (m == null) return null;
+  final mon = _months[m.group(2)];
+  if (mon == null) return null;
+  return DateTime.utc(
+    int.parse(m.group(3)!),
+    mon,
+    int.parse(m.group(1)!),
+    int.parse(m.group(4)!),
+    int.parse(m.group(5)!),
+    int.parse(m.group(6)!),
+  );
+}
+
+/// Compact relative age badge, e.g. "5m" / "2h" / "1d".
+String relativeAge(String pubDate, String lang) {
+  final dt = parseRfc822(pubDate);
+  if (dt == null) return '';
+  final diff = DateTime.now().toUtc().difference(dt);
+  if (diff.inMinutes < 1) return lang == 'te' ? 'ఇప్పుడే' : 'now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+  if (diff.inHours < 24) return '${diff.inHours}h';
+  return '${diff.inDays}d';
+}
