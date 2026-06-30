@@ -41,6 +41,43 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   // 0 = closed; 1 = "Your Queue" panel open (~58% of the viewport).
   late final AnimationController _queue = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 300));
+  double _vh = 0; // viewport height, captured each build for the queue drag
+
+  static const _queueTopBar = 72.0;
+  double get _maxPanelH => (_vh - _queueTopBar).clamp(1.0, _vh < 1 ? 1.0 : _vh);
+
+  // Settle the queue sheet to the nearest detent (closed / ~58% / full), or the
+  // next one in a fling's direction.
+  void _snapQueue(double vel) {
+    const detents = [0.0, 0.6, 1.0];
+    final val = _queue.value;
+    double target;
+    if (vel < -350) {
+      target = detents.firstWhere((d) => d > val + 0.02, orElse: () => 1.0);
+    } else if (vel > 350) {
+      target = detents.lastWhere((d) => d < val - 0.02, orElse: () => 0.0);
+    } else {
+      target =
+          detents.reduce((a, b) => (val - a).abs() <= (val - b).abs() ? a : b);
+    }
+    _queue.animateTo(target, curve: Curves.easeOut);
+  }
+
+  // Drive the queue sheet from a drag anywhere on its grab area / header.
+  void _queueDragStart() {
+    _dragDy = 0;
+    _queueStart = _queue.value;
+  }
+
+  void _queueDragUpdate(DragUpdateDetails d) {
+    _dragDy += d.primaryDelta ?? 0;
+    _queue.value = (_queueStart - _dragDy / _maxPanelH).clamp(0.0, 1.0);
+  }
+
+  void _queueDragEnd(DragEndDetails d) {
+    _snapQueue(d.primaryVelocity ?? 0);
+    _dragDy = 0;
+  }
 
   @override
   void dispose() {
@@ -182,51 +219,67 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
 
             return LayoutBuilder(builder: (context, c) {
               final vh = c.maxHeight;
-              const topBar = 72.0;
-              final maxPanelH = (vh - topBar).clamp(1.0, vh);
-              // Two open detents for the queue sheet: ~58% (player still shown)
-              // and full (player collapsed into a top mini-bar). Snap to the
-              // nearest, or the next one in a fling's direction.
-              const detents = [0.0, 0.6, 1.0];
-              double snapTarget(double val, double vel) {
-                if (vel < -350) {
-                  return detents.firstWhere((d) => d > val + 0.02,
-                      orElse: () => 1.0);
-                }
-                if (vel > 350) {
-                  return detents.lastWhere((d) => d < val - 0.02,
-                      orElse: () => 0.0);
-                }
-                return detents.reduce(
-                    (a, b) => (val - a).abs() <= (val - b).abs() ? a : b);
-              }
+              _vh = vh;
+              const topBar = _queueTopBar;
+              final maxPanelH = _maxPanelH;
+              // Color-sync: tint the player background and the queue sheet with
+              // the playing section's hue (the album-art cover's colour), like
+              // YouTube Music deriving the player colour from the art.
+              final hue = sectionRamp(a.category, dark: false)[1];
+              final bgTint = Color.lerp(const Color(0xFF0E0D0B), hue, 0.22)!;
+              final panelTint = Color.lerp(const Color(0xFF15120E), hue, 0.18)!;
 
               return Stack(children: [
-                // ── The player ──
-                Column(children: [
-                  _header(context, a),
-                  Expanded(
-                    child: _stage(context, p, a, activeLine, activeWord, dur),
-                  ),
-                  // Bottom controls collapse away as the lyrics open.
-                  AnimatedBuilder(
-                    animation: _lyrics,
-                    builder: (context, _) {
-                      final t = Curves.easeInOutCubic.transform(_lyrics.value);
-                      return ClipRect(
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          heightFactor: (1 - t).clamp(0.0, 1.0),
-                          child: Opacity(
-                            opacity: (1 - t).clamp(0.0, 1.0),
-                            child: IgnorePointer(
-                                ignoring: t > 0.5, child: _controls(p)),
-                          ),
+                Positioned.fill(child: ColoredBox(color: bgTint)),
+                // ── The player — compresses upward as the queue sheet rises so
+                // the transport stays visible above it (YouTube-Music style), and
+                // fades out by the time the sheet is full (top mini-bar takes over).
+                AnimatedBuilder(
+                  animation: _queue,
+                  builder: (context, _) {
+                    final ph = (vh - maxPanelH * _queue.value).clamp(1.0, vh);
+                    final op =
+                        (1 - ((_queue.value - 0.6) / 0.4)).clamp(0.0, 1.0);
+                    return Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: ph,
+                      child: Opacity(
+                        opacity: op,
+                        child: ClipRect(
+                          child: Column(children: [
+                            _header(context, a),
+                            Expanded(
+                              child: _stage(context, p, a, activeLine,
+                                  activeWord, dur),
+                            ),
+                            // Bottom controls collapse away as the lyrics open.
+                            AnimatedBuilder(
+                              animation: _lyrics,
+                              builder: (context, _) {
+                                final t = Curves.easeInOutCubic
+                                    .transform(_lyrics.value);
+                                return ClipRect(
+                                  child: Align(
+                                    alignment: Alignment.topCenter,
+                                    heightFactor: (1 - t).clamp(0.0, 1.0),
+                                    child: Opacity(
+                                      opacity: (1 - t).clamp(0.0, 1.0),
+                                      child: IgnorePointer(
+                                          ignoring: t > 0.5,
+                                          child: _controls(p)),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ]),
                         ),
-                      );
-                    },
-                  ),
-                ]),
+                      ),
+                    );
+                  },
+                ),
                 // ── Drag catcher (art mode): up → queue, down → minimize ──
                 // Translucent so taps fall through to the pills/controls; only
                 // claims vertical drags. Covers the area above the queue panel.
@@ -259,8 +312,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                           if (_queue.value > 0 ||
                               _queueStart > 0 ||
                               _dragDy < 0) {
-                            _queue.animateTo(snapTarget(_queue.value, v),
-                                curve: Curves.easeOut);
+                            _snapQueue(v);
                           } else if ((_dragDy > 70 || v > 250) &&
                               !_dismissing) {
                             _dismissing = true;
@@ -284,7 +336,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                       height: maxPanelH,
                       child: Transform.translate(
                         offset: Offset(0, maxPanelH * (1 - _queue.value)),
-                        child: _queuePanel(context, p),
+                        child: _queuePanel(context, p, panelTint),
                       ),
                     );
                   },
@@ -318,13 +370,11 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                                 .clamp(0.0, 1.0);
                           },
                           onVerticalDragEnd: (d) {
-                            _queue.animateTo(
-                                snapTarget(_queue.value, d.primaryVelocity ?? 0),
-                                curve: Curves.easeOut);
+                            _snapQueue(d.primaryVelocity ?? 0);
                             _dragDy = 0;
                           },
                           child: Container(
-                            color: Gati.ink,
+                            color: panelTint,
                             padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
                             child: Row(children: [
                               ClipRRect(
@@ -716,59 +766,56 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   }
 
   // ── "Your Queue" panel ──────────────────────────────────────────────────────
-  Widget _queuePanel(BuildContext context, PlaybackService p) {
+  Widget _queuePanel(BuildContext context, PlaybackService p, Color tint) {
     final lang = context.read<SettingsProvider>().lang;
     final q = p.queue;
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF1A1714),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      decoration: BoxDecoration(
+        color: tint,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(children: [
-        // Grab handle — drag down to close the panel.
+        // Grab handle + "Playing from / Your Queue" header — one draggable area
+        // that resizes the sheet (up → full, down → ~58% → closed).
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onVerticalDragStart: (_) => _dragDy = 0,
-          onVerticalDragUpdate: (d) => _dragDy += d.primaryDelta ?? 0,
-          onVerticalDragEnd: (d) {
-            final v = d.primaryVelocity ?? 0;
-            if (_dragDy > 50 || v > 280) {
-              _queue.animateTo(0, curve: Curves.easeOut);
-            }
-            _dragDy = 0;
-          },
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.only(top: 10, bottom: 8),
-            alignment: Alignment.center,
-            child: Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: Gati.onInkTrack,
-                  borderRadius: BorderRadius.circular(2)),
+          onVerticalDragStart: (_) => _queueDragStart(),
+          onVerticalDragUpdate: _queueDragUpdate,
+          onVerticalDragEnd: _queueDragEnd,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.only(top: 10, bottom: 8),
+              alignment: Alignment.center,
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: Gati.onInkTrack,
+                    borderRadius: BorderRadius.circular(2)),
+              ),
             ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 2, 16, 10),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(tr(lang, 'playing_from'),
-                    style:
-                        const TextStyle(color: Gati.onInkMuted, fontSize: 12)),
-                Text(tr(lang, 'your_queue'),
-                    style: const TextStyle(
-                        color: Gati.onInk,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w500)),
-              ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 2, 16, 10),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(tr(lang, 'playing_from'),
+                        style: const TextStyle(
+                            color: Gati.onInkMuted, fontSize: 12)),
+                    Text(tr(lang, 'your_queue'),
+                        style: const TextStyle(
+                            color: Gati.onInk,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ]),
         ),
         Expanded(
           child: q.isEmpty
