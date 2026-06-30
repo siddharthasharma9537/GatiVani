@@ -1,3 +1,4 @@
+import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
 import "package:supabase_flutter/supabase_flutter.dart";
@@ -15,12 +16,33 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   useCleanUrls(); // path URL strategy on web so the browser Back button works
   installSslOverride();
-  // Supabase auth (GoTrue) — also picks up the session from the URL after an
-  // OAuth redirect on web, and persists it across reloads.
+  // Supabase auth (GoTrue). We disable the SDK's built-in URL detection
+  // (detectSessionInUri) because on Flutter web it relies on app_links'
+  // getInitialLink(), which often doesn't fire — leaving the OAuth `?code=…`
+  // in the URL unexchanged (the account gets created server-side but no session
+  // is ever established). Instead we exchange the code explicitly below, so the
+  // round-trip is deterministic.
   await Supabase.initialize(
     url: ApiConfig.projectUrl,
     anonKey: ApiConfig.anonKey,
+    authOptions: const FlutterAuthClientOptions(detectSessionInUri: false),
   );
+  // Complete an OAuth redirect: if the launch URL carries an auth code (or an
+  // error), exchange it for a session, then the SDK strips the params so a
+  // reload doesn't try to reuse a spent code.
+  if (kIsWeb) {
+    final launchUri = Uri.base;
+    final hasAuthParams = launchUri.queryParameters.containsKey('code') ||
+        launchUri.queryParameters.containsKey('error') ||
+        launchUri.queryParameters.containsKey('error_description');
+    if (hasAuthParams) {
+      try {
+        await Supabase.instance.client.auth.getSessionFromUrl(launchUri);
+      } catch (e) {
+        debugPrint('OAuth callback exchange failed: $e');
+      }
+    }
+  }
   final settings = SettingsProvider();
   await settings.load();
   runApp(
