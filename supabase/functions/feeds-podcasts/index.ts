@@ -120,12 +120,98 @@ async function fetchShow(show: Show): Promise<Episode | null> {
   }
 }
 
+// AIR Telugu News — the latest bulletin, scraped from Prasar Bharati's own
+// bulletin archive page. This is official AIR content on their own domain
+// (not a rebroadcast); it just isn't exposed through their WordPress REST API
+// or any RSS feed, so a light HTML parse of the rendered listing is the only
+// way to reach it. The host returns 403 for HEAD requests (an anti-scraping
+// rule) but serves GET fine — every fetch here must use GET.
+const AIR_TELUGU_URL = "https://newsonair.gov.in/bulletins-city/telugu/";
+const AIR_ASSUMED_BITRATE_BPS = 56_000; // consistent across observed bulletins
+
+async function fetchAirTelugu(): Promise<Episode | null> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const r = await fetch(AIR_TELUGU_URL, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)" },
+      signal: ctrl.signal,
+    });
+    if (!r.ok) return null;
+    const html = await r.text();
+    // Bulletins are listed newest-first; take the first box's fields.
+    const block = (html.split('<div class="bulletinBox">')[1] ?? "").slice(
+      0,
+      3000,
+    );
+    const hrefMatch = block.match(/href="([^"]+\.mp3)"/);
+    // The bare domain's WAF resets in-browser <audio> fetches (works fine
+    // server-side, but the browser gets net::ERR_EMPTY_RESPONSE); the "www."
+    // host serves the identical file — try it in case it sits behind a less
+    // aggressive rule set.
+    const audioUrl = hrefMatch
+      ? hrefMatch[1].replace("https://newsonair.gov.in/", "https://www.newsonair.gov.in/")
+      : "";
+    if (!audioUrl) return null;
+    // The title block's markup is malformed (opens <h3>, closes </h4>) — accept
+    // either. Its last non-empty line is the bulletin time, e.g. "2030".
+    const titleBlock = block.match(/<h3 class="title">([\s\S]*?)<\/h[34]>/);
+    const lines = titleBlock
+      ? titleBlock[1]
+        .split("\n")
+        .map((l) => l.replace(/<[^>]+>/g, "").trim())
+        .filter(Boolean)
+      : [];
+    const time = lines[lines.length - 1] ?? "";
+    const dateMatch = block.match(/<p>([^<]+)<\/p>/);
+    const dateStr = dateMatch ? dateMatch[1].trim() : ""; // "01 Jul 2026"
+    if (time.length !== 4 || !dateStr) return null;
+    const hh = time.slice(0, 2), mm = time.slice(2, 4);
+    // Matches the app's RFC822-ish parser: "DD Mon YYYY HH:MM:SS".
+    const pubDate = `${dateStr} ${hh}:${mm}:00 +0000`;
+    // Cheap duration estimate via a 1-byte range request (HEAD is blocked) —
+    // avoids downloading the whole multi-MB bulletin just to size it.
+    let durationSeconds = 0;
+    try {
+      const rr = await fetch(audioUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)",
+          "Range": "bytes=0-1",
+        },
+        signal: ctrl.signal,
+      });
+      const range = rr.headers.get("content-range"); // "bytes 0-1/4092108"
+      const total = range ? parseInt(range.split("/")[1] ?? "0", 10) : 0;
+      if (total > 0) {
+        durationSeconds = Math.round((total * 8) / AIR_ASSUMED_BITRATE_BPS);
+      }
+    } catch {
+      // best-effort — a missing duration just shows as unknown in the UI
+    }
+    return {
+      key: "air_news",
+      title: "AIR Telugu News",
+      episodeTitle: `AIR Telugu News — ${hh}:${mm}`,
+      audioUrl,
+      durationSeconds,
+      pubDate,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
   try {
-    const results = await Promise.all(SHOWS.map(fetchShow));
+    const results = await Promise.all([
+      ...SHOWS.map(fetchShow),
+      fetchAirTelugu(),
+    ]);
     const items = results.filter((x): x is Episode => x !== null);
     return json({ ok: true, items });
   } catch (err) {
