@@ -358,16 +358,17 @@ class PlaybackService extends ChangeNotifier {
     notifyListeners();
     try {
       final a = queue[idx];
+      // Stop whatever's currently loaded BEFORE loading the next source —
+      // setUrl() alone isn't a hard enough cut for every case (a slow-loading
+      // or flaky external MP3 host can leave the previous track audibly
+      // playing while the UI has already switched to the new one, e.g. two
+      // podcast tiles tapped back-to-back). This used to only run before a
+      // fresh TTS synthesis (which can take many seconds); now it always runs.
+      await player.stop();
+      if (epoch != _playEpoch) return;
       // Briefing sessions narrate + cache the short version separately.
       var url = brief ? a.summaryAudioUrl : a.audioUrl;
       if (url == null || !url.startsWith('http')) {
-        // Nothing cached → we're about to synthesize, which can take many
-        // seconds. Stop the previous track NOW so its audio doesn't keep
-        // bleeding over the newly-selected article during the wait (otherwise
-        // the last-played clip — usually the editorial demo — appears to play
-        // for whatever article you pick).
-        await player.stop();
-        if (epoch != _playEpoch) return;
         final r = await http
             .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
                 headers: {
