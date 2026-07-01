@@ -522,8 +522,13 @@ class _PodcastsGrid extends StatelessWidget {
         children: items.map((it) {
           final r = sectionRamp(it.section, dark: dark);
           return GestureDetector(
-            // TODO: tap → play this podcast feed's latest episode.
-            onTap: () {},
+            // Placeholder until real AIR / Prasar Bharati MP3 feeds are wired.
+            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Podcasts coming soon'),
+                duration: Duration(seconds: 2),
+              ),
+            ),
             child: Container(
               padding: const EdgeInsets.all(Gati.s4),
               decoration: BoxDecoration(

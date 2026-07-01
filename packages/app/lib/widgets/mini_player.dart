@@ -23,6 +23,11 @@ class MiniPlayer extends StatelessWidget {
       builder: (context, _) {
         final a = p.current;
         if (a == null) return const SizedBox.shrink();
+        // A synth/playback failure (e.g. TTS quota 429) used to leave the bar
+        // stuck silently at 0:00. Show a clear message + retry instead.
+        if (p.error != null && !p.loading) {
+          return _ErrorBar(title: a.title, error: p.error!, onRetry: p.retry);
+        }
         final durMs = p.duration.inMilliseconds;
         final posMs =
             p.position.inMilliseconds.clamp(0, durMs == 0 ? 1 : durMs);
@@ -136,6 +141,70 @@ class MiniPlayer extends StatelessWidget {
                   color: kMuted, fontSize: 8, fontWeight: FontWeight.w600)),
         ]),
       ),
+    );
+  }
+}
+
+/// Shown in place of the transport bar when playback fails, so the user gets a
+/// reason (and a retry) instead of a silent, stuck bar.
+class _ErrorBar extends StatelessWidget {
+  const _ErrorBar(
+      {required this.title, required this.error, required this.onRetry});
+  final String title;
+  final String error;
+  final VoidCallback onRetry;
+
+  String get _message {
+    final e = error.toLowerCase();
+    if (e.contains('429') || e.contains('quota')) {
+      return 'Audio limit reached — try again later';
+    }
+    if (e.contains('timeout') || e.contains('timed out')) {
+      return 'Timed out — tap retry';
+    }
+    return "Couldn't play audio — tap retry";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: kInk,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(children: [
+        const Icon(Icons.error_outline, color: kAccent, size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: kPaper,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(height: 1),
+              Text(_message,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: Color(0xFFB4B2A9), fontSize: 11.5)),
+            ],
+          ),
+        ),
+        TextButton(
+          onPressed: onRetry,
+          child: const Text('Retry',
+              style: TextStyle(
+                  color: kAccent, fontWeight: FontWeight.w500, fontSize: 13)),
+        ),
+      ]),
     );
   }
 }

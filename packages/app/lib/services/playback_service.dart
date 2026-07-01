@@ -342,6 +342,14 @@ class PlaybackService extends ChangeNotifier {
         .catchError((_) => http.Response('', 204));
   }
 
+  /// Re-attempt the current track after a failure (e.g. a transient TTS error).
+  Future<void> retry() async {
+    if (index < 0 || index >= queue.length) return;
+    error = null;
+    notifyListeners();
+    await _playIndex(index);
+  }
+
   Future<void> _playIndex(int idx) async {
     final epoch = ++_playEpoch; // any earlier in-flight _playIndex is now stale
     index = idx;
