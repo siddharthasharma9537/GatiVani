@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
 import '../models/newspaper_article.dart';
+import '../services/cricket_service.dart';
 import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
@@ -36,13 +37,16 @@ class LiveFeedScreen extends StatefulWidget {
 }
 
 class _LiveFeedScreenState extends State<LiveFeedScreen> {
-  // Toggle until the live-score backend exists; hides the cricket card on
-  // rest days so it never shows a stale match.
-  static const bool _cricketLive = true;
+  // Until a CRICKET_API_KEY is configured, request the sample match so the
+  // card + real Gemini Telugu commentary are demoable. Flip to false once the
+  // key is set and the card will show only genuine live matches.
+  static const bool _cricketMock = true;
 
   final _feed = NewsFeedService();
+  final _cricketSvc = CricketService();
   List<NewsItem> _headlines = []; // marquee — Google News, diverse
   List<WebArticle> _articles = []; // Latest stories — full-body, readable in-app
+  CricketMatch? _cricket; // null when nothing is live
   bool _loading = true;
 
   @override
@@ -52,18 +56,36 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   }
 
   Future<void> _load() async {
-    // Both feeds concurrently: diverse headlines for the marquee, full articles
-    // (with body) for the readable Latest stories list.
+    // All feeds concurrently: diverse headlines for the marquee, full articles
+    // for Latest stories, and the live cricket card (if any).
     final headlinesF = _feed.fetch(topic: 'top', limit: 8);
     final articlesF = _feed.fetchArticles(limit: 12);
+    final cricketF = _cricketSvc.fetch(mock: _cricketMock);
     final headlines = await headlinesF;
     final articles = await articlesF;
+    final cricket = await cricketF;
     if (!mounted) return;
     setState(() {
       _headlines = headlines;
       _articles = articles;
+      _cricket = cricket;
       _loading = false;
     });
+  }
+
+  // Play the match's AI Telugu commentary via the shared player.
+  void _playCommentary(CricketMatch m) {
+    if (m.commentary.trim().isEmpty) return;
+    final art = NewspaperArticle(
+      id: 'a0000000-0000-4000-8000-0000000000c1', // stable → one storage file
+      title: m.teams.isNotEmpty ? m.teams.join(' vs ') : 'Cricket',
+      content: m.commentary,
+      preview: m.status,
+      category: 'Cricket',
+      estimatedDurationSeconds: NewspaperArticle.estimateDuration(m.commentary),
+      readingStyle: 'news_anchor',
+    );
+    PlaybackService.i.playOne(art);
   }
 
   List<String> get _marqueeTitles =>
@@ -143,10 +165,13 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                     loadingTopic: _loadingTopic,
                     onTap: _playCategory,
                   ),
-                  if (_cricketLive) ...[
+                  if (_cricket != null) ...[
                     const SizedBox(height: Gati.s5),
                     _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
-                    const _CricketCard(),
+                    _CricketCard(
+                      match: _cricket!,
+                      onListen: () => _playCommentary(_cricket!),
+                    ),
                   ],
                   const SizedBox(height: Gati.s5),
                   _SectionLabel(_t(lang, 'Podcasts', 'పాడ్‌క్యాస్ట్‌లు')),
@@ -373,60 +398,103 @@ class _StoriesRow extends StatelessWidget {
 // ── Cricket card ────────────────────────────────────────────────────────────
 
 class _CricketCard extends StatelessWidget {
-  const _CricketCard();
+  const _CricketCard({required this.match, required this.onListen});
+  final CricketMatch match;
+  final VoidCallback onListen;
 
   @override
   Widget build(BuildContext context) {
+    final teams =
+        match.teams.isNotEmpty ? match.teams.join(' vs ') : match.name;
     return Padding(
       padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s2, Gati.s5, 0),
       child: GestureDetector(
-        // TODO: tap → over-by-over AI Telugu commentary screen.
-        onTap: () {},
+        onTap: onListen, // tap → narrate the AI Telugu commentary
         child: Container(
           padding: const EdgeInsets.all(Gati.s4),
           decoration: BoxDecoration(
             color: kInk,
             borderRadius: BorderRadius.circular(Gati.rCard),
           ),
-          child: Row(children: [
-            Container(
-              width: 44,
-              height: 44,
-              alignment: Alignment.center,
-              decoration: const BoxDecoration(
-                  color: kAccent, shape: BoxShape.circle),
-              child: const Text('🏏', style: TextStyle(fontSize: 20)),
-            ),
-            const SizedBox(width: Gati.s4),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
-                          color: kAccent, shape: BoxShape.circle),
-                    ),
-                    const SizedBox(width: Gati.s2),
-                    const Text('LIVE  ·  IND vs AUS',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: Gati.onInkMuted)),
-                  ]),
-                  const SizedBox(height: Gati.s1),
-                  const Text('IND 234/4  ·  18.2 ov',
-                      style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          color: Gati.onInk)),
-                ],
-              ),
-            ),
-            const Icon(Icons.play_circle_fill, color: kAccent, size: 34),
-          ]),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration:
+                      const BoxDecoration(color: kAccent, shape: BoxShape.circle),
+                  child: const Text('🏏', style: TextStyle(fontSize: 20)),
+                ),
+                const SizedBox(width: Gati.s4),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: const BoxDecoration(
+                              color: kAccent, shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: Gati.s2),
+                        Expanded(
+                          child: Text('LIVE  ·  $teams',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Gati.onInkMuted)),
+                        ),
+                        if (match.mock) ...[
+                          const SizedBox(width: Gati.s2),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                                color: Gati.onInkTrack,
+                                borderRadius: BorderRadius.circular(6)),
+                            child: const Text('DEMO',
+                                style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w500,
+                                    color: Gati.onInk)),
+                          ),
+                        ],
+                      ]),
+                      const SizedBox(height: Gati.s1),
+                      Text(
+                          match.scoreText.isNotEmpty
+                              ? match.scoreText
+                              : match.status,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                              color: Gati.onInk)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.play_circle_fill, color: kAccent, size: 34),
+              ]),
+              // The AI-generated Telugu commentary line.
+              if (match.commentary.trim().isNotEmpty) ...[
+                const SizedBox(height: Gati.s3),
+                Text(match.commentary,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        height: 1.5,
+                        color: Gati.onInkFuture)),
+              ],
+            ],
+          ),
         ),
       ),
     );
