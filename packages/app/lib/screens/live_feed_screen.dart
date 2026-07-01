@@ -315,7 +315,7 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
   // Headlines separated by a bullet, with a trailing gap so the loop seam keeps
   // a separator between the last and first item.
   String _composeLine(List<String> items) =>
-      '${items.map((s) => s.trim()).join('        •        ')}        •        ';
+      '${items.map((s) => s.trim()).join('   •   ')}   •   ';
 
   void _sync() {
     _line = _composeLine(widget.items);
