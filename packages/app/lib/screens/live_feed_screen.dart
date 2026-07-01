@@ -288,6 +288,15 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
     super.initState();
     _c = AnimationController(vsync: this, duration: const Duration(seconds: 20));
     _sync();
+    // Flutter web loads the Telugu font asynchronously. If we measure the band
+    // width before it's ready, TextPainter reports a too-small width using the
+    // fallback font — the two copies then overlap and the loop restarts after
+    // only a few headlines. Re-measure whenever a system font finishes loading.
+    PaintingBinding.instance.systemFonts.addListener(_resyncOnFont);
+  }
+
+  void _resyncOnFont() {
+    if (mounted) setState(_sync);
   }
 
   @override
@@ -318,6 +327,7 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
 
   @override
   void dispose() {
+    PaintingBinding.instance.systemFonts.removeListener(_resyncOnFont);
     _c.dispose();
     super.dispose();
   }
