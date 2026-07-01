@@ -81,6 +81,10 @@ class PlaybackService extends ChangeNotifier {
   // how recently progress was persisted.
   Duration? _pendingSeek;
   int _lastSaveSec = -999;
+  // Rate-limits progress writes: many events (position ticks, play/pause/seek,
+  // track start) can fire in a burst — especially on web when a source errors
+  // and the player cycles state — which used to flood recent_plays with writes.
+  DateTime _lastSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   // Sleep timer: pause after a duration, or at the end of the current article.
   Timer? _sleepTimer;
   DateTime? _sleepAt;
@@ -301,6 +305,14 @@ class PlaybackService extends ChangeNotifier {
   void _saveProgress({bool completed = false, int? atSeconds}) {
     final a = current;
     if (a == null) return;
+    // Throttle to at most one write per 5s, so a burst of player events can't
+    // storm the DB. `completed` is terminal — always let it record the final
+    // spot so a finished article correctly shows "Replay".
+    final now = DateTime.now();
+    if (!completed && now.difference(_lastSaveAt) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastSaveAt = now;
     // Briefing plays the short clip; don't let it set full-article progress —
     // just record it as recently played.
     final dur = brief ? 0 : duration.inSeconds;

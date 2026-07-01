@@ -28,6 +28,8 @@ function json(body: unknown, status = 200) {
 // Publisher feeds that expose full <content:encoded>. Extend freely.
 const FEEDS: Array<{ source: string; url: string }> = [
   { source: "NTV Telugu", url: "https://ntvtelugu.com/feed" },
+  { source: "HMTV", url: "https://www.hmtvlive.com/feed" },
+  { source: "Big TV", url: "https://www.bigtvlive.com/feed" },
 ];
 
 const BODY_CAP = 9000; // chars — bound TTS cost + payload
@@ -61,6 +63,9 @@ function stripHtml(html: string): string {
     // Belt-and-suspenders: nuke any stray tweet-embed remnants that sat outside
     // a blockquote (bare "pic.twitter.com/…" links, "— Handle (@x) date" lines).
     .replace(/pic\.twitter\.com\/\S+/gi, " ")
+    // WordPress feed footer boilerplate, e.g. "The post <title> appeared first
+    // on <Site>." — English junk that repeats the headline.
+    .replace(/\s*The post [\s\S]*?appeared first on [^.\n]*\.?/gi, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]*\n[ \t]*/g, "\n")
