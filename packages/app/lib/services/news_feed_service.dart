@@ -56,9 +56,40 @@ class WebArticle {
       );
 }
 
+/// A market ticker item (index or metal) from feeds-markets. `value` is index
+/// points for nifty/sensex, ₹/10g for gold, ₹/kg for silver.
+class MarketItem {
+  MarketItem({required this.key, required this.value, required this.changePct});
+  final String key; // nifty | sensex | gold | silver
+  final double value;
+  final double changePct;
+
+  factory MarketItem.fromJson(Map<String, dynamic> j) => MarketItem(
+        key: (j['key'] as String?) ?? '',
+        value: (j['value'] as num?)?.toDouble() ?? 0,
+        changePct: (j['changePct'] as num?)?.toDouble() ?? 0,
+      );
+}
+
 /// Fetches Telugu news from the feeds edge functions. Both do the cross-origin
 /// fetch + RSS parse server-side, so the web app never hits a CORS wall.
 class NewsFeedService {
+  /// Live market ticker (Nifty, Sensex, gold ₹/10g, silver ₹/kg).
+  Future<List<MarketItem>> fetchMarkets() async {
+    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-markets');
+    try {
+      final r = await http.get(uri, headers: ApiConfig.authHeaders);
+      if (r.statusCode != 200) return [];
+      final d = json.decode(r.body) as Map<String, dynamic>;
+      final items = (d['items'] as List?) ?? const [];
+      return items
+          .map((e) => MarketItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Headlines only (Google News, diverse) — for the marquee.
   Future<List<NewsItem>> fetch({String topic = 'top', int limit = 12}) async {
     final uri = Uri.parse(

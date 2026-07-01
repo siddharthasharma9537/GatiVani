@@ -45,6 +45,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   final _feed = NewsFeedService();
   final _cricketSvc = CricketService();
   List<NewsItem> _headlines = []; // marquee — Google News, diverse
+  List<MarketItem> _markets = []; // marquee — indices + metals ticker
   List<WebArticle> _articles = []; // Latest stories — full-body, readable in-app
   CricketMatch? _cricket; // null when nothing is live
   bool _loading = true;
@@ -56,16 +57,19 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   }
 
   Future<void> _load() async {
-    // All feeds concurrently: diverse headlines for the marquee, full articles
-    // for Latest stories, and the live cricket card (if any).
+    // All feeds concurrently: market ticker + diverse headlines for the marquee,
+    // full articles for Latest stories, and the live cricket card (if any).
+    final marketsF = _feed.fetchMarkets();
     final headlinesF = _feed.fetch(topic: 'top', limit: 8);
     final articlesF = _feed.fetchArticles(limit: 12);
     final cricketF = _cricketSvc.fetch(mock: _cricketMock);
+    final markets = await marketsF;
     final headlines = await headlinesF;
     final articles = await articlesF;
     final cricket = await cricketF;
     if (!mounted) return;
     setState(() {
+      _markets = markets;
       _headlines = headlines;
       _articles = articles;
       _cricket = cricket;
@@ -141,9 +145,12 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final lang = context.watch<SettingsProvider>().lang;
-    final marquee = _marqueeTitles.isEmpty
-        ? [_t(lang, 'Loading latest news…', 'తాజా వార్తలు లోడ్ అవుతున్నాయి…')]
-        : _marqueeTitles;
+    // Market ticker leads the marquee, then the news headlines.
+    final marketStrs = _markets.map((m) => _marketString(m, lang)).toList();
+    final combined = [...marketStrs, ..._marqueeTitles];
+    final marquee = combined.isEmpty
+        ? [_t(lang, 'Loading…', 'లోడ్ అవుతోంది…')]
+        : combined;
     return Scaffold(
       backgroundColor: p.paper,
       body: SafeArea(
@@ -748,6 +755,51 @@ class _SectionLabel extends StatelessWidget {
 
 /// Tiny inline bilingual helper so the scaffold doesn't need new l10n keys yet.
 String _t(String lang, String en, String te) => lang == 'te' ? te : en;
+
+// Indian digit grouping (last 3, then pairs): 121418 → "1,21,418".
+String _inr(double v, {int decimals = 0}) {
+  final neg = v < 0;
+  final fixed = v.abs().toStringAsFixed(decimals);
+  final dot = fixed.indexOf('.');
+  var intPart = dot >= 0 ? fixed.substring(0, dot) : fixed;
+  final dec = dot >= 0 ? fixed.substring(dot) : '';
+  String grouped;
+  if (intPart.length <= 3) {
+    grouped = intPart;
+  } else {
+    final last3 = intPart.substring(intPart.length - 3);
+    var rest = intPart.substring(0, intPart.length - 3);
+    final chunks = <String>[];
+    while (rest.length > 2) {
+      chunks.insert(0, rest.substring(rest.length - 2));
+      rest = rest.substring(0, rest.length - 2);
+    }
+    if (rest.isNotEmpty) chunks.insert(0, rest);
+    grouped = '${chunks.join(',')},$last3';
+  }
+  return '${neg ? '-' : ''}$grouped$dec';
+}
+
+// One marquee segment for a market item, e.g. "నిఫ్టీ 23,865.75 ▼0.65%".
+String _marketString(MarketItem m, String lang) {
+  const labels = {
+    'nifty': ['Nifty', 'నిఫ్టీ'],
+    'sensex': ['Sensex', 'సెన్సెక్స్'],
+    'gold': ['Gold', 'బంగారం'],
+    'silver': ['Silver', 'వెండి'],
+  };
+  final l = labels[m.key];
+  final label = l == null ? m.key : (lang == 'te' ? l[1] : l[0]);
+  final chg = '${m.changePct >= 0 ? '▲' : '▼'}${m.changePct.abs().toStringAsFixed(2)}%';
+  switch (m.key) {
+    case 'gold':
+      return '$label ₹${_inr(m.value)}/10g $chg';
+    case 'silver':
+      return '$label ₹${_inr(m.value)}/kg $chg';
+    default:
+      return '$label ${_inr(m.value, decimals: 2)} $chg';
+  }
+}
 
 // ── Placeholder content (Stories + Podcasts await audio sources) ────────────
 // Marquee + Latest stories are now live (feeds-news). These two still await
