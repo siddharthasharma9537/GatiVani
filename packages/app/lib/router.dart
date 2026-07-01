@@ -50,7 +50,27 @@ final GoRouter appRouter = GoRouter(
       redirect: (_, __) => ReaderStore.i.current == null ? '/' : null,
       builder: (_, __) => const ReaderScreen(),
     ),
-    GoRoute(path: '/menu', builder: (_, __) => const MenuScreen()),
+    // The menu button always sits at the top-left, so the screen slides in
+    // from the left (like a drawer) instead of the default right-hand push —
+    // otherwise it visually contradicts where the button that opened it is.
+    GoRoute(
+      path: '/menu',
+      pageBuilder: (context, state) => CustomTransitionPage<void>(
+        key: state.pageKey,
+        child: const MenuScreen(),
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 260),
+        transitionsBuilder: (context, animation, secondary, child) {
+          final curved =
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+          return SlideTransition(
+            position: Tween(begin: const Offset(-1, 0), end: Offset.zero)
+                .animate(curved),
+            child: child,
+          );
+        },
+      ),
+    ),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
     GoRoute(
       path: '/auth',
