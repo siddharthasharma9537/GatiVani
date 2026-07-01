@@ -38,10 +38,9 @@ class LiveFeedScreen extends StatefulWidget {
 }
 
 class _LiveFeedScreenState extends State<LiveFeedScreen> {
-  // Until a CRICKET_API_KEY is configured, request the sample match so the
-  // card + real Gemini Telugu commentary are demoable. Flip to false once the
-  // key is set and the card will show only genuine live matches.
-  static const bool _cricketMock = true;
+  // CRICKET_API_KEY is configured — the card now shows only genuine live
+  // matches. Flip back to true to force the sample match for a quick demo.
+  static const bool _cricketMock = false;
 
   final _feed = NewsFeedService();
   final _cricketSvc = CricketService();
