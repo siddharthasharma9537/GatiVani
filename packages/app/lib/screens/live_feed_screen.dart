@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
+import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/cricket_service.dart';
 import '../services/news_feed_service.dart';
@@ -13,9 +14,8 @@ import '../widgets/mini_player.dart';
 /// v2 landing — a discovery surface that sits in FRONT of the newspaper.
 ///
 /// Layout (top → bottom):
-///   • header (menu + title + search)
+///   • header (menu + title/dateline + search)
 ///   • breaking-news marquee ticker
-///   • Stories row (horizontal bubbles)
 ///   • live cricket card (only while a match is live)
 ///   • Podcasts tiles
 ///   • Newspaper tile → opens the existing Today experience at /newspaper
@@ -25,10 +25,9 @@ import '../widgets/mini_player.dart';
 /// This screen does NOT touch the Today/newspaper UI — tapping the Newspaper
 /// tile pushes /newspaper, which is the untouched HomeDrawerShell.
 ///
-/// All content here is placeholder scaffolding. Real data wires in next:
-///   - marquee + stories + latest  → RSS (PIB / Google News / TeluguOne)
-///   - podcasts                     → AIR / Prasar Bharati direct MP3 feeds
-///   - cricket                      → CricketData.org facts → Gemini → TTS
+/// Real data: marquee + latest stories → RSS (Google News + publisher feeds);
+/// cricket → CricketData.org facts → Gemini → TTS (mock until a
+/// CRICKET_API_KEY secret is set); podcasts still await a verified MP3 source.
 class LiveFeedScreen extends StatefulWidget {
   const LiveFeedScreen({super.key});
 
@@ -106,46 +105,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     context.push('/reader');
   }
 
-  // Which category bubble is currently loading its bulletin (shows a spinner).
-  String? _loadingTopic;
-
-  // Stable per-topic ids so a category's bulletin audio overwrites one storage
-  // file instead of piling up, while still re-synthesizing fresh each session
-  // (the cache is DB-row-based, and these ids have no article row).
-  static const _catUuids = <String, String>{
-    'top': 'a0000000-0000-4000-8000-000000000001',
-    'politics': 'a0000000-0000-4000-8000-000000000002',
-    'cricket': 'a0000000-0000-4000-8000-000000000003',
-    'cinema': 'a0000000-0000-4000-8000-000000000004',
-    'business': 'a0000000-0000-4000-8000-000000000005',
-    'weather': 'a0000000-0000-4000-8000-000000000006',
-    'national': 'a0000000-0000-4000-8000-000000000007',
-  };
-
-  // Tap a Stories bubble → narrate a short spoken bulletin of that category's
-  // current top headlines, via the shared player.
-  Future<void> _playCategory(String topic, String label) async {
-    if (_loadingTopic != null) return;
-    setState(() => _loadingTopic = topic);
-    try {
-      final items = await _feed.fetch(topic: topic, limit: 6);
-      if (!mounted || items.isEmpty) return;
-      final heads = items.take(5).map((e) => e.title.trim()).join('. ');
-      final art = NewspaperArticle(
-        id: _catUuids[topic] ?? 'a0000000-0000-4000-8000-000000000000',
-        title: '$label తాజా వార్తలు',
-        content: '$heads.',
-        preview: heads,
-        category: label,
-        estimatedDurationSeconds: NewspaperArticle.estimateDuration(heads),
-        readingStyle: 'news_anchor',
-      );
-      await PlaybackService.i.playOne(art);
-    } finally {
-      if (mounted) setState(() => _loadingTopic = null);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
@@ -171,12 +130,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                 padding: const EdgeInsets.only(bottom: Gati.s6),
                 children: [
                   const SizedBox(height: Gati.s4),
-                  _StoriesRow(
-                    categories: _categories,
-                    lang: lang,
-                    loadingTopic: _loadingTopic,
-                    onTap: _playCategory,
-                  ),
                   if (_cricket != null) ...[
                     const SizedBox(height: Gati.s5),
                     _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
@@ -270,15 +223,29 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
+    final now = DateTime.now();
+    final dateline = '${weekdayShort(now, lang)} · ${formatEditionDate(now, lang)}';
     return Padding(
       padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s2),
       child: Row(children: [
         _iconBtn(p, Icons.menu, () => context.push('/menu')),
         const SizedBox(width: Gati.s3),
-        Text('GatiVani',
-            style: TextStyle(
-                fontSize: 22, fontWeight: FontWeight.w500, color: p.ink)),
-        const Spacer(),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('GatiVani',
+                  style: TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w500, color: p.ink)),
+              Text(dateline,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: p.muted)),
+            ],
+          ),
+        ),
         _iconBtn(p, Icons.search, () => context.push('/search')),
       ]),
     );
@@ -312,40 +279,55 @@ class _BreakingMarquee extends StatefulWidget {
 class _BreakingMarqueeState extends State<_BreakingMarquee>
     with SingleTickerProviderStateMixin {
   // A fixed ⚡ badge sits on the left; ONLY the headline band scrolls. The band
-  // is the full run of headlines at their natural width (measured once), drawn
-  // twice back-to-back and translated by exactly one band-width for a seamless
-  // loop. Speed is a constant px/sec (duration ∝ width), so the scroll feels
-  // the same no matter how many headlines there are — the previous version
-  // clipped the text to one screen-width and used a fixed duration, which made
-  // the motion inconsistent and hid later headlines.
+  // is the full run of headlines at their natural width, drawn twice
+  // back-to-back and translated by exactly one band-width for a seamless loop.
+  // Speed is a constant px/sec (duration ∝ width), so the scroll feels the
+  // same no matter how many headlines there are.
+  //
+  // The width MUST come from the real render pipeline, not a parallel
+  // TextPainter measurement — a separate TextPainter can disagree with the
+  // actual painted width by a pixel or two (font hinting, mixed Telugu/Latin/
+  // symbol shaping), and with `Clip.none` that tiny gap shows up once per loop
+  // as either an overlap or a flash of blank space right at the seam. So an
+  // identical, offstage copy of the same Text is kept in the tree purely to be
+  // measured via its real RenderBox — guaranteeing the scrolling twins below
+  // are pixel-exact.
   static const _style =
       TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: kPaper);
-  static const _pxPerSec = 55.0;
+  static const _pxPerSec = 40.0;
 
   late final AnimationController _c;
+  final _measureKey = GlobalKey();
   String _line = '';
   double _bandWidth = 0;
+  bool _ready = false;
 
   @override
   void initState() {
     super.initState();
     _c = AnimationController(vsync: this, duration: const Duration(seconds: 20));
-    _sync();
-    // Flutter web loads the Telugu font asynchronously. If we measure the band
-    // width before it's ready, TextPainter reports a too-small width using the
-    // fallback font — the two copies then overlap and the loop restarts after
-    // only a few headlines. Re-measure whenever a system font finishes loading.
-    PaintingBinding.instance.systemFonts.addListener(_resyncOnFont);
+    _line = _composeLine(widget.items);
+    // Flutter web loads the Telugu font asynchronously — the same string can
+    // render wider once the real font (vs. a fallback) is in. Re-measure
+    // whenever a system font finishes loading.
+    PaintingBinding.instance.systemFonts.addListener(_onFontsChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
   }
 
-  void _resyncOnFont() {
-    if (mounted) setState(_sync);
+  void _onFontsChanged() {
+    if (!mounted) return;
+    setState(() {}); // force a relayout so the offstage copy re-shapes
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
   }
 
   @override
   void didUpdateWidget(_BreakingMarquee old) {
     super.didUpdateWidget(old);
-    if (_composeLine(old.items) != _composeLine(widget.items)) _sync();
+    final next = _composeLine(widget.items);
+    if (next != _line) {
+      setState(() => _line = next);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    }
   }
 
   // Headlines separated by a bullet, with a trailing gap so the loop seam keeps
@@ -353,24 +335,27 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
   String _composeLine(List<String> items) =>
       '${items.map((s) => s.trim()).join('   •   ')}   •   ';
 
-  void _sync() {
-    _line = _composeLine(widget.items);
-    final tp = TextPainter(
-      text: TextSpan(text: _line, style: _style),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout();
-    _bandWidth = tp.width;
-    final secs = (_bandWidth / _pxPerSec).clamp(6.0, 180.0);
+  void _measure() {
+    if (!mounted) return;
+    final box = _measureKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize || box.size.width <= 0) return;
+    final w = box.size.width;
+    if (_ready && (w - _bandWidth).abs() < 0.5) return; // no real change
+    setState(() {
+      _bandWidth = w;
+      _ready = true;
+    });
+    final secs = (_bandWidth / _pxPerSec).clamp(6.0, 240.0);
     _c
       ..stop()
+      ..value = 0
       ..duration = Duration(milliseconds: (secs * 1000).round())
       ..repeat();
   }
 
   @override
   void dispose() {
-    PaintingBinding.instance.systemFonts.removeListener(_resyncOnFont);
+    PaintingBinding.instance.systemFonts.removeListener(_onFontsChanged);
     _c.dispose();
     super.dispose();
   }
@@ -385,25 +370,36 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
           padding: EdgeInsets.symmetric(horizontal: Gati.s3),
           child: Icon(Icons.bolt, size: 16, color: kPaper),
         ),
+        Offstage(
+          offstage: true,
+          child: Text(_line,
+              key: _measureKey, maxLines: 1, softWrap: false, style: _style),
+        ),
         Expanded(
-          child: ClipRect(
-            child: AnimatedBuilder(
-              animation: _c,
-              builder: (context, _) {
-                final dx = -_c.value * _bandWidth;
-                return Stack(clipBehavior: Clip.none, children: [
-                  Positioned(
-                      left: dx, top: 0, bottom: 0, width: _bandWidth, child: _band()),
-                  Positioned(
-                      left: dx + _bandWidth,
-                      top: 0,
-                      bottom: 0,
-                      width: _bandWidth,
-                      child: _band()),
-                ]);
-              },
-            ),
-          ),
+          child: !_ready
+              ? const SizedBox.shrink()
+              : ClipRect(
+                  child: AnimatedBuilder(
+                    animation: _c,
+                    builder: (context, _) {
+                      final dx = -_c.value * _bandWidth;
+                      return Stack(clipBehavior: Clip.none, children: [
+                        Positioned(
+                            left: dx,
+                            top: 0,
+                            bottom: 0,
+                            width: _bandWidth,
+                            child: _band()),
+                        Positioned(
+                            left: dx + _bandWidth,
+                            top: 0,
+                            bottom: 0,
+                            width: _bandWidth,
+                            child: _band()),
+                      ]);
+                    },
+                  ),
+                ),
         ),
       ]),
     );
@@ -417,74 +413,6 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
             overflow: TextOverflow.visible,
             style: _style),
       );
-}
-
-// ── Stories row ─────────────────────────────────────────────────────────────
-
-class _StoriesRow extends StatelessWidget {
-  const _StoriesRow({
-    required this.categories,
-    required this.lang,
-    required this.loadingTopic,
-    required this.onTap,
-  });
-  final List<({String en, String te, String topic, String section})> categories;
-  final String lang;
-  final String? loadingTopic;
-  final void Function(String topic, String label) onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = GatiPalette.of(context).dark;
-    return SizedBox(
-      height: 92,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
-        itemCount: categories.length,
-        separatorBuilder: (_, __) => const SizedBox(width: Gati.s4),
-        itemBuilder: (context, i) {
-          final it = categories[i];
-          final label = lang == 'te' ? it.te : it.en;
-          final r = sectionRamp(it.section, dark: dark);
-          final loading = loadingTopic == it.topic;
-          return GestureDetector(
-            onTap: () => onTap(it.topic, label),
-            child: Column(children: [
-              Container(
-                width: 60,
-                height: 60,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: r[0],
-                  shape: BoxShape.circle,
-                  border: Border.all(color: kAccent, width: 2),
-                ),
-                child: loading
-                    ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: r[1]),
-                      )
-                    : Icon(Icons.play_arrow, color: r[1], size: 24),
-              ),
-              const SizedBox(height: Gati.s1),
-              SizedBox(
-                width: 64,
-                child: Text(label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 11.5, color: GatiPalette.of(context).muted)),
-              ),
-            ]),
-          );
-        },
-      ),
-    );
-  }
 }
 
 // ── Cricket card ────────────────────────────────────────────────────────────
@@ -1017,21 +945,9 @@ String _marketString(MarketItem m, String lang) {
   }
 }
 
-// ── Placeholder content (Stories + Podcasts await audio sources) ────────────
-// Marquee + Latest stories are now live (feeds-news). These two still await
-// their audio backends: Stories = AIR clips, Podcasts = AIR/PB MP3 feeds.
-
-// Stories bubbles → feeds-news topics. Tap plays a spoken headline bulletin.
-const _categories =
-    <({String en, String te, String topic, String section})>[
-  (en: 'Top', te: 'తాజా', topic: 'top', section: 'general'),
-  (en: 'Politics', te: 'రాజకీయం', topic: 'politics', section: 'politics'),
-  (en: 'Cricket', te: 'క్రికెట్', topic: 'cricket', section: 'sports'),
-  (en: 'Cinema', te: 'సినిమా', topic: 'cinema', section: 'entertainment'),
-  (en: 'Business', te: 'వ్యాపారం', topic: 'business', section: 'general'),
-  (en: 'Weather', te: 'వాతావరణం', topic: 'weather', section: 'general'),
-  (en: 'National', te: 'జాతీయం', topic: 'national', section: 'politics'),
-];
+// ── Placeholder content (Podcasts await a real audio source) ────────────────
+// Marquee + Latest stories + cricket commentary are live. Podcasts still await
+// a verified, wireable audio source (see conversation notes).
 
 const _demoPodcasts = <({String title, String meta, String section})>[
   (title: 'AIR Telugu News', meta: '8 min · today', section: 'general'),
