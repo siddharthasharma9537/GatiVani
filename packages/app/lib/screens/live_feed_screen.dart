@@ -268,9 +268,53 @@ class _BreakingMarquee extends StatefulWidget {
 
 class _BreakingMarqueeState extends State<_BreakingMarquee>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-      vsync: this, duration: const Duration(seconds: 28))
-    ..repeat();
+  // A fixed ⚡ badge sits on the left; ONLY the headline band scrolls. The band
+  // is the full run of headlines at their natural width (measured once), drawn
+  // twice back-to-back and translated by exactly one band-width for a seamless
+  // loop. Speed is a constant px/sec (duration ∝ width), so the scroll feels
+  // the same no matter how many headlines there are — the previous version
+  // clipped the text to one screen-width and used a fixed duration, which made
+  // the motion inconsistent and hid later headlines.
+  static const _style =
+      TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: kPaper);
+  static const _pxPerSec = 55.0;
+
+  late final AnimationController _c;
+  String _line = '';
+  double _bandWidth = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 20));
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(_BreakingMarquee old) {
+    super.didUpdateWidget(old);
+    if (_composeLine(old.items) != _composeLine(widget.items)) _sync();
+  }
+
+  // Headlines separated by a bullet, with a trailing gap so the loop seam keeps
+  // a separator between the last and first item.
+  String _composeLine(List<String> items) =>
+      '${items.map((s) => s.trim()).join('        •        ')}        •        ';
+
+  void _sync() {
+    _line = _composeLine(widget.items);
+    final tp = TextPainter(
+      text: TextSpan(text: _line, style: _style),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    _bandWidth = tp.width;
+    final secs = (_bandWidth / _pxPerSec).clamp(6.0, 180.0);
+    _c
+      ..stop()
+      ..duration = Duration(milliseconds: (secs * 1000).round())
+      ..repeat();
+  }
 
   @override
   void dispose() {
@@ -280,50 +324,45 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
 
   @override
   Widget build(BuildContext context) {
-    // Join the headlines into one long string with separators, then translate
-    // it leftward across a clipped strip. A lightweight, dependency-free
-    // marquee — content scrolls right-to-left and loops seamlessly.
-    final line = '${widget.items.map((s) => '  •  $s').join()}   ';
     return Container(
       height: 34,
       color: kAccent,
-      child: ClipRect(
-        child: LayoutBuilder(builder: (context, cons) {
-          return AnimatedBuilder(
-            animation: _c,
-            builder: (context, _) {
-              // Two copies back-to-back so the loop has no visible gap.
-              final dx = -_c.value * cons.maxWidth;
-              return Stack(children: [
-                Transform.translate(
-                    offset: Offset(dx, 0), child: _strip(line, cons.maxWidth)),
-                Transform.translate(
-                    offset: Offset(dx + cons.maxWidth, 0),
-                    child: _strip(line, cons.maxWidth)),
-              ]);
-            },
-          );
-        }),
-      ),
+      child: Row(children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: Gati.s3),
+          child: Icon(Icons.bolt, size: 16, color: kPaper),
+        ),
+        Expanded(
+          child: ClipRect(
+            child: AnimatedBuilder(
+              animation: _c,
+              builder: (context, _) {
+                final dx = -_c.value * _bandWidth;
+                return Stack(clipBehavior: Clip.none, children: [
+                  Positioned(
+                      left: dx, top: 0, bottom: 0, width: _bandWidth, child: _band()),
+                  Positioned(
+                      left: dx + _bandWidth,
+                      top: 0,
+                      bottom: 0,
+                      width: _bandWidth,
+                      child: _band()),
+                ]);
+              },
+            ),
+          ),
+        ),
+      ]),
     );
   }
 
-  Widget _strip(String text, double width) => SizedBox(
-        width: width,
-        child: Row(children: [
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: Gati.s3),
-            child: Icon(Icons.bolt, size: 16, color: kPaper),
-          ),
-          Expanded(
-            child: Text(text,
-                maxLines: 1,
-                overflow: TextOverflow.clip,
-                softWrap: false,
-                style: const TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w500, color: kPaper)),
-          ),
-        ]),
+  Widget _band() => Align(
+        alignment: Alignment.centerLeft,
+        child: Text(_line,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.visible,
+            style: _style),
       );
 }
 
