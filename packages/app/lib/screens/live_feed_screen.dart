@@ -3,7 +3,9 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
+import '../models/newspaper_article.dart';
 import '../services/news_feed_service.dart';
+import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/mini_player.dart';
 
@@ -73,6 +75,46 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     context.push('/reader');
   }
 
+  // Which category bubble is currently loading its bulletin (shows a spinner).
+  String? _loadingTopic;
+
+  // Stable per-topic ids so a category's bulletin audio overwrites one storage
+  // file instead of piling up, while still re-synthesizing fresh each session
+  // (the cache is DB-row-based, and these ids have no article row).
+  static const _catUuids = <String, String>{
+    'top': 'a0000000-0000-4000-8000-000000000001',
+    'politics': 'a0000000-0000-4000-8000-000000000002',
+    'cricket': 'a0000000-0000-4000-8000-000000000003',
+    'cinema': 'a0000000-0000-4000-8000-000000000004',
+    'business': 'a0000000-0000-4000-8000-000000000005',
+    'weather': 'a0000000-0000-4000-8000-000000000006',
+    'national': 'a0000000-0000-4000-8000-000000000007',
+  };
+
+  // Tap a Stories bubble → narrate a short spoken bulletin of that category's
+  // current top headlines, via the shared player.
+  Future<void> _playCategory(String topic, String label) async {
+    if (_loadingTopic != null) return;
+    setState(() => _loadingTopic = topic);
+    try {
+      final items = await _feed.fetch(topic: topic, limit: 6);
+      if (!mounted || items.isEmpty) return;
+      final heads = items.take(5).map((e) => e.title.trim()).join('. ');
+      final art = NewspaperArticle(
+        id: _catUuids[topic] ?? 'a0000000-0000-4000-8000-000000000000',
+        title: '$label తాజా వార్తలు',
+        content: '$heads.',
+        preview: heads,
+        category: label,
+        estimatedDurationSeconds: NewspaperArticle.estimateDuration(heads),
+        readingStyle: 'news_anchor',
+      );
+      await PlaybackService.i.playOne(art);
+    } finally {
+      if (mounted) setState(() => _loadingTopic = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
@@ -95,7 +137,12 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                 padding: const EdgeInsets.only(bottom: Gati.s6),
                 children: [
                   const SizedBox(height: Gati.s4),
-                  _StoriesRow(items: _demoStories),
+                  _StoriesRow(
+                    categories: _categories,
+                    lang: lang,
+                    loadingTopic: _loadingTopic,
+                    onTap: _playCategory,
+                  ),
                   if (_cricketLive) ...[
                     const SizedBox(height: Gati.s5),
                     _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
@@ -258,8 +305,16 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
 // ── Stories row ─────────────────────────────────────────────────────────────
 
 class _StoriesRow extends StatelessWidget {
-  const _StoriesRow({required this.items});
-  final List<({String label, String section})> items;
+  const _StoriesRow({
+    required this.categories,
+    required this.lang,
+    required this.loadingTopic,
+    required this.onTap,
+  });
+  final List<({String en, String te, String topic, String section})> categories;
+  final String lang;
+  final String? loadingTopic;
+  final void Function(String topic, String label) onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -269,29 +324,38 @@ class _StoriesRow extends StatelessWidget {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
-        itemCount: items.length,
+        itemCount: categories.length,
         separatorBuilder: (_, __) => const SizedBox(width: Gati.s4),
         itemBuilder: (context, i) {
-          final it = items[i];
+          final it = categories[i];
+          final label = lang == 'te' ? it.te : it.en;
           final r = sectionRamp(it.section, dark: dark);
+          final loading = loadingTopic == it.topic;
           return GestureDetector(
-            // TODO: tap → auto-play this category's latest audio clip.
-            onTap: () {},
+            onTap: () => onTap(it.topic, label),
             child: Column(children: [
               Container(
                 width: 60,
                 height: 60,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: r[0],
                   shape: BoxShape.circle,
                   border: Border.all(color: kAccent, width: 2),
                 ),
-                child: Icon(Icons.podcasts, color: r[1], size: 22),
+                child: loading
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: r[1]),
+                      )
+                    : Icon(Icons.play_arrow, color: r[1], size: 24),
               ),
               const SizedBox(height: Gati.s1),
               SizedBox(
                 width: 64,
-                child: Text(it.label,
+                child: Text(label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
@@ -567,13 +631,16 @@ String _t(String lang, String en, String te) => lang == 'te' ? te : en;
 // Marquee + Latest stories are now live (feeds-news). These two still await
 // their audio backends: Stories = AIR clips, Podcasts = AIR/PB MP3 feeds.
 
-const _demoStories = <({String label, String section})>[
-  (label: 'Politics', section: 'politics'),
-  (label: 'Cricket', section: 'sports'),
-  (label: 'Weather', section: 'general'),
-  (label: 'Devotional', section: 'devotional'),
-  (label: 'Cinema', section: 'entertainment'),
-  (label: 'AIR News', section: 'general'),
+// Stories bubbles → feeds-news topics. Tap plays a spoken headline bulletin.
+const _categories =
+    <({String en, String te, String topic, String section})>[
+  (en: 'Top', te: 'తాజా', topic: 'top', section: 'general'),
+  (en: 'Politics', te: 'రాజకీయం', topic: 'politics', section: 'politics'),
+  (en: 'Cricket', te: 'క్రికెట్', topic: 'cricket', section: 'sports'),
+  (en: 'Cinema', te: 'సినిమా', topic: 'cinema', section: 'entertainment'),
+  (en: 'Business', te: 'వ్యాపారం', topic: 'business', section: 'general'),
+  (en: 'Weather', te: 'వాతావరణం', topic: 'weather', section: 'general'),
+  (en: 'National', te: 'జాతీయం', topic: 'national', section: 'politics'),
 ];
 
 const _demoPodcasts = <({String title, String meta, String section})>[
