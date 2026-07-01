@@ -50,6 +50,11 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   CricketMatch? _cricket; // null when nothing is live
   bool _loading = true;
 
+  // Latest stories browse mode. List is the default; grid groups the stories
+  // into per-publisher tiles. Tapping a tile filters the list to that source.
+  String _view = 'list'; // 'list' | 'grid'
+  String? _sourceSel; // active publisher filter (set by a grid tile tap)
+
   @override
   void initState() {
     super.initState();
@@ -186,7 +191,15 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                   const SizedBox(height: Gati.s5),
                   _NewspaperTile(lang: lang),
                   const SizedBox(height: Gati.s5),
-                  _SectionLabel(_t(lang, 'Latest stories', 'తాజా వార్తలు')),
+                  _LatestHeader(
+                    lang: lang,
+                    view: _view,
+                    showToggle: !_loading && _articles.isNotEmpty,
+                    onView: (v) => setState(() {
+                      _view = v;
+                      _sourceSel = null; // manual toggle clears any drill-down
+                    }),
+                  ),
                   if (_loading)
                     const Padding(
                       padding: EdgeInsets.all(Gati.s6),
@@ -208,12 +221,35 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                               'వార్తలు లేవు. రిఫ్రెష్ చేయండి.'),
                           style: TextStyle(fontSize: 13, color: p.muted)),
                     )
-                  else
-                    ..._articles.map((it) => _StoryRow(
-                          item: it,
-                          age: relativeAge(it.pubDate, lang),
-                          onTap: () => _openReader(it),
-                        )),
+                  else if (_view == 'grid')
+                    _SourceGrid(
+                      articles: _articles,
+                      lang: lang,
+                      onTapSource: (src) => setState(() {
+                        _sourceSel = src;
+                        _view = 'list';
+                      }),
+                    )
+                  else ...[
+                    if (_sourceSel != null)
+                      _SourceFilterChip(
+                        source: _sourceSel!,
+                        count: _articles
+                            .where((a) => a.source == _sourceSel)
+                            .length,
+                        onClear: () => setState(() => _sourceSel = null),
+                      ),
+                    ...(_sourceSel == null
+                            ? _articles
+                            : _articles
+                                .where((a) => a.source == _sourceSel)
+                                .toList())
+                        .map((it) => _StoryRow(
+                              item: it,
+                              age: relativeAge(it.pubDate, lang),
+                              onTap: () => _openReader(it),
+                            )),
+                  ],
                 ],
               ),
             ),
@@ -728,6 +764,186 @@ class _StoryRow extends StatelessWidget {
             child: const Icon(Icons.chevron_right, color: kAccent, size: 20),
           ),
         ]),
+      ),
+    );
+  }
+}
+
+// ── Latest stories: header toggle + source grid ─────────────────────────────
+
+// "Latest stories" label + a list⇄grid toggle. List is the default; grid
+// groups the stories into per-publisher tiles. Mirrors the newspaper screen's
+// browse toggle so the two surfaces feel the same.
+class _LatestHeader extends StatelessWidget {
+  const _LatestHeader({
+    required this.lang,
+    required this.view,
+    required this.showToggle,
+    required this.onView,
+  });
+  final String lang;
+  final String view;
+  final bool showToggle;
+  final void Function(String view) onView;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = GatiPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, Gati.s3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(_t(lang, 'Latest stories', 'తాజా వార్తలు'),
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.3,
+                  color: p.muted)),
+          if (showToggle)
+            Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                  color: p.chip, borderRadius: BorderRadius.circular(9)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                _viewBtn(context, Icons.view_list_rounded, 'list'),
+                _viewBtn(context, Icons.grid_view_rounded, 'grid'),
+              ]),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _viewBtn(BuildContext context, IconData icon, String v) {
+    final sel = view == v;
+    return GestureDetector(
+      onTap: () => onView(v),
+      child: Container(
+        width: 32,
+        height: 28,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: sel ? kAccent : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Icon(icon,
+            size: 17, color: sel ? kPaper : GatiPalette.of(context).muted),
+      ),
+    );
+  }
+}
+
+// Grid mode: one colored tile per publisher (NTV Telugu, HMTV, Big TV…) with a
+// story count, like the newspaper's section tiles. Tapping a tile drills into
+// that source — it filters the list back in list view.
+class _SourceGrid extends StatelessWidget {
+  const _SourceGrid({
+    required this.articles,
+    required this.lang,
+    required this.onTapSource,
+  });
+  final List<WebArticle> articles;
+  final String lang;
+  final void Function(String source) onTapSource;
+
+  // Cohesive per-source tints: cycle a few section ramps in first-seen order.
+  static const _rampKeys = [
+    'State', 'National', 'Business', 'District', 'Politics'
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = GatiPalette.of(context).dark;
+    // Unique sources in first-seen order, with their story counts.
+    final counts = <String, int>{};
+    for (final a in articles) {
+      if (a.source.trim().isEmpty) continue;
+      counts[a.source] = (counts[a.source] ?? 0) + 1;
+    }
+    final sources = counts.keys.toList();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
+      child: GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        childAspectRatio: 1.6,
+        mainAxisSpacing: Gati.s3,
+        crossAxisSpacing: Gati.s3,
+        children: [
+          for (var i = 0; i < sources.length; i++)
+            _tile(sources[i], counts[sources[i]]!,
+                sectionRamp(_rampKeys[i % _rampKeys.length], dark: dark)),
+        ],
+      ),
+    );
+  }
+
+  Widget _tile(String source, int count, List<Color> r) {
+    return GestureDetector(
+      onTap: () => onTapSource(source),
+      child: Container(
+        padding: const EdgeInsets.all(13),
+        decoration:
+            BoxDecoration(color: r[0], borderRadius: BorderRadius.circular(14)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.newspaper, color: r[1], size: 20),
+          const Spacer(),
+          Text(source,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w500, color: r[1])),
+          const SizedBox(height: 2),
+          Text(
+              lang == 'te'
+                  ? '$count కథనాలు'
+                  : '$count ${count == 1 ? 'story' : 'stories'}',
+              style: TextStyle(fontSize: 12, color: r[2])),
+        ]),
+      ),
+    );
+  }
+}
+
+// Shown above the list when a source tile was tapped: names the active
+// publisher filter with a tap-to-clear ✕.
+class _SourceFilterChip extends StatelessWidget {
+  const _SourceFilterChip({
+    required this.source,
+    required this.count,
+    required this.onClear,
+  });
+  final String source;
+  final int count;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, Gati.s2),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: GestureDetector(
+          onTap: onClear,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: Gati.accentSoft,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('$source · $count',
+                  style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      color: kAccent)),
+              const SizedBox(width: 6),
+              const Icon(Icons.close, size: 15, color: kAccent),
+            ]),
+          ),
+        ),
       ),
     );
   }

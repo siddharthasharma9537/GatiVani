@@ -35,7 +35,7 @@ class _TodayScreenState extends State<TodayScreen> {
   String? _category;
   int? _pageSel;
   String _lens = 'section'; // 'section' | 'page'
-  String _view = 'tiles'; // 'tiles' | 'list'
+  String _view = 'list'; // 'tiles' | 'list' — list is the default browse view
   // Multi-select (list view): batch articles into the Up Next queue.
   bool _selectMode = false;
   final Set<String> _selected = {};
