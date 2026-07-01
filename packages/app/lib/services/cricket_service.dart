@@ -32,17 +32,37 @@ class _LiveMatch {
     required this.status,
     required this.scoreText,
     required this.seriesName,
+    required this.category,
   });
   final String name;
   final List<String> teams;
-  final String matchType;
+  final String matchType; // "T20" | "ODI" | "TEST" (Cricbuzz's exact values)
   final String status;
   final String scoreText;
   final String seriesName;
+  final String category; // "International" | "League" | "Domestic" | "Women"
 
   bool get isIndia => teams.any((t) => t.toLowerCase() == 'india');
-  bool get isT20 => matchType.toUpperCase().contains('T20');
-  bool get isWorldCup => seriesName.toLowerCase().contains('world cup');
+  bool get isIPL {
+    final s = seriesName.toLowerCase();
+    return s.contains('indian premier league') || s.contains('ipl');
+  }
+
+  // Only IPL and men's T20 Internationals always show; ODI/Test only show
+  // when India is playing; everything else (T10, The Hundred, domestic T20
+  // leagues other than IPL, women's/youth cricket, non-India ODI/Test) is
+  // hidden entirely rather than falling back to "whatever's live".
+  bool get qualifies {
+    switch (matchType) {
+      case 'T20':
+        return isIPL || category == 'International';
+      case 'ODI':
+      case 'TEST':
+        return isIndia;
+      default:
+        return false;
+    }
+  }
 }
 
 class CricketService {
@@ -59,11 +79,15 @@ class CricketService {
   static const _host = 'cricbuzz-cricket.p.rapidapi.com';
 
   /// Returns the current live match (with AI Telugu commentary), or null when
-  /// nothing is live. `mock:true` requests the sample match so the card can be
-  /// demoed without a real one in progress.
+  /// nothing qualifying is live. `mock:true` requests the sample match so the
+  /// card can be demoed without a real one in progress.
   ///
-  /// When several matches are live, priority is: an India match first, then
-  /// any T20 or World Cup match, then whatever's live.
+  /// Only some live matches ever surface: IPL and T20 Internationals show
+  /// regardless of teams; ODI and Test matches only show when India is
+  /// playing; anything else (T10, domestic T20 leagues other than IPL,
+  /// women's/youth cricket, non-India ODI/Test) is hidden — see
+  /// `_LiveMatch.qualifies`. Among qualifying matches, an India match is
+  /// preferred over others.
   Future<CricketMatch?> fetch({bool mock = false}) async {
     if (mock) return _fetchMockMatch();
     try {
@@ -73,9 +97,10 @@ class CricketService {
       ).timeout(const Duration(seconds: 12));
       if (r.statusCode != 200) return null;
       final d = json.decode(r.body) as Map<String, dynamic>;
-      final live = _collectLiveMatches(d);
-      if (live.isEmpty) return null;
-      final picked = _pickBest(live);
+      final qualifying =
+          _collectLiveMatches(d).where((m) => m.qualifies).toList();
+      if (qualifying.isEmpty) return null;
+      final picked = _pickBest(qualifying);
       return _fetchCommentary(
         name: picked.name,
         teams: picked.teams,
@@ -94,9 +119,9 @@ class CricketService {
   List<_LiveMatch> _collectLiveMatches(Map<String, dynamic> d) {
     final out = <_LiveMatch>[];
     for (final tm in (d['typeMatches'] as List?) ?? const []) {
-      final seriesMatches =
-          ((tm as Map<String, dynamic>)['seriesMatches'] as List?) ?? const [];
-      for (final sm in seriesMatches) {
+      final tmMap = tm as Map<String, dynamic>;
+      final category = (tmMap['matchType'] as String?) ?? '';
+      for (final sm in (tmMap['seriesMatches'] as List?) ?? const []) {
         final wrapper =
             (sm as Map<String, dynamic>)['seriesAdWrapper'] as Map<String, dynamic>?;
         if (wrapper == null) continue; // ad placeholder
@@ -114,6 +139,7 @@ class CricketService {
             scoreText: _scoreText(
                 (m['matchScore'] as Map<String, dynamic>?) ?? const {}, t1, t2),
             seriesName: seriesName,
+            category: category,
           ));
         }
       }
@@ -136,16 +162,13 @@ class CricketService {
     return parts.join('  ');
   }
 
-  // India first, then T20/World Cup, then whatever's live. Only the top
-  // pick is used, so sort stability within a tier doesn't matter.
+  // All candidates already passed `qualifies`; an India match just gets
+  // priority over other qualifying ones (e.g. a non-India IPL match).
   _LiveMatch _pickBest(List<_LiveMatch> matches) {
-    int tier(_LiveMatch m) {
-      if (m.isIndia) return 0;
-      if (m.isT20 || m.isWorldCup) return 1;
-      return 2;
+    for (final m in matches) {
+      if (m.isIndia) return m;
     }
-    final sorted = [...matches]..sort((a, b) => tier(a).compareTo(tier(b)));
-    return sorted.first;
+    return matches.first;
   }
 
   Future<CricketMatch?> _fetchMockMatch() async {
