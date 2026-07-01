@@ -27,7 +27,9 @@ import '../widgets/mini_player.dart';
 ///
 /// Real data: marquee + latest stories → RSS (Google News + publisher feeds);
 /// cricket → CricketData.org facts → Gemini → TTS (mock until a
-/// CRICKET_API_KEY secret is set); podcasts still await a verified MP3 source.
+/// CRICKET_API_KEY secret is set); podcasts → real MP3 episodes for the shows
+/// with a verified public feed (feeds-podcasts) — the other tiles stay
+/// "coming soon" until a legitimate source is found for them too.
 class LiveFeedScreen extends StatefulWidget {
   const LiveFeedScreen({super.key});
 
@@ -47,6 +49,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   List<MarketItem> _markets = []; // marquee — indices + metals ticker
   List<WebArticle> _articles = []; // Latest stories — full-body, readable in-app
   CricketMatch? _cricket; // null when nothing is live
+  Map<String, PodcastEpisode> _podcasts = {}; // keyed by show, from feeds-podcasts
   bool _loading = true;
 
   // Latest stories browse mode. List is the default; grid groups the stories
@@ -67,19 +70,45 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     final headlinesF = _feed.fetch(topic: 'top', limit: 8);
     final articlesF = _feed.fetchArticles(limit: 12);
     final cricketF = _cricketSvc.fetch(mock: _cricketMock);
+    final podcastsF = _feed.fetchPodcasts();
     final markets = await marketsF;
     final headlines = await headlinesF;
     final articles = await articlesF;
     final cricket = await cricketF;
+    final podcasts = await podcastsF;
     if (!mounted) return;
     setState(() {
       _markets = markets;
       _headlines = headlines;
       _articles = articles;
       _cricket = cricket;
+      _podcasts = {for (final e in podcasts) e.key: e};
       _loading = false;
     });
   }
+
+  // Play a podcast episode directly — audioUrl is a real MP3, so playOne skips
+  // TTS synthesis entirely (see PlaybackService._playIndex).
+  void _playPodcast(PodcastEpisode ep) {
+    final art = NewspaperArticle(
+      id: _podcastIds[ep.key] ?? 'a0000000-0000-4000-8000-0000000000d0',
+      title: ep.episodeTitle,
+      content: '',
+      preview: ep.title,
+      category: ep.title,
+      estimatedDurationSeconds:
+          ep.durationSeconds > 0 ? ep.durationSeconds : 60,
+      audioUrl: ep.audioUrl,
+    );
+    PlaybackService.i.playOne(art);
+  }
+
+  // Stable per-show ids so each show's tile always overwrites one recent-plays
+  // row instead of piling up as the latest episode changes.
+  static const _podcastIds = <String, String>{
+    'bhagavad_gita': 'a0000000-0000-4000-8000-0000000000d1',
+    'cinema_talk': 'a0000000-0000-4000-8000-0000000000d2',
+  };
 
   // Play the match's AI Telugu commentary via the shared player.
   void _playCommentary(CricketMatch m) {
@@ -140,7 +169,12 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                   ],
                   const SizedBox(height: Gati.s5),
                   _SectionLabel(_t(lang, 'Podcasts', 'పాడ్‌క్యాస్ట్‌లు')),
-                  _PodcastsGrid(items: _demoPodcasts),
+                  _PodcastsGrid(
+                    tiles: _podcastTiles,
+                    episodes: _podcasts,
+                    lang: lang,
+                    onPlay: _playPodcast,
+                  ),
                   const SizedBox(height: Gati.s5),
                   _NewspaperTile(lang: lang),
                   const SizedBox(height: Gati.s5),
@@ -524,8 +558,16 @@ class _CricketCard extends StatelessWidget {
 // ── Podcasts grid ───────────────────────────────────────────────────────────
 
 class _PodcastsGrid extends StatelessWidget {
-  const _PodcastsGrid({required this.items});
-  final List<({String title, String meta, String section})> items;
+  const _PodcastsGrid({
+    required this.tiles,
+    required this.episodes,
+    required this.lang,
+    required this.onPlay,
+  });
+  final List<({String key, String title, String meta, String section})> tiles;
+  final Map<String, PodcastEpisode> episodes;
+  final String lang;
+  final void Function(PodcastEpisode) onPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -539,16 +581,19 @@ class _PodcastsGrid extends StatelessWidget {
         mainAxisSpacing: Gati.s3,
         crossAxisSpacing: Gati.s3,
         childAspectRatio: 1.55,
-        children: items.map((it) {
+        children: tiles.map((it) {
+          final ep = episodes[it.key];
           final r = sectionRamp(it.section, dark: dark);
           return GestureDetector(
-            // Placeholder until real AIR / Prasar Bharati MP3 feeds are wired.
-            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Podcasts coming soon'),
-                duration: Duration(seconds: 2),
-              ),
-            ),
+            onTap: ep != null
+                ? () => onPlay(ep)
+                // No verified real audio source for this show yet.
+                : () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Podcasts coming soon'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    ),
             child: Container(
               padding: const EdgeInsets.all(Gati.s4),
               decoration: BoxDecoration(
@@ -569,8 +614,13 @@ class _PodcastsGrid extends StatelessWidget {
                   Row(children: [
                     Icon(Icons.play_arrow, size: 14, color: r[2]),
                     const SizedBox(width: 2),
-                    Text(it.meta,
-                        style: TextStyle(fontSize: 12, color: r[2])),
+                    Expanded(
+                      child: Text(
+                          ep != null ? _episodeMeta(ep, lang) : it.meta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: r[2])),
+                    ),
                   ]),
                 ],
               ),
@@ -579,6 +629,14 @@ class _PodcastsGrid extends StatelessWidget {
         }).toList(),
       ),
     );
+  }
+
+  // e.g. "14 min · 2d" — real episode length + how recently it dropped.
+  String _episodeMeta(PodcastEpisode ep, String lang) {
+    final mins = (ep.durationSeconds / 60).round().clamp(1, 999);
+    final unit = lang == 'te' ? 'ని.' : 'min';
+    final age = relativeAge(ep.pubDate, lang);
+    return age.isEmpty ? '$mins $unit' : '$mins $unit · $age';
   }
 }
 
@@ -945,13 +1003,14 @@ String _marketString(MarketItem m, String lang) {
   }
 }
 
-// ── Placeholder content (Podcasts await a real audio source) ────────────────
-// Marquee + Latest stories + cricket commentary are live. Podcasts still await
-// a verified, wireable audio source (see conversation notes).
-
-const _demoPodcasts = <({String title, String meta, String section})>[
-  (title: 'AIR Telugu News', meta: '8 min · today', section: 'general'),
-  (title: 'Mann Ki Baat', meta: '30 min · monthly', section: 'politics'),
-  (title: 'Bhagavad Gita', meta: '12 min · daily', section: 'devotional'),
-  (title: 'Cinema Talk', meta: '18 min · weekly', section: 'entertainment'),
+// Podcasts grid. `key` matches a feeds-podcasts show id — when present in the
+// fetched map the tile plays the real latest episode; otherwise it falls back
+// to this static meta and a "coming soon" tap (AIR Telugu News and Mann Ki
+// Baat have no verified real audio source yet — see conversation notes).
+const _podcastTiles =
+    <({String key, String title, String meta, String section})>[
+  (key: 'air_news', title: 'AIR Telugu News', meta: '8 min · today', section: 'general'),
+  (key: 'mann_ki_baat', title: 'Mann Ki Baat', meta: '30 min · monthly', section: 'politics'),
+  (key: 'bhagavad_gita', title: 'Bhagavad Gita', meta: '12 min · daily', section: 'devotional'),
+  (key: 'cinema_talk', title: 'Cinema Talk', meta: '18 min · weekly', section: 'entertainment'),
 ];

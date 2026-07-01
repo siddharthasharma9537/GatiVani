@@ -124,6 +124,51 @@ class NewsFeedService {
       return [];
     }
   }
+
+  /// Real podcast episodes (direct MP3, no TTS) — for the Podcasts grid.
+  Future<List<PodcastEpisode>> fetchPodcasts() async {
+    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-podcasts');
+    try {
+      final r = await http.get(uri, headers: ApiConfig.authHeaders);
+      if (r.statusCode != 200) return [];
+      final d = json.decode(r.body) as Map<String, dynamic>;
+      final items = (d['items'] as List?) ?? const [];
+      return items
+          .map((e) => PodcastEpisode.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+}
+
+/// A real podcast episode (from feeds-podcasts) — carries a direct MP3 URL, so
+/// the player can skip TTS entirely and just play it.
+class PodcastEpisode {
+  PodcastEpisode({
+    required this.key,
+    required this.title,
+    required this.episodeTitle,
+    required this.audioUrl,
+    required this.durationSeconds,
+    required this.pubDate,
+  });
+
+  final String key; // show id, e.g. "bhagavad_gita"
+  final String title; // show name
+  final String episodeTitle;
+  final String audioUrl;
+  final int durationSeconds;
+  final String pubDate;
+
+  factory PodcastEpisode.fromJson(Map<String, dynamic> j) => PodcastEpisode(
+        key: (j['key'] as String?) ?? '',
+        title: (j['title'] as String?) ?? '',
+        episodeTitle: (j['episodeTitle'] as String?) ?? '',
+        audioUrl: (j['audioUrl'] as String?) ?? '',
+        durationSeconds: (j['durationSeconds'] as num?)?.toInt() ?? 0,
+        pubDate: (j['pubDate'] as String?) ?? '',
+      );
 }
 
 /// Holds the article the /reader route is showing. go_router `extra` is lost on
