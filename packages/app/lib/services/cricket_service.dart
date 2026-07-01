@@ -78,16 +78,18 @@ class CricketService {
   );
   static const _host = 'cricbuzz-cricket.p.rapidapi.com';
 
-  /// Returns the current live match (with AI Telugu commentary), or null when
-  /// nothing qualifying is live. `mock:true` requests the sample match so the
-  /// card can be demoed without a real one in progress.
+  /// Returns the current live match, or null when nothing qualifying is live.
+  /// `mock:true` requests the sample match so the card can be demoed without
+  /// a real one in progress.
   ///
   /// Only some live matches ever surface: IPL and T20 Internationals show
   /// regardless of teams; ODI and Test matches only show when India is
   /// playing; anything else (T10, domestic T20 leagues other than IPL,
   /// women's/youth cricket, non-India ODI/Test) is hidden — see
   /// `_LiveMatch.qualifies`. Among qualifying matches, an India match is
-  /// preferred over others.
+  /// preferred over others. AI Telugu commentary is only generated when
+  /// India is playing; otherwise `CricketMatch.commentary` is empty and the
+  /// card shows the score alone.
   Future<CricketMatch?> fetch({bool mock = false}) async {
     if (mock) return _fetchMockMatch();
     try {
@@ -101,6 +103,19 @@ class CricketService {
           _collectLiveMatches(d).where((m) => m.qualifies).toList();
       if (qualifying.isEmpty) return null;
       final picked = _pickBest(qualifying);
+      // AI Telugu commentary only makes sense to generate (and costs a
+      // Gemini call) when India is actually playing; otherwise the card
+      // shows the score alone, no commentary line.
+      if (!picked.isIndia) {
+        return CricketMatch(
+          name: picked.name,
+          teams: picked.teams,
+          status: picked.status,
+          scoreText: picked.scoreText,
+          commentary: '',
+          mock: false,
+        );
+      }
       return _fetchCommentary(
         name: picked.name,
         teams: picked.teams,

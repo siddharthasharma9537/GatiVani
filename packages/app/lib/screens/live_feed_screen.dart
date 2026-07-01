@@ -459,10 +459,13 @@ class _CricketCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final teams =
         match.teams.isNotEmpty ? match.teams.join(' vs ') : match.name;
+    // No commentary (India isn't playing) → nothing to listen to, so the
+    // card isn't tappable and the play icon doesn't show.
+    final hasCommentary = match.commentary.trim().isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s2, Gati.s5, 0),
       child: GestureDetector(
-        onTap: onListen, // tap → narrate the AI Telugu commentary
+        onTap: hasCommentary ? onListen : null,
         child: Container(
           padding: const EdgeInsets.all(Gati.s4),
           decoration: BoxDecoration(
@@ -533,10 +536,11 @@ class _CricketCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                const Icon(Icons.play_circle_fill, color: kAccent, size: 34),
+                if (hasCommentary)
+                  const Icon(Icons.play_circle_fill, color: kAccent, size: 34),
               ]),
               // The AI-generated Telugu commentary line.
-              if (match.commentary.trim().isNotEmpty) ...[
+              if (hasCommentary) ...[
                 const SizedBox(height: Gati.s3),
                 Text(match.commentary,
                     maxLines: 3,
