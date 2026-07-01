@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
 import '../services/news_feed_service.dart';
@@ -40,7 +39,8 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   static const bool _cricketLive = true;
 
   final _feed = NewsFeedService();
-  List<NewsItem> _items = [];
+  List<NewsItem> _headlines = []; // marquee — Google News, diverse
+  List<WebArticle> _articles = []; // Latest stories — full-body, readable in-app
   bool _loading = true;
 
   @override
@@ -50,26 +50,27 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   }
 
   Future<void> _load() async {
-    final items = await _feed.fetch(topic: 'top', limit: 20);
+    // Both feeds concurrently: diverse headlines for the marquee, full articles
+    // (with body) for the readable Latest stories list.
+    final headlinesF = _feed.fetch(topic: 'top', limit: 8);
+    final articlesF = _feed.fetchArticles(limit: 12);
+    final headlines = await headlinesF;
+    final articles = await articlesF;
     if (!mounted) return;
     setState(() {
-      _items = items;
+      _headlines = headlines;
+      _articles = articles;
       _loading = false;
     });
   }
 
-  // First few headlines scroll in the marquee; the rest fill Latest stories so
-  // the two sections don't repeat the same items.
   List<String> get _marqueeTitles =>
-      _items.take(6).map((e) => e.title).toList();
-  List<NewsItem> get _latest =>
-      _items.length > 6 ? _items.sublist(6) : _items;
+      _headlines.take(6).map((e) => e.title).toList();
 
-  Future<void> _open(String link) async {
-    final uri = Uri.tryParse(link);
-    if (uri != null) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+  // Open the full story in-app (ReaderStore carries it across the route).
+  void _openReader(WebArticle a) {
+    ReaderStore.i.current = a;
+    context.push('/reader');
   }
 
   @override
@@ -119,7 +120,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                         ),
                       ),
                     )
-                  else if (_latest.isEmpty)
+                  else if (_articles.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(
                           horizontal: Gati.s5, vertical: Gati.s3),
@@ -129,10 +130,10 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                           style: TextStyle(fontSize: 13, color: p.muted)),
                     )
                   else
-                    ..._latest.take(10).map((it) => _StoryRow(
+                    ..._articles.map((it) => _StoryRow(
                           item: it,
                           age: relativeAge(it.pubDate, lang),
-                          onTap: () => _open(it.link),
+                          onTap: () => _openReader(it),
                         )),
                 ],
               ),
@@ -484,7 +485,7 @@ class _NewspaperTile extends StatelessWidget {
 class _StoryRow extends StatelessWidget {
   const _StoryRow(
       {required this.item, required this.age, required this.onTap});
-  final NewsItem item;
+  final WebArticle item;
   final String age;
   final VoidCallback onTap;
 
@@ -531,7 +532,7 @@ class _StoryRow extends StatelessWidget {
             alignment: Alignment.center,
             decoration: BoxDecoration(
                 color: Gati.accentSoft, shape: BoxShape.circle),
-            child: const Icon(Icons.open_in_new, color: kAccent, size: 16),
+            child: const Icon(Icons.chevron_right, color: kAccent, size: 20),
           ),
         ]),
       ),

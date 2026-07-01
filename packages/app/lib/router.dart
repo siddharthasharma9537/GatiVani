@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'screens/home_drawer_shell.dart';
 import 'screens/live_feed_screen.dart';
+import 'screens/reader_screen.dart';
 import 'screens/section_screen.dart';
+import 'services/news_feed_service.dart';
 import 'screens/lyrics_player_screen.dart';
 import 'screens/menu_screen.dart';
 import 'screens/auth_screen.dart';
@@ -40,6 +42,13 @@ final GoRouter appRouter = GoRouter(
           );
         },
       ),
+    ),
+    // Full-story reader for a web article. The article lives in ReaderStore
+    // (go_router extra is lost on Back); cold deep-link with none → home.
+    GoRoute(
+      path: '/reader',
+      redirect: (_, __) => ReaderStore.i.current == null ? '/' : null,
+      builder: (_, __) => const ReaderScreen(),
     ),
     GoRoute(path: '/menu', builder: (_, __) => const MenuScreen()),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
