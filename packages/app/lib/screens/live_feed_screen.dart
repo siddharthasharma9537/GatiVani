@@ -49,6 +49,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   List<WebArticle> _articles = []; // Latest stories — full-body, readable in-app
   CricketMatch? _cricket; // null when nothing is live
   Map<String, PodcastEpisode> _podcasts = {}; // keyed by show, from feeds-podcasts
+  Explainer? _take; // "GatiVani Take" — today's weight-to-article pick
   bool _loading = true;
 
   // Latest stories browse mode. List is the default; grid groups the stories
@@ -70,11 +71,13 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     final articlesF = _feed.fetchArticles(limit: 12);
     final cricketF = _cricketSvc.fetch(mock: _cricketMock);
     final podcastsF = _feed.fetchPodcasts();
+    final takeF = _feed.fetchExplainer();
     final markets = await marketsF;
     final headlines = await headlinesF;
     final articles = await articlesF;
     final cricket = await cricketF;
     final podcasts = await podcastsF;
+    final take = await takeF;
     if (!mounted) return;
     setState(() {
       _markets = markets;
@@ -82,6 +85,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       _articles = articles;
       _cricket = cricket;
       _podcasts = {for (final e in podcasts) e.key: e};
+      _take = take;
       _loading = false;
     });
   }
@@ -124,6 +128,20 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     PlaybackService.i.playOne(art);
   }
 
+  // Play the GatiVani Take explainer via the shared player.
+  void _playTake(Explainer t) {
+    final art = NewspaperArticle(
+      id: 'a0000000-0000-4000-8000-0000000000e1', // stable → one storage file
+      title: t.title,
+      content: t.commentary,
+      preview: t.commentary,
+      category: 'GatiVani Take',
+      estimatedDurationSeconds: NewspaperArticle.estimateDuration(t.commentary),
+      readingStyle: 'news_anchor',
+    );
+    PlaybackService.i.playOne(art);
+  }
+
   List<String> get _marqueeTitles =>
       _headlines.take(6).map((e) => e.title).toList();
 
@@ -158,6 +176,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                 padding: const EdgeInsets.only(bottom: Gati.s6),
                 children: [
                   const SizedBox(height: Gati.s4),
+                  if (_take != null) _TakeCard(take: _take!, onListen: () => _playTake(_take!)),
                   if (_cricket != null) ...[
                     const SizedBox(height: Gati.s5),
                     _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
@@ -446,6 +465,77 @@ class _BreakingMarqueeState extends State<_BreakingMarquee>
             overflow: TextOverflow.visible,
             style: _style),
       );
+}
+
+// ── GatiVani Take ────────────────────────────────────────────────────────────
+
+// The day's single weight-to-article pick (feeds-explains): an original
+// Telugu title + explainer synthesized from independently-corroborated facts
+// across national/international sources — never a translation of any one
+// publisher's wording. Sits above the cricket card as the editorial lead.
+class _TakeCard extends StatelessWidget {
+  const _TakeCard({required this.take, required this.onListen});
+  final Explainer take;
+  final VoidCallback onListen;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = GatiPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, 0),
+      child: GestureDetector(
+        onTap: onListen,
+        child: Container(
+          padding: const EdgeInsets.all(Gati.s4),
+          decoration: BoxDecoration(
+            color: p.surface,
+            borderRadius: BorderRadius.circular(Gati.rCard),
+            border: Border.all(color: Gati.accentSoft, width: 1.4),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                      color: Gati.accentSoft,
+                      borderRadius: BorderRadius.circular(6)),
+                  child: const Text('GatiVani Take',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                          color: kAccent)),
+                ),
+                const Spacer(),
+                const Icon(Icons.play_circle_fill, color: kAccent, size: 30),
+              ]),
+              const SizedBox(height: Gati.s3),
+              Text(take.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w600, height: 1.3, color: p.ink)),
+              const SizedBox(height: Gati.s2),
+              Text(take.commentary,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13.5, height: 1.5, color: p.muted)),
+              if (take.sources.isNotEmpty) ...[
+                const SizedBox(height: Gati.s2),
+                Text(take.sources.join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w500, color: p.muted)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ── Cricket card ────────────────────────────────────────────────────────────

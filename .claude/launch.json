@@ -4,8 +4,8 @@
     {
       "name": "flutter-web-app",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd packages/app/build/web && python3 -m http.server 8080 --bind localhost"],
-      "port": 8080
+      "runtimeArgs": ["-c", "python3 scripts/serve_web_nocache.py 8082"],
+      "port": 8082
     },
     {
       "name": "supabase-local",

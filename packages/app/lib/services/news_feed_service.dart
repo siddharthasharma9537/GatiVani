@@ -140,6 +140,55 @@ class NewsFeedService {
       return [];
     }
   }
+
+  /// "GatiVani Take" — the weight-to-article pick: the single most newsworthy
+  /// national/international headline right now, with an ORIGINAL Telugu
+  /// title + explainer synthesized from independently-corroborated facts
+  /// (never a translation of any one publisher's wording).
+  Future<Explainer?> fetchExplainer() async {
+    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-explains');
+    try {
+      final r = await http.get(uri, headers: ApiConfig.authHeaders)
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode != 200) return null;
+      final d = json.decode(r.body) as Map<String, dynamic>;
+      if (d['available'] != true) return null;
+      return Explainer.fromJson(d);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// The "GatiVani Take" pick — an original Telugu title + explainer for the
+/// day's highest-weighted national/international headline, from
+/// feeds-explains (weight-to-article scoring → Gemini synthesis over
+/// corroborated facts only).
+class Explainer {
+  Explainer({
+    required this.title,
+    required this.commentary,
+    required this.category,
+    required this.sourceCount,
+    required this.sources,
+  });
+
+  final String title;
+  final String commentary;
+  final String category; // "national" | "international"
+  final int sourceCount;
+  final List<String> sources;
+
+  factory Explainer.fromJson(Map<String, dynamic> j) => Explainer(
+        title: (j['title'] as String?) ?? '',
+        commentary: (j['commentary'] as String?) ?? '',
+        category: (j['category'] as String?) ?? '',
+        sourceCount: (j['sourceCount'] as num?)?.toInt() ?? 0,
+        sources: ((j['sources'] as List?) ?? const [])
+            .map((e) => '$e')
+            .toSet() // sources[] can repeat the same publisher
+            .toList(),
+      );
 }
 
 /// A real podcast episode (from feeds-podcasts) — carries a direct MP3 URL, so
