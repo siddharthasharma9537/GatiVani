@@ -63,7 +63,7 @@ class MiniPlayer extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text('${_fmt(p.position)} / ${_fmt(p.duration)}',
                     style: const TextStyle(
-                        color: Color(0xFFB4B2A9), fontSize: 11)),
+                        color: Gati.onInkMuted, fontSize: 11)),
               ]),
               // Scrubbable progress.
               SliderTheme(
@@ -73,9 +73,9 @@ class MiniPlayer extends StatelessWidget {
                       const RoundSliderThumbShape(enabledThumbRadius: 5),
                   overlayShape:
                       const RoundSliderOverlayShape(overlayRadius: 12),
-                  activeTrackColor: kAccent,
-                  inactiveTrackColor: const Color(0xFF5F5E5A),
-                  thumbColor: kAccent,
+                  activeTrackColor: Gati.pasupu,
+                  inactiveTrackColor: Gati.onInkTrack,
+                  thumbColor: Gati.pasupu,
                 ),
                 child: Slider(
                   value: posMs.toDouble(),
@@ -103,7 +103,7 @@ class MiniPlayer extends StatelessWidget {
                           width: 24,
                           height: 24,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: kAccent))
+                              strokeWidth: 2, color: Gati.pasupu))
                       : Icon(p.isPlaying ? Icons.pause : Icons.play_arrow,
                           color: kPaper, size: 32),
                   onPressed: p.toggle,
@@ -175,7 +175,7 @@ class _ErrorBar extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(children: [
-        const Icon(Icons.error_outline, color: kAccent, size: 20),
+        const Icon(Icons.error_outline, color: Gati.kumkuma, size: 20),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -194,7 +194,7 @@ class _ErrorBar extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      color: Color(0xFFB4B2A9), fontSize: 11.5)),
+                      color: Gati.onInkMuted, fontSize: 11.5)),
             ],
           ),
         ),
@@ -202,7 +202,9 @@ class _ErrorBar extends StatelessWidget {
           onPressed: onRetry,
           child: const Text('Retry',
               style: TextStyle(
-                  color: kAccent, fontWeight: FontWeight.w500, fontSize: 13)),
+                  color: Gati.pasupuGlow,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 13)),
         ),
       ]),
     );

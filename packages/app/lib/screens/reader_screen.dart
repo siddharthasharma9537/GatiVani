@@ -79,17 +79,14 @@ class ReaderScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s2, Gati.s5, Gati.s6),
               children: [
                 Text(a.title,
-                    style: TextStyle(
-                        fontSize: 22,
-                        height: 1.32,
-                        fontWeight: FontWeight.w500,
-                        color: p.ink)),
+                    style: GatiType.headline(GatiType.scriptOf(a.title))
+                        .copyWith(color: p.ink)),
                 const SizedBox(height: Gati.s4),
                 _ListenButton(onListen: () => _listen(a)),
                 const SizedBox(height: Gati.s5),
                 Text(a.body,
-                    style: TextStyle(
-                        fontSize: 16.5, height: 1.62, color: p.ink)),
+                    style: GatiType.bodyRead(GatiType.scriptOf(a.body))
+                        .copyWith(color: p.ink)),
                 const SizedBox(height: Gati.s5),
                 // Attribution + source of truth.
                 GestureDetector(

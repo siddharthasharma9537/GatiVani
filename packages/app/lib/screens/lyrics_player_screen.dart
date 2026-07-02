@@ -198,7 +198,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               // section's hue (the album-art cover's colour), like YouTube
               // Music deriving the player colour from the art.
               final hue = sectionRamp(a.category, dark: false)[1];
-              final bgTint = Color.lerp(const Color(0xFF0E0D0B), hue, 0.22)!;
+              final bgTint = Color.lerp(Gati.inkDeep, hue, 0.22)!;
 
               // No more separate draggable "Your Queue" sheet — the queue
               // (or the Mann Ki Baat year-chip archive) is always visible
@@ -419,7 +419,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
-            color: const Color(0xFF35322B),
+            color: Gati.inkChip,
             borderRadius: BorderRadius.circular(22)),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           busy
@@ -427,7 +427,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Gati.accent))
+                      strokeWidth: 2, color: Gati.pasupu))
               : Icon(icon, size: 16, color: Gati.onInk),
           const SizedBox(width: 6),
           Text(label,
@@ -494,6 +494,9 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   // Read-along list (word-sync, tap-to-seek). Over-pulling the top closes lyrics.
   Widget _lyricsList(BuildContext context, PlaybackService p, int activeLine,
       int activeWord, int dur) {
+    // Size by the CONTENT's script (Telugu articles under an English UI still
+    // need the taller Telugu line-height), not the settings language.
+    final script = GatiType.scriptOf(p.current?.title ?? '');
     return NotificationListener<ScrollNotification>(
       onNotification: (n) {
         if (n.metrics.pixels < -90 && _lyrics.value == 1.0) _lyrics.reverse();
@@ -526,7 +529,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                 text: _lines[li][ww] + (ww == _lines[li].length - 1 ? '' : ' '),
                 style: TextStyle(
                   color: isActive
-                      ? Gati.accent
+                      ? Gati.pasupuGlow
                       : isPast
                           ? Gati.onInkPast
                           : Gati.onInkFuture,
@@ -544,13 +547,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color:
-                      isActiveLine ? const Color(0x1AD85A30) : Colors.transparent,
+                      isActiveLine ? Gati.pasupuTint : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: RichText(
                   text: TextSpan(
-                      style: const TextStyle(fontSize: 18, height: 1.6),
-                      children: spans),
+                      style: GatiType.lyrics(script), children: spans),
                 ),
               ),
             );
@@ -634,7 +636,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         return InkWell(
           onTap: () => p.playAt(i),
           child: Container(
-            color: isCurrent ? const Color(0x1AD85A30) : Colors.transparent,
+            color: isCurrent ? Gati.pasupuTint : Colors.transparent,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(children: [
               Container(
@@ -658,7 +660,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            color: isCurrent ? Gati.accent : Gati.onInk,
+                            color: isCurrent ? Gati.pasupuGlow : Gati.onInk,
                             fontSize: 14.5,
                             fontWeight: FontWeight.w500)),
                     Text(
@@ -797,12 +799,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: selected ? Gati.accent : const Color(0xFF35322B),
+                color: selected ? Gati.pasupu : Gati.inkChip,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Text('$y',
                   style: TextStyle(
-                      color: selected ? Gati.onInk : Gati.onInkMuted,
+                      color: selected ? Gati.inkDeep : Gati.onInkMuted,
                       fontSize: 13.5,
                       fontWeight: FontWeight.w500)),
             ),
@@ -844,7 +846,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   if (mounted) setState(() => _mkbResolvingIndex = null);
                 },
           child: Container(
-            color: isCurrent ? const Color(0x1AD85A30) : Colors.transparent,
+            color: isCurrent ? Gati.pasupuTint : Colors.transparent,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(children: [
               Container(
@@ -872,7 +874,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: isCurrent ? Gati.accent : Gati.onInk,
+                        color: isCurrent ? Gati.pasupuGlow : Gati.onInk,
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
                         height: 1.3)),
@@ -897,10 +899,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
             ListTile(
               title: Text(label,
                   style: TextStyle(
-                      color: selected ? Gati.accent : Gati.onInk,
+                      color: selected ? Gati.pasupuGlow : Gati.onInk,
                       fontSize: 15)),
               trailing: selected
-                  ? const Icon(Icons.check_rounded, color: Gati.accent, size: 20)
+                  ? const Icon(Icons.check_rounded, color: Gati.pasupu, size: 20)
                   : null,
               onTap: () {
                 onTap();
@@ -952,14 +954,14 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   ? Icons.bedtime
                   : Icons.bedtime_outlined,
               color: PlaybackService.i.sleepActive
-                  ? Gati.accent
+                  ? Gati.pasupu
                   : Gati.onInkMuted,
               size: 20),
           tooltip: 'Sleep timer',
           onPressed: () => _openSleepSheet(context),
         ),
         IconButton(
-          icon: const Icon(Icons.auto_awesome, color: Gati.accent, size: 20),
+          icon: const Icon(Icons.auto_awesome, color: Gati.pasupu, size: 20),
           tooltip: 'Ask about this',
           onPressed: () => AssistantSheet.open(context, a.id, a.title),
         ),
@@ -979,9 +981,9 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
           data: SliderThemeData(
             trackHeight: 3,
             thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            activeTrackColor: Gati.accent,
+            activeTrackColor: Gati.pasupu,
             inactiveTrackColor: Gati.onInkTrack,
-            thumbColor: Gati.accent,
+            thumbColor: Gati.pasupu,
             overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
           ),
           child: Slider(
@@ -1011,14 +1013,14 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
             Container(
               width: 64,
               height: 64,
-              decoration: const BoxDecoration(color: Gati.accent, shape: BoxShape.circle),
+              decoration: const BoxDecoration(color: Gati.pasupu, shape: BoxShape.circle),
               child: IconButton(
                 icon: p.loading
                     ? const Padding(
                         padding: EdgeInsets.all(18),
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Gati.onInk))
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Gati.inkDeep))
                     : Icon(p.isPlaying ? Icons.pause : Icons.play_arrow,
-                        color: Gati.onInk, size: 32),
+                        color: Gati.inkDeep, size: 32),
                 onPressed: p.toggle,
               ),
             ),

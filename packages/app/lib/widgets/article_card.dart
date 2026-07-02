@@ -42,7 +42,7 @@ class ArticleCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
               color: selected
-                  ? const Color(0xFF1D9E75)
+                  ? Gati.successBright
                   : r[1].withValues(alpha: 0.07),
               width: selected ? 1.5 : 1),
         ),
@@ -86,11 +86,11 @@ class ArticleCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: selected
-                          ? const Color(0xFF1D9E75)
+                          ? Gati.successBright
                           : Colors.transparent,
                       border: Border.all(
                           color: selected
-                              ? const Color(0xFF1D9E75)
+                              ? Gati.successBright
                               : r[2],
                           width: 1.5),
                     ),

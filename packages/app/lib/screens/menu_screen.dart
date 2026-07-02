@@ -120,12 +120,12 @@ class MenuBody extends StatelessWidget {
           Row(children: [
             CircleAvatar(
               radius: 23,
-              backgroundColor: const Color(0xFF43221A),
+              backgroundColor: GatiDark.accentSoft,
               backgroundImage: (avatar != null && avatar.isNotEmpty)
                   ? NetworkImage(avatar)
                   : null,
               child: (avatar == null || avatar.isEmpty)
-                  ? const Icon(Icons.person, color: Color(0xFFF0997B), size: 24)
+                  ? const Icon(Icons.person, color: Gati.pasupuGlow, size: 24)
                   : null,
             ),
             const SizedBox(width: 12),
@@ -145,7 +145,7 @@ class MenuBody extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            color: Color(0xFFB4B2A9), fontSize: 12.5)),
+                            color: Gati.onInkMuted, fontSize: 12.5)),
                 ],
               ),
             ),
@@ -181,9 +181,9 @@ class MenuBody extends StatelessWidget {
             height: 46,
             alignment: Alignment.center,
             decoration: const BoxDecoration(
-                color: Color(0xFF43221A), shape: BoxShape.circle),
+                color: GatiDark.accentSoft, shape: BoxShape.circle),
             child: const Icon(Icons.person_outline,
-                color: Color(0xFFF0997B), size: 24),
+                color: Gati.pasupuGlow, size: 24),
           ),
           const SizedBox(width: 12),
           Column(
@@ -194,7 +194,7 @@ class MenuBody extends StatelessWidget {
                       color: kPaper, fontSize: 16, fontWeight: FontWeight.w500)),
               Text(tr(lang, 'guest_sub'),
                   style: const TextStyle(
-                      color: Color(0xFFB4B2A9), fontSize: 12.5)),
+                      color: Gati.onInkMuted, fontSize: 12.5)),
             ],
           ),
         ]),

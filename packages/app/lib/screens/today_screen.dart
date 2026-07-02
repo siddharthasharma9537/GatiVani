@@ -173,11 +173,11 @@ class _TodayScreenState extends State<TodayScreen> {
       label: Text(label,
           style: TextStyle(
               fontSize: 12,
-              color: selected ? const Color(0xFF993C1D) : p.ink)),
+              color: selected ? Gati.accentText : p.ink)),
       selected: selected,
       showCheckmark: false,
       backgroundColor: p.surface,
-      selectedColor: const Color(0xFFFAECE7),
+      selectedColor: Gati.accentSoft,
       side: BorderSide(color: p.line),
       onSelected: (_) => onTap(),
     );
@@ -858,8 +858,8 @@ class _TodayScreenState extends State<TodayScreen> {
                                   ? null
                                   : _uploadProgress,
                               minHeight: 4,
-                              backgroundColor: const Color(0xFF5F5E5A),
-                              color: kAccent),
+                              backgroundColor: Gati.onInkTrack,
+                              color: Gati.pasupu),
                         ),
                       ],
                     ),
@@ -886,15 +886,15 @@ class _TodayScreenState extends State<TodayScreen> {
                             'Page ${st.donePages}/${st.totalPages} · '
                             '${st.articleCount} articles found',
                             style: const TextStyle(
-                                color: Color(0xFFB4B2A9), fontSize: 12)),
+                                color: Gati.onInkMuted, fontSize: 12)),
                         const SizedBox(height: 10),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(2),
                           child: LinearProgressIndicator(
                               value: st.progress,
                               minHeight: 4,
-                              backgroundColor: const Color(0xFF5F5E5A),
-                              color: kAccent),
+                              backgroundColor: Gati.onInkTrack,
+                              color: Gati.pasupu),
                         ),
                       ],
                     ),
@@ -928,7 +928,7 @@ class _TodayScreenState extends State<TodayScreen> {
                             'Upload today’s edition and Gativani turns every '
                             'article into audio you can listen to.',
                             style: TextStyle(
-                                color: Color(0xFFB4B2A9),
+                                color: Gati.onInkMuted,
                                 fontSize: 13.5,
                                 height: 1.5)),
                         const SizedBox(height: 18),
@@ -960,11 +960,11 @@ class _TodayScreenState extends State<TodayScreen> {
                             height: 26,
                             alignment: Alignment.center,
                             decoration: const BoxDecoration(
-                                color: Color(0xFFFAECE7),
+                                color: Gati.accentSoft,
                                 shape: BoxShape.circle),
                             child: Text(step[0],
                                 style: const TextStyle(
-                                    color: Color(0xFF993C1D),
+                                    color: Gati.accentText,
                                     fontSize: 13,
                                     fontWeight: FontWeight.w500)),
                           ),

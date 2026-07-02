@@ -39,7 +39,7 @@ Mann Ki Baat archives, the marquee ticker.
 
 ### 1.2 Brand promise
 
-> **News that speaks, at your pace.**
+> **News on the Go.** *(decided 2026-07-02)*
 > Telugu: **మీ వార్త, మీ గతి** *(“your news, your pace” — needs a native-speaker pass before shipping)*
 
 ### 1.3 Personality
@@ -351,7 +351,7 @@ Each phase = one branch-mergeable unit with its own acceptance check. Sizes: S �
 ### Phase 0 — Brand definition ✅ (this document)
 Mockup/style tile reviewed in chat; open decisions (§13) resolved with Siddhartha.
 
-### Phase 1 — Foundations in code (M)
+### Phase 1 — Foundations in code (M) ✅ (2026-07-02)
 - Extend `design/tokens.dart`: pasupu/kumkuma accents (§4.3), semantic colors, full type scale as `GatiType` (per-script, google_fonts), motion tokens (`druta/madhyama/vilamba`), elevation token.
 - Rebuild `AppTheme.light()/dark()` on these tokens (MaterialApp keeps working); map `kAccent` → pasupu; retune the 4 colliding section ramps.
 - **Accept:** app builds & runs both themes on :8082; no v2 screen references raw hex; terracotta gone from v2 surfaces; EN/TE type renders with correct line-heights in reader + player.

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'tokens.dart';
 
-/// GatiVani design system — Claude-aligned
-/// Flat, adaptive light/dark, no gradients, no glow
-/// All colors are semantic and map to context, not decoration
+/// Legacy theme layer, being migrated onto the GatiVāni tokens in
+/// design/tokens.dart (spec: docs/DESIGN_SYSTEM.md). GVColors/GVTypography
+/// are deprecated — new code uses Gati / GatiType / GatiMotion. AppTheme
+/// itself is rebuilt on the brand tokens (pasupu accent, Anek Telugu).
+/// Flat, adaptive light/dark, no gradients, no glow.
 
 class GVColors {
   GVColors._();
@@ -54,13 +57,13 @@ class GVColors {
   // --- Semantic ---
   static Color accent(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF7F77DD)
-          : const Color(0xFF534AB7);
+          ? Gati.pasupuGlow
+          : Gati.pasupuDeep;
 
   static Color accentBg(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF2A2740)
-          : const Color(0xFFEEEDFE);
+          ? GatiDark.accentSoft
+          : Gati.pasupuSoft;
 
   static Color success(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
@@ -124,8 +127,8 @@ class GVColors {
   // --- Active / playing highlight ---
   static Color playingHighlight(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-          ? const Color(0xFF2A2740)
-          : const Color(0xFFEEEDFE);
+          ? GatiDark.accentSoft
+          : Gati.pasupuSoft;
 
   static Color playingText(BuildContext context) =>
       accent(context);
@@ -277,7 +280,7 @@ class GVCategory {
       case 'business':            return const Color(0xFF1B5E20);
       case 'politics':            return const Color(0xFFBF360C);
       case 'government':          return const Color(0xFF1B5E20);
-      case 'news':                return const Color(0xFF7F77DD);
+      case 'news':                return Gati.pasupuGlow;
       default:                    return const Color(0xFF546E7A);
     }
   }
@@ -344,12 +347,12 @@ class AppTheme {
 
     final colorScheme = ColorScheme(
       brightness: brightness,
-      primary: isDark ? const Color(0xFF7F77DD) : const Color(0xFF534AB7),
-      onPrimary: Colors.white,
+      primary: isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
+      onPrimary: isDark ? Gati.inkDeep : Colors.white,
       primaryContainer:
-          isDark ? const Color(0xFF2A2740) : const Color(0xFFEEEDFE),
+          isDark ? GatiDark.accentSoft : Gati.pasupuSoft,
       onPrimaryContainer:
-          isDark ? const Color(0xFFCECBF6) : const Color(0xFF26215C),
+          isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
       secondary: isDark ? const Color(0xFF1D9E75) : const Color(0xFF0F6E56),
       onSecondary: Colors.white,
       secondaryContainer:
@@ -377,7 +380,7 @@ class AppTheme {
       onInverseSurface:
           isDark ? const Color(0xFF1A1A18) : const Color(0xFFEFEEE8),
       inversePrimary:
-          isDark ? const Color(0xFF534AB7) : const Color(0xFF7F77DD),
+          isDark ? Gati.pasupuDeep : Gati.pasupuGlow,
       scrim: Colors.black54,
       shadow: Colors.black26,
     );
@@ -385,7 +388,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
-      fontFamily: GoogleFonts.notoSansTelugu().fontFamily,
+      fontFamily: GoogleFonts.anekTelugu().fontFamily,
       colorScheme: colorScheme,
       scaffoldBackgroundColor:
           isDark ? const Color(0xFF1A1A18) : const Color(0xFFF5F4F0),
@@ -429,7 +432,7 @@ class AppTheme {
         backgroundColor:
             isDark ? const Color(0xFF1A1A18) : Colors.white,
         selectedItemColor:
-            isDark ? const Color(0xFF7F77DD) : const Color(0xFF534AB7),
+            isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
         unselectedItemColor:
             isDark ? const Color(0xFF555550) : const Color(0xFF888780),
         elevation: 0,
@@ -465,7 +468,7 @@ class AppTheme {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(GVRadius.md),
           borderSide: BorderSide(
-            color: isDark ? const Color(0xFF7F77DD) : const Color(0xFF534AB7),
+            color: isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
             width: 1,
           ),
         ),
@@ -477,8 +480,8 @@ class AppTheme {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor:
-              isDark ? const Color(0xFF7F77DD) : const Color(0xFF534AB7),
-          foregroundColor: Colors.white,
+              isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
+          foregroundColor: isDark ? Gati.inkDeep : Colors.white,
           elevation: 0,
           padding:
               const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -513,7 +516,7 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor:
-              isDark ? const Color(0xFF7F77DD) : const Color(0xFF534AB7),
+              isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
           padding:
               const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           shape: RoundedRectangleBorder(
@@ -529,7 +532,7 @@ class AppTheme {
         backgroundColor:
             isDark ? const Color(0xFF252523) : const Color(0xFFF5F4F0),
         selectedColor:
-            isDark ? const Color(0xFF2A2740) : const Color(0xFFEEEDFE),
+            isDark ? GatiDark.accentSoft : Gati.pasupuSoft,
         side: BorderSide(
           color: isDark ? const Color(0xFF3A3A37) : const Color(0xFFD3D1C7),
           width: 0.5,
@@ -546,14 +549,14 @@ class AppTheme {
       ),
       sliderTheme: SliderThemeData(
         activeTrackColor:
-            isDark ? const Color(0xFF7F77DD) : const Color(0xFF534AB7),
+            isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
         inactiveTrackColor:
             isDark ? const Color(0xFF3A3A37) : const Color(0xFFD3D1C7),
         thumbColor:
-            isDark ? const Color(0xFF7F77DD) : const Color(0xFF534AB7),
+            isDark ? Gati.pasupuGlow : Gati.pasupuDeep,
         overlayColor: isDark
-            ? const Color(0x207F77DD)
-            : const Color(0x20534AB7),
+            ? const Color(0x20F4B942)
+            : const Color(0x209A6200),
         trackHeight: 3,
         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
         overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),

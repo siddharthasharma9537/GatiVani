@@ -90,13 +90,13 @@ class EditionMasthead extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                      color: const Color(0xFF43221A),
+                      color: GatiDark.accentSoft,
                       borderRadius: BorderRadius.circular(6)),
                   child: Text(meta.edition(lang)!,
                       style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w500,
-                          color: Color(0xFFF0997B))),
+                          color: Gati.pasupuGlow)),
                 ),
               ]),
             ],
