@@ -453,10 +453,16 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
       final big = Rect.fromLTWH((w - side) / 2, 6, side, side);
       const small = Rect.fromLTWH(2, 8, 46, 46);
       return AnimatedBuilder(
-        animation: _lyrics,
+        animation: Listenable.merge([_lyrics, _queue]),
         builder: (context, _) {
           final t = Curves.easeInOutCubic.transform(_lyrics.value);
           final rect = Rect.lerp(big, small, t)!;
+          // This Stack is Clip.none (so the lyrics view can slide up past its
+          // own bounds), which means the meta+pills row below would otherwise
+          // paint straight through the seek bar/transport once the queue
+          // sheet's rising height squeezes it — fade it out well before the
+          // sheet's first detent (0.6) rather than let it overlap.
+          final queueFade = (1 - _queue.value / 0.25).clamp(0.0, 1.0);
           return Stack(clipBehavior: Clip.none, children: [
             // Read-along — fades + rises from below, clearing the top strip.
             if (t > 0.01)
@@ -479,9 +485,9 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               left: 24,
               right: 24,
               child: IgnorePointer(
-                ignoring: t > 0.2,
+                ignoring: t > 0.2 || _queue.value > 0.2,
                 child: Opacity(
-                  opacity: (1 - t * 1.8).clamp(0.0, 1.0),
+                  opacity: (1 - t * 1.8).clamp(0.0, 1.0) * queueFade,
                   child: _playerMeta(context, a, lang),
                 ),
               ),
