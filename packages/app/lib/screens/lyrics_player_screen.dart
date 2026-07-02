@@ -492,6 +492,24 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                 ),
               ),
             ),
+            // Queue peek — the art+meta only fill the TOP of this Stack (its
+            // height is whatever Expanded leaves above the transport), so
+            // there used to just be dead space down to the controls. Anchor a
+            // compact "what's queued" preview to the bottom instead — tapping
+            // it opens the same sheet a drag would. Fades with the same rules
+            // as the meta block above (lyrics view, real sheet rising).
+            Positioned(
+              left: 24,
+              right: 24,
+              bottom: 24,
+              child: IgnorePointer(
+                ignoring: t > 0.2 || _queue.value > 0.2,
+                child: Opacity(
+                  opacity: (1 - t * 1.8).clamp(0.0, 1.0) * queueFade,
+                  child: _queuePeekCard(context, p, lang),
+                ),
+              ),
+            ),
             // Top strip (the collapsed mini-player): title + a play/pause button,
             // beside the small thumbnail. No full transport below in lyrics mode.
             Positioned(
@@ -603,6 +621,70 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         ]),
       ),
     ]);
+  }
+
+  // Compact "what's queued" preview — sits in the space the art+meta don't
+  // fill, tap to open "Your Queue" to its first detent. Content depends on
+  // what's actually queued: the Mann Ki Baat archive gets its own prompt
+  // (since its "queue" IS the whole playlist, not a few up-next tracks);
+  // otherwise the next track, or how many related articles are waiting.
+  Widget _queuePeekCard(BuildContext context, PlaybackService p, String lang) {
+    final q = p.queue;
+    final isMkb =
+        q.isNotEmpty && q.every((a) => a.documentType == 'mkb_episode');
+    IconData icon;
+    String title;
+    String subtitle;
+    if (isMkb) {
+      icon = Icons.mic_rounded;
+      title = tr(lang, 'mkb_playlist_title');
+      subtitle = '${q.length} ${tr(lang, 'episodes')}';
+    } else if (p.upNextCount > 0) {
+      final next = q[p.index + 1];
+      icon = Icons.queue_music_rounded;
+      title = tr(lang, 'play_next');
+      subtitle = next.title;
+    } else {
+      final current = p.current;
+      final related = current == null ? const [] : _relatedFor(current);
+      if (related.isEmpty) return const SizedBox.shrink();
+      icon = Icons.article_rounded;
+      title = tr(lang, 'related_articles');
+      subtitle = related.first.title;
+    }
+    return GestureDetector(
+      onTap: () => _queue.animateTo(0.6, curve: Curves.easeOut),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+            color: const Color(0xFF35322B),
+            borderRadius: BorderRadius.circular(16)),
+        child: Row(children: [
+          Icon(icon, size: 18, color: Gati.accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        color: Gati.onInkMuted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500)),
+                Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Gati.onInk, fontSize: 13.5)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Icon(Icons.keyboard_arrow_up_rounded,
+              color: Gati.onInkMuted, size: 20),
+        ]),
+      ),
+    );
   }
 
   Widget _pill(IconData icon, String label, VoidCallback onTap,

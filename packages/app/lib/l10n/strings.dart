@@ -90,6 +90,7 @@ const Map<String, Map<String, String>> _kStrings = {
     'related_articles': 'Related articles',
     'mkb_playlist_from': 'PM Radio Archive',
     'mkb_playlist_title': 'Mann Ki Baat',
+    'episodes': 'episodes',
   },
   'te': {
     'listen': 'వినండి',
@@ -178,6 +179,7 @@ const Map<String, Map<String, String>> _kStrings = {
     'related_articles': 'సంబంధిత వార్తలు',
     'mkb_playlist_from': 'పీఎం రేడియో ఆర్కైవ్',
     'mkb_playlist_title': 'మన్ కీ బాత్',
+    'episodes': 'ఎపిసోడ్‌లు',
   },
 };
 
