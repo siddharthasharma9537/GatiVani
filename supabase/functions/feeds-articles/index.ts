@@ -26,10 +26,32 @@ function json(body: unknown, status = 200) {
 }
 
 // Publisher feeds that expose full <content:encoded>. Extend freely.
+//
+// Candidates below were verified live (not from stale notes) before adding:
+// fetched each feed, confirmed 200 + real <item>/<content:encoded> XML (not an
+// HTML/SPA fallback), confirmed pubDate is actually current, and confirmed
+// content:encoded bodies are substantial (~1-6k chars, not stub summaries).
+// Rejected candidates and why: eenadu.net, sakshi.com, andhrajyothy.com,
+// andhraprabha.com, teluguone.com, apherald.com — no real RSS endpoint found
+// (redirect to HTML/SPA or 404); telugu.oneindia.com, etvbharat.com — feed
+// exists but has no content:encoded (headline/summary only, fails the
+// full-body requirement this endpoint exists for); tv5news.in — real feed but
+// frozen (newest item was 5+ weeks stale, so it was dropped for freshness).
+// 10tv.in/feed passes all of the above from a plain client but silently
+// returns nothing when fetched from here — blocked at the network level for
+// Supabase's edge IPs (same class of block CricAPI had). Can't route around
+// it client-side like CricAPI/Cricbuzz either: its CORS header locks
+// Access-Control-Allow-Origin to https://10tv.in itself, not permissive.
+// Dropped rather than building a proxy for one source.
 const FEEDS: Array<{ source: string; url: string }> = [
   { source: "NTV Telugu", url: "https://ntvtelugu.com/feed" },
   { source: "HMTV", url: "https://www.hmtvlive.com/feed" },
   { source: "Big TV", url: "https://www.bigtvlive.com/feed" },
+  { source: "TV9 Telugu", url: "https://tv9telugu.com/feed" },
+  { source: "V6 News", url: "https://www.v6velugu.com/feed" },
+  { source: "NT News", url: "https://www.ntnews.com/feed" },
+  { source: "Telugu360", url: "https://www.telugu360.com/feed" },
+  { source: "Mana Telangana", url: "https://www.manatelangana.news/feed" },
 ];
 
 const BODY_CAP = 9000; // chars — bound TTS cost + payload
@@ -142,9 +164,13 @@ async function fetchFeed(
       headers: { "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)" },
       signal: ctrl.signal,
     });
-    if (!r.ok) return [];
+    if (!r.ok) {
+      console.warn(`[feeds-articles] ${source} HTTP ${r.status}`);
+      return [];
+    }
     return await parseFeed(source, await r.text(), perFeed);
-  } catch {
+  } catch (e) {
+    console.warn(`[feeds-articles] ${source} failed:`, (e as Error).message);
     return [];
   } finally {
     clearTimeout(t);
