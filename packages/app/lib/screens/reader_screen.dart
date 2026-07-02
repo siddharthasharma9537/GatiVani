@@ -104,6 +104,7 @@ class ReaderScreen extends StatelessWidget {
                             decoration: TextDecoration.underline)),
                   ]),
                 ),
+                _RelatedArticles(current: a, lang: lang),
               ],
             ),
           ),
@@ -151,6 +152,77 @@ class _ListenButton extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Other Latest-stories articles from the same publisher as the one being
+/// read — a lightweight, zero-extra-request notion of "related" using the
+/// pool ReaderStore already carries (see LiveFeedScreen._load).
+class _RelatedArticles extends StatelessWidget {
+  const _RelatedArticles({required this.current, required this.lang});
+  final WebArticle current;
+  final String lang;
+
+  @override
+  Widget build(BuildContext context) {
+    final related = ReaderStore.i.all
+        .where((w) => w.source == current.source && w.id != current.id)
+        .take(8)
+        .toList();
+    if (related.isEmpty) return const SizedBox.shrink();
+    final p = GatiPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: Gati.s6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_t(lang, 'Related articles', 'సంబంధిత వార్తలు'),
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w500, color: p.muted)),
+        const SizedBox(height: Gati.s3),
+        ...related.map((w) => _RelatedRow(article: w)),
+      ]),
+    );
+  }
+}
+
+class _RelatedRow extends StatelessWidget {
+  const _RelatedRow({required this.article});
+  final WebArticle article;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = GatiPalette.of(context);
+    return GestureDetector(
+      onTap: () {
+        ReaderStore.i.current = article;
+        context.push('/reader');
+      },
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: Gati.s2),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(article.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 14.5, height: 1.3, color: p.ink)),
+                const SizedBox(height: 2),
+                Text(article.source,
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        color: kAccent)),
+              ],
+            ),
+          ),
+          const SizedBox(width: Gati.s3),
+          Icon(Icons.chevron_right, color: p.muted, size: 20),
+        ]),
+      ),
     );
   }
 }

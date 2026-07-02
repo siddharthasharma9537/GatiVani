@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
+import 'playback_service.dart';
 
 /// One headline from the feeds-news edge function (Google News Telugu RSS).
 class NewsItem {
@@ -141,6 +142,46 @@ class NewsFeedService {
     }
   }
 
+  /// The full Mann Ki Baat archive (Part-1, Oct 2014 → latest), recent→oldest.
+  /// Titles/dates only — no audio URL yet, each episode is resolved lazily via
+  /// [resolveMkbEpisode] only when actually tapped to play.
+  Future<List<MkbEpisode>> fetchMkbPlaylist() async {
+    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-mkb-playlist');
+    try {
+      final r = await http.get(uri, headers: ApiConfig.authHeaders)
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode != 200) return [];
+      final d = json.decode(r.body) as Map<String, dynamic>;
+      final items = (d['items'] as List?) ?? const [];
+      return items
+          .map((e) => MkbEpisode.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Resolves one Mann Ki Baat episode's real audio URL — scrapes
+  /// pmonradio.nic.in on demand (lazy: only called when an episode is tapped).
+  Future<({String audioUrl, int durationSeconds})?> resolveMkbEpisode(
+      String divId) async {
+    final uri = Uri.parse(
+        '${ApiConfig.functionsUrl}/feeds-mkb-playlist?resolve=$divId');
+    try {
+      final r = await http.get(uri, headers: ApiConfig.authHeaders)
+          .timeout(const Duration(seconds: 20));
+      if (r.statusCode != 200) return null;
+      final d = json.decode(r.body) as Map<String, dynamic>;
+      if (d['ok'] != true) return null;
+      return (
+        audioUrl: d['audioUrl'] as String,
+        durationSeconds: (d['durationSeconds'] as num?)?.toInt() ?? 0,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// "GatiVani Take" — the weight-to-article pick: the single most newsworthy
   /// national/international headline right now, with an ORIGINAL Telugu
   /// title + explainer synthesized from independently-corroborated facts
@@ -220,6 +261,23 @@ class PodcastEpisode {
       );
 }
 
+/// One Mann Ki Baat archive entry (from feeds-mkb-playlist). `id` is the
+/// site's own div id (e.g. "div135") — also the key passed to
+/// `resolveMkbEpisode` when the episode is actually tapped to play.
+class MkbEpisode {
+  MkbEpisode({required this.id, required this.title, required this.pubDate});
+
+  final String id;
+  final String title;
+  final String pubDate;
+
+  factory MkbEpisode.fromJson(Map<String, dynamic> j) => MkbEpisode(
+        id: (j['id'] as String?) ?? '',
+        title: (j['title'] as String?) ?? '',
+        pubDate: (j['pubDate'] as String?) ?? '',
+      );
+}
+
 /// Holds the article the /reader route is showing. go_router `extra` is lost on
 /// browser Back, so — like EditionStore — the data lives here and the route
 /// reads it (falling back to home if empty on a cold deep-link).
@@ -227,6 +285,9 @@ class ReaderStore {
   ReaderStore._();
   static final ReaderStore i = ReaderStore._();
   WebArticle? current;
+  // The full pool the current article was drawn from (Latest stories) — lets
+  // the reader and player surface "Related articles" from the same source.
+  List<WebArticle> all = [];
 }
 
 const _months = <String, int>{
@@ -250,6 +311,23 @@ DateTime? parseRfc822(String s) {
     int.parse(m.group(5)!),
     int.parse(m.group(6)!),
   );
+}
+
+/// Resolves (if needed) and plays a Mann Ki Baat entry already sitting in
+/// PlaybackService's queue at [i]. The shared player treats a null audioUrl
+/// as "needs TTS synthesis" (see PlaybackService._playIndex), which is wrong
+/// for MKB rows — a real archive episode always needs a URL fetched first.
+/// Already-resolved rows (the one the playlist opened with) just play.
+Future<void> playMkbQueueEntry(int i) async {
+  final q = PlaybackService.i.queue;
+  if (i < 0 || i >= q.length) return;
+  final art = q[i];
+  if (art.audioUrl == null) {
+    final resolved = await NewsFeedService().resolveMkbEpisode(art.id);
+    if (resolved == null) return;
+    art.audioUrl = resolved.audioUrl;
+  }
+  await PlaybackService.i.playAt(i);
 }
 
 /// Compact relative age badge, e.g. "5m" / "2h" / "1d".

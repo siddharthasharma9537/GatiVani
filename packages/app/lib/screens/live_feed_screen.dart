@@ -88,11 +88,20 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       _take = take;
       _loading = false;
     });
+    // Shared with the reader + player's "Related articles" — same pool
+    // Latest stories already fetched, no extra request.
+    ReaderStore.i.all = articles;
   }
 
   // Play a podcast episode directly — audioUrl is a real MP3, so playOne skips
-  // TTS synthesis entirely (see PlaybackService._playIndex).
+  // TTS synthesis entirely (see PlaybackService._playIndex). Mann Ki Baat is
+  // the one exception: it opens the full archive as a playlist instead of
+  // just playing the latest episode.
   void _playPodcast(PodcastEpisode ep) {
+    if (ep.key == 'mann_ki_baat') {
+      _openMkbPlaylist();
+      return;
+    }
     final art = NewspaperArticle(
       id: _podcastIds[ep.key] ?? 'a0000000-0000-4000-8000-0000000000d0',
       title: ep.episodeTitle,
@@ -104,6 +113,30 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       audioUrl: ep.audioUrl,
     );
     PlaybackService.i.playOne(art);
+  }
+
+  // Loads the full Mann Ki Baat archive (Part-1, 2014 → latest) as the play
+  // queue and starts the newest episode. Every other episode's audio stays
+  // unresolved until it's actually tapped in "Your Queue" — see
+  // playMkbQueueEntry, used by the player's queue panel.
+  Future<void> _openMkbPlaylist() async {
+    final episodes = await _feed.fetchMkbPlaylist();
+    if (episodes.isEmpty || !mounted) return;
+    final articles = episodes
+        .map((e) => NewspaperArticle(
+              id: e.id,
+              title: e.title,
+              content: '',
+              preview: e.title,
+              category: 'Mann Ki Baat',
+              estimatedDurationSeconds: 0, // unknown until resolved
+              documentType: 'mkb_episode',
+            ))
+        .toList();
+    final resolved = await _feed.resolveMkbEpisode(articles.first.id);
+    if (resolved == null || !mounted) return;
+    articles.first.audioUrl = resolved.audioUrl;
+    PlaybackService.i.playAll(articles, start: 0);
   }
 
   // Stable per-show ids so each show's tile always overwrites one recent-plays

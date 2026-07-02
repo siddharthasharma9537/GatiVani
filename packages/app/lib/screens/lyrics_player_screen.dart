@@ -5,6 +5,7 @@ import '../l10n/strings.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../services/edition_store.dart';
+import '../services/news_feed_service.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
 import '../models/newspaper_article.dart';
@@ -42,6 +43,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   late final AnimationController _queue = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 300));
   double _vh = 0; // viewport height, captured each build for the queue drag
+
+  // "Your Queue" panel, Mann Ki Baat playlist mode: which year's chip is
+  // selected (null until first built, then defaults to the newest episode's
+  // year) and which row is mid-resolve (shows a small spinner in its place).
+  int? _mkbYear;
+  int? _mkbResolvingIndex;
 
   static const _queueTopBar = 72.0;
   double get _maxPanelH => (_vh - _queueTopBar).clamp(1.0, _vh < 1 ? 1.0 : _vh);
@@ -769,17 +776,22 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   }
 
   // ── "Your Queue" panel ──────────────────────────────────────────────────────
+  // Two modes: the Mann Ki Baat archive (opened only from its Podcast tile)
+  // shows year chips over the full episode list; everything else keeps the
+  // normal up-next queue, with a "Related articles" strip above it.
   Widget _queuePanel(BuildContext context, PlaybackService p, Color tint) {
     final lang = context.read<SettingsProvider>().lang;
     final q = p.queue;
+    final isMkb =
+        q.isNotEmpty && q.every((a) => a.documentType == 'mkb_episode');
     return Container(
       decoration: BoxDecoration(
         color: tint,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(children: [
-        // Grab handle + "Playing from / Your Queue" header — one draggable area
-        // that resizes the sheet (up → full, down → ~58% → closed).
+        // Grab handle + header — one draggable area that resizes the sheet
+        // (up → full, down → ~58% → closed).
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onVerticalDragStart: (_) => _queueDragStart(),
@@ -806,10 +818,14 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(tr(lang, 'playing_from'),
+                    Text(
+                        tr(lang,
+                            isMkb ? 'mkb_playlist_from' : 'playing_from'),
                         style: const TextStyle(
                             color: Gati.onInkMuted, fontSize: 12)),
-                    Text(tr(lang, 'your_queue'),
+                    Text(
+                        tr(lang,
+                            isMkb ? 'mkb_playlist_title' : 'your_queue'),
                         style: const TextStyle(
                             color: Gati.onInk,
                             fontSize: 17,
@@ -820,77 +836,284 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
             ),
           ]),
         ),
+        if (isMkb)
+          _mkbYearChips(q)
+        else
+          _relatedArticlesStrip(context, p, lang),
         Expanded(
           child: q.isEmpty
               ? Center(
                   child: Text(tr(lang, 'queue_empty'),
                       style: const TextStyle(color: Gati.onInkMuted)))
-              : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  itemCount: q.length,
-                  itemBuilder: (context, i) {
-                    final art = q[i];
-                    final isCurrent = i == p.index;
-                    final r = sectionRamp(art.category, dark: true);
-                    final mins = (art.estimatedDurationSeconds / 60).ceil();
-                    return InkWell(
-                      onTap: () => p.playAt(i),
-                      child: Container(
-                        color: isCurrent
-                            ? const Color(0x1AD85A30)
-                            : Colors.transparent,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                        child: Row(children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                                color: r[0],
-                                borderRadius: BorderRadius.circular(8)),
-                            child: Icon(
-                                isCurrent
-                                    ? Icons.equalizer_rounded
-                                    : Icons.article_rounded,
-                                color: isCurrent
-                                    ? Gati.accent
-                                    : Gati.onInkMuted,
-                                size: isCurrent ? 20 : 18),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(art.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        color: isCurrent
-                                            ? Gati.accent
-                                            : Gati.onInk,
-                                        fontSize: 14.5,
-                                        fontWeight: FontWeight.w500)),
-                                Text(
-                                    '${sectionLabel(art.category, lang)} · $mins ${tr(lang, 'min')}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        color: Gati.onInkMuted, fontSize: 12)),
-                              ],
-                            ),
-                          ),
-                          const Icon(Icons.drag_handle_rounded,
-                              color: Gati.onInkTrack, size: 22),
-                        ]),
-                      ),
-                    );
-                  },
-                ),
+              : isMkb
+                  ? _mkbEpisodeList(context, p, q)
+                  : _queueList(context, p, q, lang),
         ),
       ]),
+    );
+  }
+
+  // Normal "Your Queue" list — unchanged behavior, tap to jump to that track.
+  Widget _queueList(BuildContext context, PlaybackService p,
+      List<NewspaperArticle> q, String lang) {
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 16),
+      itemCount: q.length,
+      itemBuilder: (context, i) {
+        final art = q[i];
+        final isCurrent = i == p.index;
+        final r = sectionRamp(art.category, dark: true);
+        final mins = (art.estimatedDurationSeconds / 60).ceil();
+        return InkWell(
+          onTap: () => p.playAt(i),
+          child: Container(
+            color: isCurrent ? const Color(0x1AD85A30) : Colors.transparent,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(children: [
+              Container(
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: r[0], borderRadius: BorderRadius.circular(8)),
+                child: Icon(
+                    isCurrent ? Icons.equalizer_rounded : Icons.article_rounded,
+                    color: isCurrent ? Gati.accent : Gati.onInkMuted,
+                    size: isCurrent ? 20 : 18),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(art.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: isCurrent ? Gati.accent : Gati.onInk,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w500)),
+                    Text(
+                        '${sectionLabel(art.category, lang)} · $mins ${tr(lang, 'min')}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Gati.onInkMuted, fontSize: 12)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.drag_handle_rounded,
+                  color: Gati.onInkTrack, size: 22),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+
+  // "Related articles" — other Latest-stories articles from the same
+  // publisher as whatever's currently playing (only when the current track
+  // actually came from a web article; cricket/podcasts/GatiVani Take don't
+  // have a comparison pool). Tapping one queues it as Play Next rather than
+  // interrupting playback, per the "user selected articles to play next in
+  // Your Queue" behavior.
+  List<WebArticle> _relatedFor(NewspaperArticle current) {
+    final pool = ReaderStore.i.all;
+    if (pool.isEmpty) return const [];
+    final match = pool.where((w) => w.id == current.id);
+    if (match.isEmpty) return const [];
+    final source = match.first.source;
+    return pool
+        .where((w) => w.source == source && w.id != current.id)
+        .take(8)
+        .toList();
+  }
+
+  Widget _relatedArticlesStrip(
+      BuildContext context, PlaybackService p, String lang) {
+    final current = p.current;
+    if (current == null) return const SizedBox.shrink();
+    final related = _relatedFor(current);
+    if (related.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+        child: Text(tr(lang, 'related_articles'),
+            style: const TextStyle(
+                color: Gati.onInkMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w500)),
+      ),
+      SizedBox(
+        height: 92,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: related.length,
+          itemBuilder: (context, i) {
+            final w = related[i];
+            final r = sectionRamp(w.source, dark: true);
+            return GestureDetector(
+              onTap: () {
+                final art = NewspaperArticle(
+                  id: w.id,
+                  title: w.title,
+                  content: w.body,
+                  preview: w.summary,
+                  category: w.source,
+                  estimatedDurationSeconds:
+                      NewspaperArticle.estimateDuration(w.body),
+                  readingStyle: 'news_anchor',
+                );
+                PlaybackService.i.playNext([art]);
+                _snack(context, tr(lang, 'added_queue'));
+              },
+              child: Container(
+                width: 200,
+                margin: const EdgeInsets.only(right: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: r[0], borderRadius: BorderRadius.circular(12)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(w.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: r[1],
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w500,
+                            height: 1.25)),
+                    Text(w.source,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: r[2], fontSize: 11)),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+      const SizedBox(height: 4),
+    ]);
+  }
+
+  // ── Mann Ki Baat playlist mode ───────────────────────────────────────────
+  // Scrollable year chips, present year on the left extending right to the
+  // past. Selecting one filters the (already recent→oldest) episode list
+  // below to just that year.
+  Widget _mkbYearChips(List<NewspaperArticle> q) {
+    final years = <int>[];
+    for (final a in q) {
+      final y = _yearOf(a.title);
+      if (y != null && !years.contains(y)) years.add(y);
+    }
+    if (years.isEmpty) return const SizedBox.shrink();
+    _mkbYear ??= years.first;
+    return SizedBox(
+      height: 44,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: years.length,
+        itemBuilder: (context, i) {
+          final y = years[i];
+          final selected = y == _mkbYear;
+          return GestureDetector(
+            onTap: () => setState(() => _mkbYear = y),
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: selected ? Gati.accent : const Color(0xFF35322B),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text('$y',
+                  style: TextStyle(
+                      color: selected ? Gati.onInk : Gati.onInkMuted,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500)),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // Title is always "Mann Ki Baat — Part-N, Dth Month YYYY" — the year is
+  // the last 4-digit run, cheaper than threading a separate date field
+  // through NewspaperArticle just for this one screen.
+  int? _yearOf(String title) {
+    final m = RegExp(r'(\d{4})\s*$').firstMatch(title.trim());
+    return m == null ? null : int.tryParse(m.group(1)!);
+  }
+
+  Widget _mkbEpisodeList(
+      BuildContext context, PlaybackService p, List<NewspaperArticle> q) {
+    final year = _mkbYear;
+    final indices = [
+      for (var i = 0; i < q.length; i++)
+        if (year == null || _yearOf(q[i].title) == year) i,
+    ];
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 16),
+      itemCount: indices.length,
+      itemBuilder: (context, row) {
+        final i = indices[row];
+        final art = q[i];
+        final isCurrent = i == p.index;
+        final resolving = i == _mkbResolvingIndex;
+        return InkWell(
+          onTap: resolving
+              ? null
+              : () async {
+                  setState(() => _mkbResolvingIndex = i);
+                  await playMkbQueueEntry(i);
+                  if (mounted) setState(() => _mkbResolvingIndex = null);
+                },
+          child: Container(
+            color: isCurrent ? const Color(0x1AD85A30) : Colors.transparent,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                    color: Gati.accentSoft, shape: BoxShape.circle),
+                child: resolving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Gati.accent))
+                    : Icon(
+                        isCurrent
+                            ? Icons.equalizer_rounded
+                            : Icons.mic_rounded,
+                        color: isCurrent ? Gati.accent : Gati.accentText,
+                        size: 18),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(art.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: isCurrent ? Gati.accent : Gati.onInk,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        height: 1.3)),
+              ),
+            ]),
+          ),
+        );
+      },
     );
   }
 

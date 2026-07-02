@@ -87,6 +87,9 @@ const Map<String, Map<String, String>> _kStrings = {
     'continue_with': 'Continue with',
     'auth_note': 'Demo — email sign-in is not yet connected to a server.',
     'lang_label': 'తె',
+    'related_articles': 'Related articles',
+    'mkb_playlist_from': 'PM Radio Archive',
+    'mkb_playlist_title': 'Mann Ki Baat',
   },
   'te': {
     'listen': 'వినండి',
@@ -172,6 +175,9 @@ const Map<String, Map<String, String>> _kStrings = {
     'continue_with': 'వీటితో కొనసాగండి:',
     'auth_note': 'డెమో — ఇమెయిల్ సైన్ ఇన్ ఇంకా సర్వర్‌కు అనుసంధానించబడలేదు.',
     'lang_label': 'EN',
+    'related_articles': 'సంబంధిత వార్తలు',
+    'mkb_playlist_from': 'పీఎం రేడియో ఆర్కైవ్',
+    'mkb_playlist_title': 'మన్ కీ బాత్',
   },
 };
 
