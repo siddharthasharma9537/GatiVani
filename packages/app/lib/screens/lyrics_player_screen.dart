@@ -32,68 +32,33 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   final _keys = <int, GlobalKey>{};
   int _lastScrolled = -1;
   bool _dismissing = false;
-  double _dragDy = 0; // accumulated pull → minimize
-  double _queueStart = 0; // _queue value at the start of a drag
+  double _dragDy = 0; // accumulated pull-down → dismiss
   bool _downloading = false;
   // 0 = album-art player; 1 = lyrics open (art collapsed into the top strip).
   // One value drives the whole coordinated transition (YouTube-Music style).
   late final AnimationController _lyrics = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 360));
-  // 0 = closed; 1 = "Your Queue" panel open (~58% of the viewport).
-  late final AnimationController _queue = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 300));
-  double _vh = 0; // viewport height, captured each build for the queue drag
 
-  // "Your Queue" panel, Mann Ki Baat playlist mode: which year's chip is
-  // selected (null until first built, then defaults to the newest episode's
-  // year) and which row is mid-resolve (shows a small spinner in its place).
+  // Mann Ki Baat playlist mode: which year's chip is selected (null until
+  // first built, then defaults to the newest episode's year) and which row
+  // is mid-resolve (shows a small spinner in its place).
   int? _mkbYear;
   int? _mkbResolvingIndex;
 
-  static const _queueTopBar = 72.0;
-  // Rough height of the title(s) + subtitle + pill row under the art —
-  // title can wrap to 3 lines, so this errs generous rather than let the
-  // Next Up list below start overlapping it.
-  static const _metaBlockEstimate = 150.0;
-  double get _maxPanelH => (_vh - _queueTopBar).clamp(1.0, _vh < 1 ? 1.0 : _vh);
-
-  // Settle the queue sheet to the nearest detent (closed / ~58% / full), or the
-  // next one in a fling's direction.
-  void _snapQueue(double vel) {
-    const detents = [0.0, 0.6, 1.0];
-    final val = _queue.value;
-    double target;
-    if (vel < -350) {
-      target = detents.firstWhere((d) => d > val + 0.02, orElse: () => 1.0);
-    } else if (vel > 350) {
-      target = detents.lastWhere((d) => d < val - 0.02, orElse: () => 0.0);
-    } else {
-      target =
-          detents.reduce((a, b) => (val - a).abs() <= (val - b).abs() ? a : b);
+  // Pull down on the header past this far (or with enough velocity) to
+  // dismiss back to the mini-player.
+  void _dismissDragEnd(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    if ((_dragDy > 70 || v > 250) && !_dismissing) {
+      _dismissing = true;
+      if (context.canPop()) context.pop();
     }
-    _queue.animateTo(target, curve: Curves.easeOut);
-  }
-
-  // Drive the queue sheet from a drag anywhere on its grab area / header.
-  void _queueDragStart() {
-    _dragDy = 0;
-    _queueStart = _queue.value;
-  }
-
-  void _queueDragUpdate(DragUpdateDetails d) {
-    _dragDy += d.primaryDelta ?? 0;
-    _queue.value = (_queueStart - _dragDy / _maxPanelH).clamp(0.0, 1.0);
-  }
-
-  void _queueDragEnd(DragEndDetails d) {
-    _snapQueue(d.primaryVelocity ?? 0);
     _dragDy = 0;
   }
 
   @override
   void dispose() {
     _lyrics.dispose();
-    _queue.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -229,214 +194,32 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                 .addPostFrameCallback((_) => _autoScroll(activeLine));
 
             return LayoutBuilder(builder: (context, c) {
-              final vh = c.maxHeight;
-              _vh = vh;
-              const topBar = _queueTopBar;
-              final maxPanelH = _maxPanelH;
-              // Color-sync: tint the player background and the queue sheet with
-              // the playing section's hue (the album-art cover's colour), like
-              // YouTube Music deriving the player colour from the art.
+              // Color-sync: tint the player background with the playing
+              // section's hue (the album-art cover's colour), like YouTube
+              // Music deriving the player colour from the art.
               final hue = sectionRamp(a.category, dark: false)[1];
               final bgTint = Color.lerp(const Color(0xFF0E0D0B), hue, 0.22)!;
-              final panelTint = Color.lerp(const Color(0xFF15120E), hue, 0.18)!;
 
-              // StackFit.expand: every child here is Positioned, so without it
-              // the Stack collapses to zero height (loose fit → smallest size)
-              // and the whole player renders blank.
+              // No more separate draggable "Your Queue" sheet — the queue
+              // (or the Mann Ki Baat year-chip archive) is always visible
+              // below the transport, as part of the normal layout; see
+              // _stage. Only a plain pull-down-to-dismiss on the header
+              // remains from what used to be a combined drag gesture.
               return Stack(fit: StackFit.expand, children: [
                 Positioned.fill(child: ColoredBox(color: bgTint)),
-                // ── The player — compresses upward as the queue sheet rises so
-                // the transport stays visible above it (YouTube-Music style), and
-                // fades out by the time the sheet is full (top mini-bar takes over).
-                AnimatedBuilder(
-                  animation: _queue,
-                  builder: (context, _) {
-                    final ph = (vh - maxPanelH * _queue.value).clamp(1.0, vh);
-                    final op =
-                        (1 - ((_queue.value - 0.6) / 0.4)).clamp(0.0, 1.0);
-                    return Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: ph,
-                      child: Opacity(
-                        opacity: op,
-                        child: ClipRect(
-                          child: Column(children: [
-                            _header(context, a),
-                            Expanded(
-                              child: _stage(context, p, a, activeLine,
-                                  activeWord, dur),
-                            ),
-                            // Bottom controls collapse away as the lyrics open.
-                            AnimatedBuilder(
-                              animation: _lyrics,
-                              builder: (context, _) {
-                                final t = Curves.easeInOutCubic
-                                    .transform(_lyrics.value);
-                                return ClipRect(
-                                  child: Align(
-                                    alignment: Alignment.topCenter,
-                                    heightFactor: (1 - t).clamp(0.0, 1.0),
-                                    child: Opacity(
-                                      opacity: (1 - t).clamp(0.0, 1.0),
-                                      child: IgnorePointer(
-                                          ignoring: t > 0.5,
-                                          child: _controls(p)),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ]),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                // ── Drag catcher (art mode): up → queue, down → minimize ──
-                // Translucent so taps fall through to the pills/controls; only
-                // claims vertical drags. Covers the area above the queue panel.
-                AnimatedBuilder(
-                  animation: Listenable.merge([_lyrics, _queue]),
-                  builder: (context, _) {
-                    if (_lyrics.value > 0.01) return const SizedBox.shrink();
-                    return Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: maxPanelH * _queue.value,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onVerticalDragStart: (_) {
-                          _dragDy = 0;
-                          _queueStart = _queue.value;
-                        },
-                        onVerticalDragUpdate: (d) {
-                          _dragDy += d.primaryDelta ?? 0;
-                          if (_dragDy < 0 ||
-                              _queue.value > 0 ||
-                              _queueStart > 0) {
-                            _queue.value = (_queueStart - _dragDy / maxPanelH)
-                                .clamp(0.0, 1.0);
-                          }
-                        },
-                        onVerticalDragEnd: (d) {
-                          final v = d.primaryVelocity ?? 0;
-                          if (_queue.value > 0 ||
-                              _queueStart > 0 ||
-                              _dragDy < 0) {
-                            _snapQueue(v);
-                          } else if ((_dragDy > 70 || v > 250) &&
-                              !_dismissing) {
-                            _dismissing = true;
-                            if (context.canPop()) context.pop();
-                          }
-                          _dragDy = 0;
-                        },
-                      ),
-                    );
-                  },
-                ),
-                // ── "Your Queue" panel — rises from the bottom to ~58% ──
-                AnimatedBuilder(
-                  animation: _queue,
-                  builder: (context, _) {
-                    if (_queue.value < 0.001) return const SizedBox.shrink();
-                    return Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      height: maxPanelH,
-                      child: Transform.translate(
-                        offset: Offset(0, maxPanelH * (1 - _queue.value)),
-                        child: _queuePanel(context, p, panelTint),
-                      ),
-                    );
-                  },
-                ),
-                // ── Top mini-bar — fades in as the queue reaches full, so the
-                // player has collapsed into a thumbnail + title + play strip. ──
-                AnimatedBuilder(
-                  animation: Listenable.merge([_queue, p]),
-                  builder: (context, _) {
-                    final op = ((_queue.value - 0.72) / 0.28).clamp(0.0, 1.0);
-                    if (op <= 0.001) return const SizedBox.shrink();
-                    final lang = context.read<SettingsProvider>().lang;
-                    return Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: topBar,
-                      child: Opacity(
-                        opacity: op,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () =>
-                              _queue.animateTo(0, curve: Curves.easeOut),
-                          onVerticalDragStart: (_) {
-                            _dragDy = 0;
-                            _queueStart = _queue.value;
-                          },
-                          onVerticalDragUpdate: (d) {
-                            _dragDy += d.primaryDelta ?? 0;
-                            _queue.value = (_queueStart - _dragDy / maxPanelH)
-                                .clamp(0.0, 1.0);
-                          },
-                          onVerticalDragEnd: (d) {
-                            _snapQueue(d.primaryVelocity ?? 0);
-                            _dragDy = 0;
-                          },
-                          child: Container(
-                            color: panelTint,
-                            padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
-                            child: Row(children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: SizedBox(
-                                    width: 46,
-                                    height: 46,
-                                    child: _coverWidget(a, lang)),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(a.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: Gati.onInk,
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w500)),
-                                    Text(sectionLabel(a.category, lang),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: Gati.onInkMuted,
-                                            fontSize: 12)),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                icon: Icon(
-                                    p.isPlaying
-                                        ? Icons.pause_rounded
-                                        : Icons.play_arrow_rounded,
-                                    color: Gati.onInk,
-                                    size: 30),
-                                onPressed: p.toggle,
-                              ),
-                            ]),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                Column(children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragStart: (_) => _dragDy = 0,
+                    onVerticalDragUpdate: (d) => _dragDy += d.primaryDelta ?? 0,
+                    onVerticalDragEnd: _dismissDragEnd,
+                    child: _header(context, a),
+                  ),
+                  Expanded(
+                    child: _stage(
+                        context, p, a, activeLine, activeWord, dur),
+                  ),
+                ]),
               ]);
             });
           },
@@ -462,16 +245,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
       final big = Rect.fromLTWH((w - side) / 2, 6, side, side);
       const small = Rect.fromLTWH(2, 8, 46, 46);
       return AnimatedBuilder(
-        animation: Listenable.merge([_lyrics, _queue]),
+        animation: _lyrics,
         builder: (context, _) {
           final t = Curves.easeInOutCubic.transform(_lyrics.value);
           final rect = Rect.lerp(big, small, t)!;
-          // This Stack is Clip.none (so the lyrics view can slide up past its
-          // own bounds), which means the meta+pills row below would otherwise
-          // paint straight through the seek bar/transport once the queue
-          // sheet's rising height squeezes it — fade it out well before the
-          // sheet's first detent (0.6) rather than let it overlap.
-          final queueFade = (1 - _queue.value / 0.25).clamp(0.0, 1.0);
           return Stack(clipBehavior: Clip.none, children: [
             // Read-along — fades + rises from below, clearing the top strip.
             if (t > 0.01)
@@ -488,34 +265,38 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   ),
                 ),
               ),
-            // Player meta (title + meta + pills) under the big art — fades out.
+            // Meta (title + subtitle + pills), transport controls, and the
+            // queue/archive list all flow together in one Column instead of
+            // being separately-positioned pieces — Expanded on the list
+            // gives it whatever's left below the pills and controls with no
+            // pixel-estimated gaps. The whole block fades out as lyrics opens
+            // (title/pills fade a touch faster so they clear the top strip).
             Positioned(
               top: big.bottom + 18,
-              left: 24,
-              right: 24,
-              child: IgnorePointer(
-                ignoring: t > 0.2 || _queue.value > 0.2,
-                child: Opacity(
-                  opacity: (1 - t * 1.8).clamp(0.0, 1.0) * queueFade,
-                  child: _playerMeta(context, a, lang),
-                ),
-              ),
-            ),
-            // Next Up — a real, always-visible list (not just a teaser) in
-            // the room freed by the now-compact art+meta block. Rows behave
-            // exactly like their counterparts in the full "Your Queue" sheet;
-            // the header row opens that sheet the same way a drag would.
-            Positioned(
-              top: big.bottom + 18 + _metaBlockEstimate,
               left: 0,
               right: 0,
               bottom: 0,
               child: IgnorePointer(
-                ignoring: t > 0.2 || _queue.value > 0.2,
-                child: Opacity(
-                  opacity: (1 - t * 1.8).clamp(0.0, 1.0) * queueFade,
-                  child: _nextUpPreview(context, p, lang),
-                ),
+                ignoring: t > 0.2,
+                child: Column(children: [
+                  Opacity(
+                    opacity: (1 - t * 1.8).clamp(0.0, 1.0),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: _playerMeta(context, a, lang),
+                    ),
+                  ),
+                  Opacity(
+                    opacity: (1 - t).clamp(0.0, 1.0),
+                    child: _controls(p),
+                  ),
+                  Expanded(
+                    child: Opacity(
+                      opacity: (1 - t).clamp(0.0, 1.0),
+                      child: _inlineQueueSection(context, p, lang),
+                    ),
+                  ),
+                ]),
               ),
             ),
             // Top strip (the collapsed mini-player): title + a play/pause button,
@@ -629,143 +410,6 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         ]),
       ),
     ]);
-  }
-
-  // Next Up — a real, always-visible preview list in the room the now-
-  // compact art+meta block leaves behind, instead of a single-line teaser.
-  // What it lists depends on what's actually queued: the Mann Ki Baat
-  // archive (its "queue" IS the whole playlist, not a few up-next tracks),
-  // otherwise the tracks queued after the current one, otherwise related
-  // articles as something to add. The header row opens "Your Queue" to its
-  // first detent, same as a drag would; rows behave like their counterparts
-  // in that full sheet.
-  Widget _nextUpPreview(BuildContext context, PlaybackService p, String lang) {
-    final q = p.queue;
-    final isMkb =
-        q.isNotEmpty && q.every((a) => a.documentType == 'mkb_episode');
-    final header = isMkb
-        ? '${tr(lang, 'mkb_playlist_title')} · ${q.length} ${tr(lang, 'episodes')}'
-        : (p.upNextCount > 0 ? tr(lang, 'play_next') : tr(lang, 'related_articles'));
-    List<Widget> rows;
-    if (isMkb) {
-      final start = p.index < 0 ? 0 : p.index;
-      rows = [
-        for (var i = start; i < q.length && i < start + 6; i++)
-          _nextUpRow(
-            title: q[i].title,
-            isCurrent: i == p.index,
-            resolving: i == _mkbResolvingIndex,
-            onTap: () async {
-              setState(() => _mkbResolvingIndex = i);
-              await playMkbQueueEntry(i);
-              if (mounted) setState(() => _mkbResolvingIndex = null);
-            },
-          ),
-      ];
-    } else if (p.upNextCount > 0) {
-      final start = p.index + 1;
-      rows = [
-        for (var i = start; i < q.length && i < start + 6; i++)
-          _nextUpRow(
-            title: q[i].title,
-            isCurrent: false,
-            resolving: false,
-            onTap: () => p.playAt(i),
-          ),
-      ];
-    } else {
-      final current = p.current;
-      final related = current == null ? const <WebArticle>[] : _relatedFor(current);
-      if (related.isEmpty) return const SizedBox.shrink();
-      rows = [
-        for (final w in related.take(6))
-          _nextUpRow(
-            title: w.title,
-            isCurrent: false,
-            resolving: false,
-            onTap: () {
-              final art = NewspaperArticle(
-                id: w.id,
-                title: w.title,
-                content: w.body,
-                preview: w.summary,
-                category: w.source,
-                estimatedDurationSeconds:
-                    NewspaperArticle.estimateDuration(w.body),
-                readingStyle: 'news_anchor',
-              );
-              PlaybackService.i.playNext([art]);
-              _snack(context, tr(lang, 'added_queue'));
-            },
-          ),
-      ];
-    }
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      GestureDetector(
-        onTap: () => _queue.animateTo(0.6, curve: Curves.easeOut),
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-          child: Row(children: [
-            Expanded(
-              child: Text(header,
-                  style: const TextStyle(
-                      color: Gati.onInkMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500)),
-            ),
-            const Icon(Icons.keyboard_arrow_up_rounded,
-                color: Gati.onInkMuted, size: 20),
-          ]),
-        ),
-      ),
-      Expanded(
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 8),
-          physics: const ClampingScrollPhysics(),
-          children: rows,
-        ),
-      ),
-    ]);
-  }
-
-  Widget _nextUpRow({
-    required String title,
-    required bool isCurrent,
-    required bool resolving,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: resolving ? null : onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-        child: Row(children: [
-          SizedBox(
-            width: 22,
-            height: 22,
-            child: resolving
-                ? const CircularProgressIndicator(
-                    strokeWidth: 2, color: Gati.accent)
-                : Icon(
-                    isCurrent
-                        ? Icons.equalizer_rounded
-                        : Icons.play_arrow_rounded,
-                    size: 18,
-                    color: isCurrent ? Gati.accent : Gati.onInkMuted),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: isCurrent ? Gati.accent : Gati.onInk,
-                    fontSize: 13.5,
-                    fontWeight: isCurrent ? FontWeight.w500 : FontWeight.w400)),
-          ),
-        ]),
-      ),
-    );
   }
 
   Widget _pill(IconData icon, String label, VoidCallback onTap,
@@ -944,82 +588,36 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
   }
 
-  // ── "Your Queue" panel ──────────────────────────────────────────────────────
+  // ── Queue / Mann Ki Baat archive — always visible, no more separate sheet ──
   // Two modes: the Mann Ki Baat archive (opened only from its Podcast tile)
   // shows year chips over the full episode list; everything else keeps the
   // normal up-next queue, with a "Related articles" strip above it.
-  Widget _queuePanel(BuildContext context, PlaybackService p, Color tint) {
-    final lang = context.read<SettingsProvider>().lang;
+  Widget _inlineQueueSection(BuildContext context, PlaybackService p, String lang) {
     final q = p.queue;
     final isMkb =
         q.isNotEmpty && q.every((a) => a.documentType == 'mkb_episode');
-    return Container(
-      decoration: BoxDecoration(
-        color: tint,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
+        child: Text(
+            tr(lang, isMkb ? 'mkb_playlist_title' : 'your_queue'),
+            style: const TextStyle(
+                color: Gati.onInk, fontSize: 15, fontWeight: FontWeight.w500)),
       ),
-      child: Column(children: [
-        // Grab handle + header — one draggable area that resizes the sheet
-        // (up → full, down → ~58% → closed).
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onVerticalDragStart: (_) => _queueDragStart(),
-          onVerticalDragUpdate: _queueDragUpdate,
-          onVerticalDragEnd: _queueDragEnd,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.only(top: 10, bottom: 8),
-              alignment: Alignment.center,
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: Gati.onInkTrack,
-                    borderRadius: BorderRadius.circular(2)),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 2, 16, 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                        tr(lang,
-                            isMkb ? 'mkb_playlist_from' : 'playing_from'),
-                        style: const TextStyle(
-                            color: Gati.onInkMuted, fontSize: 12)),
-                    Text(
-                        tr(lang,
-                            isMkb ? 'mkb_playlist_title' : 'your_queue'),
-                        style: const TextStyle(
-                            color: Gati.onInk,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w500)),
-                  ],
-                ),
-              ),
-            ),
-          ]),
-        ),
-        if (isMkb)
-          _mkbYearChips(q)
-        else
-          _relatedArticlesStrip(context, p, lang),
-        Expanded(
-          child: q.isEmpty
-              ? Center(
-                  child: Text(tr(lang, 'queue_empty'),
-                      style: const TextStyle(color: Gati.onInkMuted)))
-              : isMkb
-                  ? _mkbEpisodeList(context, p, q)
-                  : _queueList(context, p, q, lang),
-        ),
-      ]),
-    );
+      if (isMkb)
+        _mkbYearChips(q)
+      else
+        _relatedArticlesStrip(context, p, lang),
+      Expanded(
+        child: q.isEmpty
+            ? Center(
+                child: Text(tr(lang, 'queue_empty'),
+                    style: const TextStyle(color: Gati.onInkMuted)))
+            : isMkb
+                ? _mkbEpisodeList(context, p, q)
+                : _queueList(context, p, q, lang),
+      ),
+    ]);
   }
 
   // Normal "Your Queue" list — unchanged behavior, tap to jump to that track.
