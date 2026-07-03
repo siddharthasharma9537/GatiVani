@@ -161,7 +161,7 @@ class DocumentService {
   /// grounded server-side from the DB; for web stories / podcasts (not in the
   /// DB) pass [articleText] + [articleTitle] so Vāni grounds on those instead.
   Future<String> ask(String articleId, String question,
-      {String? articleText, String? articleTitle}) async {
+      {String? articleText, String? articleTitle, bool general = false}) async {
     final r = await http
         .post(Uri.parse('${ApiConfig.functionsUrl}/documents-ask'),
             headers: {...ApiConfig.authHeaders, 'Content-Type': 'application/json'},
@@ -171,6 +171,7 @@ class DocumentService {
               if (articleText != null && articleText.trim().isNotEmpty)
                 'articleText': articleText,
               if (articleTitle != null) 'articleTitle': articleTitle,
+              if (general) 'mode': 'general',
             }))
         .timeout(const Duration(seconds: 45));
     final data = json.decode(r.body) as Map<String, dynamic>;

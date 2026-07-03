@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'screens/history_screen.dart';
 import 'screens/live_feed_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/section_screen.dart';
@@ -92,6 +93,7 @@ final GoRouter appRouter = GoRouter(
       ),
     ),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
+    GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
     GoRoute(
       path: '/auth',
       builder: (_, state) =>

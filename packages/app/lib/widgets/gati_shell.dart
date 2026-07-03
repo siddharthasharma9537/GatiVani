@@ -6,7 +6,10 @@ import '../design/components/gati_tab_bar.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../screens/menu_screen.dart';
+import '../services/edition_store.dart';
+import '../services/news_feed_service.dart';
 import '../services/settings_provider.dart';
+import 'assistant_sheet.dart';
 import 'mini_player.dart';
 
 /// Lets any screen inside the shell open the menu drawer (header buttons).
@@ -97,6 +100,7 @@ class _GatiShellState extends State<GatiShell>
               child: Scaffold(
                 backgroundColor: p.paper,
                 body: widget.shell,
+                floatingActionButton: const _VaniFab(),
                 bottomNavigationBar: SafeArea(
                   top: false,
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -214,6 +218,61 @@ class _GatiShellState extends State<GatiShell>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The floating Vāni button — the assistant's home on every tab. Opens the
+/// global chat grounded on an index of today's content (Live stories +
+/// the loaded print edition), where Vāni can also ACT on the app (location
+/// questions drive the district filter).
+class _VaniFab extends StatelessWidget {
+  const _VaniFab();
+
+  String _contentIndex() {
+    final live = ReaderStore.i.all
+        .take(20)
+        .map((a) => '• ${a.title} (${a.source})')
+        .join('\n');
+    final paper = EditionStore.i.articles
+        .take(40)
+        .map((a) => '• [${a.category}] ${a.title}')
+        .join('\n');
+    return 'LIVE STORIES RIGHT NOW:\n$live\n\n'
+        "TODAY'S PRINT EDITION:\n$paper";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = GatiPalette.of(context);
+    return GestureDetector(
+      onTap: () => AssistantSheet.open(context, '', 'GatiVani',
+          articleText: _contentIndex(), general: true),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          width: 52,
+          height: 52,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Gati.inkDeep,
+            shape: BoxShape.circle,
+            boxShadow: Gati.shadow,
+          ),
+          child: const Icon(Icons.graphic_eq, color: Gati.pasupu, size: 24),
+        ),
+        const SizedBox(height: 3),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+          decoration: BoxDecoration(
+              color: p.paper.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(8)),
+          child: Text('Vāni',
+              style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                  color: p.ink)),
+        ),
+      ]),
     );
   }
 }

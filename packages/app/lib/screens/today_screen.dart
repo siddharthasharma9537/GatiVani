@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../config/api_config.dart';
+import '../config/districts.dart';
 import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
@@ -13,6 +14,7 @@ import '../services/edition_store.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../design/components/gati_article_sheet.dart';
+import '../design/components/gati_filter_button.dart';
 import '../design/components/gati_masthead.dart';
 import '../design/section_colors.dart';
 import '../design/tokens.dart';
@@ -591,13 +593,29 @@ class _TodayScreenState extends State<TodayScreen> {
     final pageKeys = pages.keys.toList()..sort();
     final catKeys = cats.keys.toList()
       ..sort((a, b) => _sectionRank(a).compareTo(_sectionRank(b)));
-    final visible = _lens == 'page'
+    var visible = _lens == 'page'
         ? (_pageSel == null
             ? _articles
             : _articles.where((a) => a.page == _pageSel).toList())
         : (_category == null
             ? _articles
             : _articles.where((a) => a.category == _category).toList());
+    // District preference (filter dropdown / Vāni): pin the district's
+    // articles first, or show only them — same behavior as Live stories.
+    final settings = context.watch<SettingsProvider>();
+    final district = districtByEn(settings.district);
+    if (district != null) {
+      bool m(NewspaperArticle a) =>
+          district.matches('${a.title} ${a.content}');
+      if (settings.districtOnly) {
+        visible = visible.where(m).toList();
+      } else if (settings.feedSort == 'location') {
+        final hit = visible.where(m).toList();
+        if (hit.isNotEmpty) {
+          visible = [...hit, ...visible.where((a) => !m(a))];
+        }
+      }
+    }
     final st = _jobStatus;
     // First-run / empty state shows the hero "Upload edition" CTA — hide the FAB
     // then so there aren't two upload buttons. The FAB returns once an edition
@@ -872,6 +890,7 @@ class _TodayScreenState extends State<TodayScreen> {
                             child: Row(children: [
                               _viewBtn(Icons.view_list_rounded, 'list'),
                               _viewBtn(Icons.grid_view_rounded, 'tiles'),
+                              const GatiFilterButton(),
                             ]),
                           ),
                         ]),

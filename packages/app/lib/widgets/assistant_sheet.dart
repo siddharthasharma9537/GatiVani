@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../config/districts.dart';
 import '../design/tokens.dart';
 import '../services/document_service.dart';
+import '../services/settings_provider.dart';
 
 /// Vāni — GatiVāni's grounded assistant, as a bottom-sheet chat. Edition
 /// articles are grounded server-side from the DB; web stories and podcasts
@@ -11,19 +15,29 @@ class AssistantSheet extends StatefulWidget {
       {super.key,
       required this.articleId,
       required this.articleTitle,
-      this.articleText});
+      this.articleText,
+      this.general = false});
   final String articleId;
   final String articleTitle;
   final String? articleText;
 
+  /// Global mode (the floating Vāni button): not tied to one article —
+  /// grounded on today's content index, may use general knowledge for
+  /// non-news questions, and can ACT on the app (e.g. a location question
+  /// sets the district filter on the Live + Paper lists).
+  final bool general;
+
   static void open(BuildContext context, String articleId, String title,
-      {String? articleText}) {
+      {String? articleText, bool general = false}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => AssistantSheet(
-          articleId: articleId, articleTitle: title, articleText: articleText),
+          articleId: articleId,
+          articleTitle: title,
+          articleText: articleText,
+          general: general),
     );
   }
 
@@ -38,24 +52,61 @@ class _AssistantSheetState extends State<AssistantSheet> {
   final _msgs = <({bool me, String text})>[];
   bool _busy = false;
 
-  static const _suggestions = [
+  static const _articleSuggestions = [
     'Summarize this article',
     'Give me the background',
     'What are the key facts?',
   ];
+  static const _generalSuggestions = [
+    'హైదరాబాద్ వార్తలు చూపించు',
+    "What's today's top story?",
+    'Summarize today’s news',
+  ];
+
+  List<String> get _suggestions =>
+      widget.general ? _generalSuggestions : _articleSuggestions;
+
+  // Location intent: a question naming a district is an APP ACTION, not a
+  // chat completion — set the district preference + location sort so the
+  // Live and Paper lists both show that place's news, and confirm in chat.
+  bool _tryDistrictAction(String q) {
+    if (!widget.general) return false;
+    for (final d in kDistricts) {
+      if (q.contains(d.te) || q.toLowerCase().contains(d.en.toLowerCase())) {
+        final s = context.read<SettingsProvider>();
+        s.setDistrict(d.en);
+        s.setFeedSort('location');
+        s.setDistrictOnly(true);
+        setState(() => _msgs.add((
+              me: false,
+              text: s.lang == 'te'
+                  ? '${d.te} వార్తలను చూపిస్తున్నాను — లైవ్, పేపర్ రెండు ట్యాబ్‌లలో వర్తిస్తుంది. ఫిల్టర్ మెనూలో "${'నా జిల్లా మాత్రమే'}" తీసేస్తే అన్ని వార్తలు కనిపిస్తాయి.'
+                  : 'Showing ${d.en} news — applied to both the Live and Paper tabs. Clear "My district only" from the filter menu to see everything again.'
+            )));
+        return true;
+      }
+    }
+    return false;
+  }
 
   Future<void> _send(String q) async {
     q = q.trim();
     if (q.isEmpty || _busy) return;
     setState(() {
       _msgs.add((me: true, text: q));
-      _busy = true;
       _input.clear();
     });
     _scrollDown();
+    if (_tryDistrictAction(q)) {
+      _scrollDown();
+      return;
+    }
+    setState(() => _busy = true);
     try {
       final a = await _svc.ask(widget.articleId, q,
-          articleText: widget.articleText, articleTitle: widget.articleTitle);
+          articleText: widget.articleText,
+          articleTitle: widget.articleTitle,
+          general: widget.general);
       setState(() => _msgs.add((me: false, text: a)));
     } catch (e) {
       setState(() => _msgs.add((me: false, text: 'Sorry — $e')));
@@ -125,7 +176,9 @@ class _AssistantSheetState extends State<AssistantSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Ask anything about the article you’re listening to,\nor today’s edition.',
+              Text(widget.general
+                      ? 'Ask Vāni anything — today’s news, a place,\nor just a question.'
+                      : 'Ask anything about the article you’re listening to,\nor today’s edition.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13.5, color: Gati.muted, height: 1.5)),
               const SizedBox(height: 16),

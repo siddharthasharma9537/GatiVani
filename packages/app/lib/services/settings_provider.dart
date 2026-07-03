@@ -18,6 +18,12 @@ class SettingsProvider extends ChangeNotifier {
   // Home district (English key into kDistricts), null = no preference.
   // Biases Live stories and surfaces the edition's district news.
   String? _district;
+  // Feed ordering/filter shared by the Live and Paper lists (session-only,
+  // set from the filter dropdown or by Vāni acting on a location query):
+  // sort 'location' pins district-matching stories first; districtOnly
+  // hides everything else.
+  String _feedSort = 'location'; // 'location' | 'latest'
+  bool _districtOnly = false;
 
   // ── Getters ─────────────────────────────────────────────────────────────────
   String get defaultVoice => _defaultVoice;
@@ -26,6 +32,8 @@ class SettingsProvider extends ChangeNotifier {
   String get lang => _lang;
   bool get isTelugu => _lang == 'te';
   String? get district => _district;
+  String get feedSort => _feedSort;
+  bool get districtOnly => _districtOnly;
 
   // ── "Auto" theme: light by day, dark at night ──────────────────────────────
   // ThemeMode.system is repurposed as a daylight-driven auto mode (a fixed local
@@ -97,8 +105,21 @@ class SettingsProvider extends ChangeNotifier {
   void setDistrict(String? d) {
     if (_district == d) return;
     _district = (d == null || d.isEmpty) ? null : d;
+    if (_district == null) _districtOnly = false;
     notifyListeners();
     _save();
+  }
+
+  void setFeedSort(String s) {
+    if (_feedSort == s || (s != 'location' && s != 'latest')) return;
+    _feedSort = s;
+    notifyListeners();
+  }
+
+  void setDistrictOnly(bool v) {
+    if (_districtOnly == v) return;
+    _districtOnly = v;
+    notifyListeners();
   }
 
   // ── Persistence ──────────────────────────────────────────────────────────────

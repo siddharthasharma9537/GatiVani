@@ -39,7 +39,8 @@ Deno.serve(async (req) => {
     if (!GEMINI || !SUPABASE_URL || !SERVICE_KEY) return json({ error: "config_missing" }, 500);
 
     const body = await req.json().catch(() => null) as
-      { question?: string; articleId?: string; articleText?: string; articleTitle?: string } | null;
+      { question?: string; articleId?: string; articleText?: string; articleTitle?: string; mode?: string } | null;
+    const general = body?.mode === "general";
     const question = (body?.question ?? "").trim();
     const articleId = body?.articleId ?? "";
     const clientText = (body?.articleText ?? "").trim();
@@ -76,8 +77,25 @@ Deno.serve(async (req) => {
     }
     if (!articleBlock) return json({ error: "article_not_found" }, 404);
 
-    const prompt =
-`You are Vāni, GatiVani's reading assistant. The user is listening to Telugu news
+    // Article mode grounds strictly on the given content. General mode (the
+    // floating Vāni button) is the app-wide assistant: today's content index
+    // for news questions, general knowledge for everything else — but it
+    // must never invent news that isn't in the index.
+    const prompt = general
+      ? `You are Vāni, the assistant inside GatiVani — a Telugu news app with a
+Live tab (web stories), a Paper tab (today's printed edition) and a Shows tab
+(podcasts). Below is an index of today's content. For questions about the news,
+answer from this index only and never invent stories, facts or numbers that are
+not in it — if it isn't there, say so. For general questions unrelated to the
+news you may answer from general knowledge. Be concise (2–4 sentences). Reply
+in the SAME language as the question (Telugu or English).
+
+=== TODAY'S CONTENT ===
+${articleBlock}
+
+=== QUESTION ===
+${question}`
+      : `You are Vāni, GatiVani's reading assistant. The user is listening to Telugu news
 and asks about it. Answer ONLY from the content below. Do not use outside knowledge
 about current events, and never invent facts, names, numbers or quotes. If the
 answer isn't in the content, say so plainly (in the user's language). Be concise

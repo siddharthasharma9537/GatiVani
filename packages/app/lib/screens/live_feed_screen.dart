@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../design/components/gati_filter_button.dart';
 import '../design/components/gati_masthead.dart';
 import '../design/components/gati_play_button.dart';
 import '../config/districts.dart';
@@ -141,14 +142,15 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
         readingStyle: 'news_anchor',
       );
 
-  // Latest stories, with the chosen district's stories pinned first (the
-  // location preference from the masthead) under a small label.
+  // Latest stories, honoring the filter dropdown / Vāni: with a district
+  // set, 'location' sort pins its stories first under a small label, and
+  // "my district only" hides the rest.
   List<Widget> _storyRows(String lang) {
     final visible = _sourceSel == null
         ? _articles
         : _articles.where((a) => a.source == _sourceSel).toList();
-    final district =
-        districtByEn(context.watch<SettingsProvider>().district);
+    final settings = context.watch<SettingsProvider>();
+    final district = districtByEn(settings.district);
     var ordered = visible;
     var hits = 0;
     if (district != null && _sourceSel == null) {
@@ -157,8 +159,13 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       for (final a in visible) {
         (district.matches('${a.title} ${a.body}') ? hit : rest).add(a);
       }
-      hits = hit.length;
-      ordered = [...hit, ...rest];
+      if (settings.districtOnly) {
+        hits = hit.length;
+        ordered = hit;
+      } else if (settings.feedSort == 'location') {
+        hits = hit.length;
+        ordered = [...hit, ...rest];
+      }
     }
     Widget row(WebArticle it) => _StoryRow(
           item: it,
@@ -184,6 +191,14 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
           ]),
         ),
       ...ordered.map(row),
+      if (ordered.isEmpty && settings.districtOnly)
+        Padding(
+          padding: const EdgeInsets.all(Gati.s5),
+          child: Text(
+              _t(lang, 'No stories from your district right now.',
+                  'మీ జిల్లా నుంచి ప్రస్తుతం వార్తలు లేవు.'),
+              style: const TextStyle(fontSize: 13, color: Gati.muted)),
+        ),
     ];
   }
 
@@ -780,6 +795,7 @@ class _LatestHeader extends StatelessWidget {
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 _viewBtn(context, Icons.view_list_rounded, 'list'),
                 _viewBtn(context, Icons.grid_view_rounded, 'grid'),
+                const GatiFilterButton(),
               ]),
             ),
         ],

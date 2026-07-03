@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/tokens.dart';
+import '../config/districts.dart';
+import '../design/components/gati_district_sheet.dart';
+import '../design/components/gati_wordmark.dart';
 import '../l10n/strings.dart';
 import '../services/auth_service.dart';
 import '../services/settings_provider.dart';
@@ -50,6 +53,28 @@ class MenuBody extends StatelessWidget {
         _accountCard(context, lang),
         const SizedBox(height: 20),
 
+        // ── App — the things GatiVāni is actually about ────────────────────
+        _sectionLabel(p, 'GatiVāni'),
+        _card(p, Column(children: [
+          _navRow(
+              p,
+              Icons.location_on_outlined,
+              tr(lang, 'my_district'),
+              districtByEn(s.district) == null
+                  ? tr(lang, 'no_district')
+                  : (lang == 'te'
+                      ? districtByEn(s.district)!.te
+                      : districtByEn(s.district)!.en),
+              () => showGatiDistrictSheet(context)),
+          Divider(height: 1, color: p.line),
+          _navRow(p, Icons.history_rounded, tr(lang, 'history'), null,
+              () => context.push('/history')),
+          Divider(height: 1, color: p.line),
+          _navRow(p, Icons.mic_rounded, tr(lang, 'tab_shows'), null,
+              () => context.go('/shows')),
+        ])),
+        const SizedBox(height: 20),
+
         // ── Language ───────────────────────────────────────────────────────
         _sectionLabel(p, tr(lang, 'language')),
         _card(p, Column(children: [
@@ -90,11 +115,7 @@ class MenuBody extends StatelessWidget {
         // ── About ──────────────────────────────────────────────────────────
         Center(
           child: Column(children: [
-            Text('Gativani',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    color: p.ink)),
+            GatiWordmark(size: 18, color: p.ink, lang: lang, animated: false),
             const SizedBox(height: 2),
             Text(tr(lang, 'about_tagline'),
                 textAlign: TextAlign.center,
@@ -237,6 +258,34 @@ class MenuBody extends StatelessWidget {
   void _openAuth(BuildContext context, {required bool signUp}) {
     context.push('/auth', extra: signUp);
   }
+
+  Widget _navRow(GatiPalette p, IconData icon, String label,
+          String? subtitle, VoidCallback onTap) =>
+      InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(children: [
+            Icon(icon, size: 20, color: p.muted),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: TextStyle(fontSize: 14.5, color: p.ink)),
+                  if (subtitle != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(subtitle,
+                          style: TextStyle(fontSize: 12, color: p.muted)),
+                    ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 18, color: p.muted),
+          ]),
+        ),
+      );
 
   Widget _sectionLabel(GatiPalette p, String text) => Padding(
         padding: const EdgeInsets.only(left: 4, bottom: 8),
