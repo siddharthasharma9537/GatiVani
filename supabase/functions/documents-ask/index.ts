@@ -1,12 +1,16 @@
-// Grounded "ask about this edition" assistant.
+// Vāni — GatiVani's grounded assistant.
 //
-// Input:  { question, articleId }
-// The function derives the article's edition server-side, builds context from
-// the CURRENT article (full text) + an INDEX of the whole edition (every
-// article's title/section/preview), and answers strictly from that content.
-// It must not invent news — if something isn't in the edition, it says so.
+// Input:  { question, articleId, articleText?, articleTitle? }
+// For newspaper-edition articles (in the DB) the function derives the
+// article's edition server-side and grounds on the CURRENT article (full
+// text) + an INDEX of the whole edition. For content that is NOT in the DB
+// (Live web stories, podcasts, GatiVani Take) the client passes the piece's
+// own text via articleText, and Vāni grounds on that alone.
+// It must not invent news — if something isn't in the content, it says so.
 //
-// Model: gemini-2.5-flash-lite (cheap; ~$0.001/query).
+// Model: gemini-flash-latest (always Google's current Flash; chat quality
+// matters here). TTS stays on the separate gemini-2.5-flash TTS path in
+// documents-synthesize for cost.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -35,49 +39,58 @@ Deno.serve(async (req) => {
     if (!GEMINI || !SUPABASE_URL || !SERVICE_KEY) return json({ error: "config_missing" }, 500);
 
     const body = await req.json().catch(() => null) as
-      { question?: string; articleId?: string } | null;
+      { question?: string; articleId?: string; articleText?: string; articleTitle?: string } | null;
     const question = (body?.question ?? "").trim();
     const articleId = body?.articleId ?? "";
+    const clientText = (body?.articleText ?? "").trim();
+    const clientTitle = (body?.articleTitle ?? "").trim();
     if (!question) return json({ error: "missing_question" }, 400);
-    if (!articleId) return json({ error: "missing_article" }, 400);
+    if (!articleId && !clientText) return json({ error: "missing_article" }, 400);
 
-    const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
-
-    const { data: article } = await supabase
-      .from("articles")
-      .select("title, full_content, section, newspaper_id")
-      .eq("id", articleId).maybeSingle();
-    if (!article) return json({ error: "article_not_found" }, 404);
-
-    // Edition index: title/section/preview of every article in this edition.
-    const { data: edition } = await supabase
-      .from("articles")
-      .select("title, section, content_preview")
-      .eq("newspaper_id", article.newspaper_id)
-      .order("page_number");
-    const index = (edition ?? [])
-      .map((a, i) => `${i + 1}. [${a.section}] ${a.title} — ${a.content_preview ?? ""}`)
-      .join("\n");
+    // Prefer DB grounding (edition articles get the whole edition's index);
+    // fall back to the client-provided text for web stories / podcasts.
+    let articleBlock = "";
+    let indexBlock = "";
+    if (articleId) {
+      const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+      const { data: article } = await supabase
+        .from("articles")
+        .select("title, full_content, section, newspaper_id")
+        .eq("id", articleId).maybeSingle();
+      if (article) {
+        articleBlock =
+          `${article.section} — ${article.title}\n${(article.full_content ?? "").slice(0, 6000)}`;
+        const { data: edition } = await supabase
+          .from("articles")
+          .select("title, section, content_preview")
+          .eq("newspaper_id", article.newspaper_id)
+          .order("page_number");
+        indexBlock = (edition ?? [])
+          .map((a, i) => `${i + 1}. [${a.section}] ${a.title} — ${a.content_preview ?? ""}`)
+          .join("\n")
+          .slice(0, 8000);
+      }
+    }
+    if (!articleBlock && clientText) {
+      articleBlock = `${clientTitle}\n${clientText.slice(0, 8000)}`;
+    }
+    if (!articleBlock) return json({ error: "article_not_found" }, 404);
 
     const prompt =
-`You are GatiVani's reading assistant. The user is listening to a Telugu newspaper
+`You are Vāni, GatiVani's reading assistant. The user is listening to Telugu news
 and asks about it. Answer ONLY from the content below. Do not use outside knowledge
 about current events, and never invent facts, names, numbers or quotes. If the
 answer isn't in the content, say so plainly (in the user's language). Be concise
 (2–4 sentences). Reply in the SAME language as the question (Telugu or English).
 
 === CURRENT ARTICLE ===
-${article.section} — ${article.title}
-${(article.full_content ?? "").slice(0, 6000)}
-
-=== TODAY'S EDITION (index of all articles) ===
-${index.slice(0, 8000)}
-
+${articleBlock}
+${indexBlock ? `\n=== TODAY'S EDITION (index of all articles) ===\n${indexBlock}\n` : ""}
 === QUESTION ===
 ${question}`;
 
     const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

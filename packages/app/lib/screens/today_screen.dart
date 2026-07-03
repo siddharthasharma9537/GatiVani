@@ -12,6 +12,7 @@ import '../services/document_service.dart';
 import '../services/edition_store.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
+import '../design/components/gati_article_sheet.dart';
 import '../design/components/gati_masthead.dart';
 import '../design/section_colors.dart';
 import '../design/tokens.dart';
@@ -223,7 +224,7 @@ class _TodayScreenState extends State<TodayScreen> {
       onTap: () => _openSection(section),
       child: Container(
         decoration: BoxDecoration(
-            color: r[0], borderRadius: BorderRadius.circular(14)),
+            color: r[0], borderRadius: BorderRadius.circular(Gati.rCard)),
         padding: const EdgeInsets.all(13),
         child: Stack(children: [
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -367,115 +368,13 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   // ── Long-press → per-article options ───────────────────────────────────────
+  // Long-press actions moved to the shared kit sheet — the SAME options for
+  // Paper cards, Live stories and Shows tiles (Play now · Summarize · Play
+  // next · Add to Up Next · Download · Ask Vāni).
   void _showArticleSheet(NewspaperArticle a) {
-    final lang = context.read<SettingsProvider>().lang;
-    final p = GatiPalette.of(context);
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: p.surface,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) {
-        Widget item(IconData icon, String label, VoidCallback onTap) =>
-            ListTile(
-              leading: Icon(icon, color: p.ink, size: 22),
-              title:
-                  Text(label, style: TextStyle(color: p.ink, fontSize: 15)),
-              onTap: () {
-                Navigator.pop(ctx);
-                onTap();
-              },
-            );
-        return SafeArea(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(a.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: p.ink,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500)),
-              ),
-            ),
-            item(Icons.play_arrow_rounded, tr(lang, 'play_now'),
-                () => _play(a)),
-            item(Icons.auto_awesome, tr(lang, 'summarize'),
-                () => _summarize(a)),
-            item(Icons.queue_play_next_rounded, tr(lang, 'play_next'), () {
-              PlaybackService.i.playNext([a]);
-              _toast(lang, 'added_play_next');
-            }),
-            item(Icons.playlist_add_rounded, tr(lang, 'add_to_queue'), () {
-              PlaybackService.i.addToQueue([a]);
-              _toast(lang, 'added_queue');
-            }),
-            item(Icons.download_rounded, tr(lang, 'download'),
-                () => _download(a)),
-            const SizedBox(height: 8),
-          ]),
-        );
-      },
-    );
-  }
-
-  // Summarize = an AI gist (a few sentences) narrated in the mini-player.
-  // Grounded-Gemini writes a short Telugu summary, then it's synthesized + cached
-  // and played. Much shorter than the full article, so it's quick and cheap.
-  Future<void> _summarize(NewspaperArticle a) async {
-    final lang = context.read<SettingsProvider>().lang;
-    _toast(lang, 'summarizing');
-    try {
-      final summary = await _svc.ask(
-        a.id,
-        'ఈ వ్యాసాన్ని తెలుగులో 3-4 చిన్న వాక్యాల్లో సంక్షిప్త సారాంశంగా చెప్పు. '
-        'ఉపోద్ఘాతం, అదనపు వ్యాఖ్యలు వద్దు — కేవలం సారాంశం మాత్రమే.',
-      );
-      if (summary.trim().isEmpty) {
-        _toast(lang, 'summary_failed');
-        return;
-      }
-      await PlaybackService.i.playSummary(a, summary);
-    } catch (_) {
-      if (mounted) _toast(lang, 'summary_failed');
-    }
-  }
-
-  // Download = pre-generate the full audio so it's cached and instant to play
-  // later. (True offline-bytes storage is a follow-up.)
-  Future<void> _download(NewspaperArticle a) async {
-    final lang = context.read<SettingsProvider>().lang;
-    if (a.audioUrl != null && a.audioUrl!.startsWith('http')) {
-      _toast(lang, 'downloaded');
-      return;
-    }
-    _toast(lang, 'downloading');
-    try {
-      final r = await http
-          .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
-              headers: {
-                ...ApiConfig.authHeaders,
-                'Content-Type': 'application/json'
-              },
-              body: json.encode({
-                'text': a.spokenText,
-                'language': 'te-IN',
-                'articleId': a.id,
-              }))
-          .timeout(const Duration(seconds: 150));
-      final data = json.decode(r.body) as Map<String, dynamic>;
-      if (data['ok'] == true) {
-        a.audioUrl = data['audioUrl'] as String?;
-        _toast(lang, 'downloaded');
-      } else {
-        _toast(lang, 'download_failed');
-      }
-    } catch (_) {
-      _toast(lang, 'download_failed');
-    }
+    showGatiArticleSheet(context, a,
+        onPlayed: () =>
+            Future.delayed(const Duration(seconds: 2), _loadRecent));
   }
 
   // ── Front page (Editorial / Editor's pick) ──────────────────────────────────
@@ -551,14 +450,14 @@ class _TodayScreenState extends State<TodayScreen> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(Gati.rCard),
         onTap: () => _play(a),
         onLongPress: () => _showArticleSheet(a),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: r[0],
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(Gati.rCard),
             border: Border.all(color: r[1].withValues(alpha: 0.10)),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -636,7 +535,7 @@ class _TodayScreenState extends State<TodayScreen> {
         padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
             color: r[0],
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(Gati.rCard),
             border: Border.all(color: r[1].withValues(alpha: 0.08))),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(sectionLabel(a.category, lang).toUpperCase(),
@@ -1093,7 +992,7 @@ class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
   Timer? _timer;
   Timer? _resume;
   bool _userActive = false; // paused while the user drags / flings
-  static const _cardW = 160.0;
+  static const _cardW = 220.0;
   static const _gap = 10.0;
 
   double get _setW => widget.items.length * (_cardW + _gap);
@@ -1203,7 +1102,7 @@ class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
         decoration: BoxDecoration(
             color: p.surface,
             border: Border.all(color: p.line),
-            borderRadius: BorderRadius.circular(14)),
+            borderRadius: BorderRadius.circular(Gati.rCard)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 
+import '../../config/districts.dart';
 import '../../l10n/strings.dart';
+import '../../services/settings_provider.dart';
 import '../../widgets/gati_shell.dart';
 import '../tokens.dart';
+import 'gati_district_sheet.dart';
 import 'gati_wordmark.dart';
 
 /// Standard header icon button (menu, search, …) — one size everywhere.
@@ -45,8 +49,14 @@ class GatiMasthead extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final now = DateTime.now();
-    final dateline =
-        '${weekdayShort(now, lang)} · ${formatEditionDate(now, lang)}';
+    // The chosen district joins the dateline, so the location preference is
+    // visible without its own chip taking header space.
+    final district =
+        districtByEn(context.watch<SettingsProvider>().district);
+    final dateline = [
+      '${weekdayShort(now, lang)} · ${formatEditionDate(now, lang)}',
+      if (district != null) lang == 'te' ? district.te : district.en,
+    ].join(' · ');
     return Padding(
       padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s2),
       child: Row(children: [
@@ -75,6 +85,13 @@ class GatiMasthead extends StatelessWidget {
                       color: p.muted)),
             ],
           ),
+        ),
+        const SizedBox(width: Gati.s2),
+        GatiHeaderButton(
+          icon: district == null
+              ? Icons.location_on_outlined
+              : Icons.location_on,
+          onTap: () => showGatiDistrictSheet(context),
         ),
         for (final a in actions) ...[const SizedBox(width: Gati.s2), a],
       ]),

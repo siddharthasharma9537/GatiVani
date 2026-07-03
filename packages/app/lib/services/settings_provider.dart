@@ -15,6 +15,9 @@ class SettingsProvider extends ChangeNotifier {
   // UI language: 'en' (default) | 'te'. Controls all app chrome — header,
   // tiles, chips, masthead, menu. Article content is always Telugu.
   String _lang = 'en';
+  // Home district (English key into kDistricts), null = no preference.
+  // Biases Live stories and surfaces the edition's district news.
+  String? _district;
 
   // ── Getters ─────────────────────────────────────────────────────────────────
   String get defaultVoice => _defaultVoice;
@@ -22,6 +25,7 @@ class SettingsProvider extends ChangeNotifier {
   double get playbackSpeed => _playbackSpeed;
   String get lang => _lang;
   bool get isTelugu => _lang == 'te';
+  String? get district => _district;
 
   // ── "Auto" theme: light by day, dark at night ──────────────────────────────
   // ThemeMode.system is repurposed as a daylight-driven auto mode (a fixed local
@@ -89,6 +93,14 @@ class SettingsProvider extends ChangeNotifier {
     _save();
   }
 
+  /// null clears the preference.
+  void setDistrict(String? d) {
+    if (_district == d) return;
+    _district = (d == null || d.isEmpty) ? null : d;
+    notifyListeners();
+    _save();
+  }
+
   // ── Persistence ──────────────────────────────────────────────────────────────
   // SharedPreferences is cross-platform: localStorage on web, native key-value
   // store on iOS/Android — so settings persist everywhere with one code path
@@ -100,6 +112,8 @@ class SettingsProvider extends ChangeNotifier {
       _themeMode = _themeFromString(prefs.getString('themeMode'));
       _playbackSpeed = prefs.getDouble('playbackSpeed') ?? _playbackSpeed;
       _lang = prefs.getString('lang') ?? _lang;
+      final d = prefs.getString('district');
+      _district = (d == null || d.isEmpty) ? null : d;
     } catch (_) {}
     // Arm the day/night flip for the resolved mode.
     _scheduleDaylightFlip();
@@ -112,6 +126,7 @@ class SettingsProvider extends ChangeNotifier {
       await prefs.setString('themeMode', _themeToString(_themeMode));
       await prefs.setDouble('playbackSpeed', _playbackSpeed);
       await prefs.setString('lang', _lang);
+      await prefs.setString('district', _district ?? '');
     } catch (_) {}
   }
 

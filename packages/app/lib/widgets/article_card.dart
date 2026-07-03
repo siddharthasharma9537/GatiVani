@@ -39,7 +39,7 @@ class ArticleCard extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: r[0],
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(Gati.rCard),
           border: Border.all(
               color: selected
                   ? Gati.successBright

@@ -157,12 +157,21 @@ class DocumentService {
     );
   }
 
-  /// Grounded assistant: ask a question about the article + its edition.
-  Future<String> ask(String articleId, String question) async {
+  /// Vāni, the grounded assistant: ask about an article. Edition articles are
+  /// grounded server-side from the DB; for web stories / podcasts (not in the
+  /// DB) pass [articleText] + [articleTitle] so Vāni grounds on those instead.
+  Future<String> ask(String articleId, String question,
+      {String? articleText, String? articleTitle}) async {
     final r = await http
         .post(Uri.parse('${ApiConfig.functionsUrl}/documents-ask'),
             headers: {...ApiConfig.authHeaders, 'Content-Type': 'application/json'},
-            body: json.encode({'articleId': articleId, 'question': question}))
+            body: json.encode({
+              'articleId': articleId,
+              'question': question,
+              if (articleText != null && articleText.trim().isNotEmpty)
+                'articleText': articleText,
+              if (articleTitle != null) 'articleTitle': articleTitle,
+            }))
         .timeout(const Duration(seconds: 45));
     final data = json.decode(r.body) as Map<String, dynamic>;
     if (data['ok'] != true) {

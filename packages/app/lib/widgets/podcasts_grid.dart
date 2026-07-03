@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../design/components/gati_article_sheet.dart';
 import '../design/components/gati_states.dart';
 import '../design/components/gati_tile.dart';
 import '../design/section_colors.dart';
@@ -26,6 +27,17 @@ const _podcastIds = <String, String>{
   'cinema_talk': 'a0000000-0000-4000-8000-0000000000d2',
 };
 
+NewspaperArticle _episodeArticle(PodcastEpisode ep) => NewspaperArticle(
+      id: _podcastIds[ep.key] ?? 'a0000000-0000-4000-8000-0000000000d0',
+      title: ep.episodeTitle,
+      content: '',
+      preview: ep.title,
+      category: ep.title,
+      estimatedDurationSeconds:
+          ep.durationSeconds > 0 ? ep.durationSeconds : 60,
+      audioUrl: ep.audioUrl,
+    );
+
 /// Play a podcast episode directly — audioUrl is a real MP3, so playOne
 /// skips TTS synthesis entirely. Mann Ki Baat is the one exception: it
 /// opens the full archive as a playlist instead of just the latest episode.
@@ -34,16 +46,7 @@ void playPodcastEpisode(PodcastEpisode ep) {
     openMkbPlaylist();
     return;
   }
-  final art = NewspaperArticle(
-    id: _podcastIds[ep.key] ?? 'a0000000-0000-4000-8000-0000000000d0',
-    title: ep.episodeTitle,
-    content: '',
-    preview: ep.title,
-    category: ep.title,
-    estimatedDurationSeconds: ep.durationSeconds > 0 ? ep.durationSeconds : 60,
-    audioUrl: ep.audioUrl,
-  );
-  PlaybackService.i.playOne(art);
+  PlaybackService.i.playOne(_episodeArticle(ep));
 }
 
 /// Loads the full Mann Ki Baat archive (Part-1, 2014 → latest) as the play
@@ -105,6 +108,10 @@ class PodcastsGrid extends StatelessWidget {
                 ? () => playPodcastEpisode(ep)
                 // No verified real audio source for this show yet.
                 : () => gatiSnack(context, 'Podcasts coming soon'),
+            // Same actions sheet as Paper cards and Live stories.
+            onLongPress: ep != null
+                ? () => showGatiArticleSheet(context, _episodeArticle(ep))
+                : null,
           );
         }).toList(),
       ),

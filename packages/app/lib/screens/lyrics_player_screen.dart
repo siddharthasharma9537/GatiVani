@@ -915,9 +915,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
           onPressed: () => _openSleepSheet(context),
         ),
         IconButton(
-          icon: const Icon(Icons.auto_awesome, color: Gati.pasupu, size: 20),
-          tooltip: 'Ask about this',
-          onPressed: () => AssistantSheet.open(context, a.id, a.title),
+          icon: const Icon(Icons.graphic_eq, color: Gati.pasupu, size: 20),
+          tooltip: 'Ask Vāni',
+          onPressed: () => AssistantSheet.open(context, a.id, a.title,
+              articleText: a.content),
         ),
       ]),
     );

@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/components/gati_masthead.dart';
 import '../design/components/gati_play_button.dart';
+import '../config/districts.dart';
+import '../design/components/gati_article_sheet.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
 import '../l10n/strings.dart';
@@ -12,7 +14,6 @@ import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/gati_shell.dart';
-import '../widgets/podcasts_grid.dart';
 
 /// v2 landing — a discovery surface that sits in FRONT of the newspaper.
 ///
@@ -51,7 +52,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   List<MarketItem> _markets = []; // marquee — indices + metals ticker
   List<WebArticle> _articles = []; // Latest stories — full-body, readable in-app
   CricketMatch? _cricket; // null when nothing is live
-  Map<String, PodcastEpisode> _podcasts = {}; // keyed by show, from feeds-podcasts
   Explainer? _take; // "GatiVani Take" — today's weight-to-article pick
   bool _loading = true;
 
@@ -73,13 +73,11 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     final headlinesF = _feed.fetch(topic: 'top', limit: 8);
     final articlesF = _feed.fetchArticles(limit: 12);
     final cricketF = _cricketSvc.fetch(mock: _cricketMock);
-    final podcastsF = _feed.fetchPodcasts();
     final takeF = _feed.fetchExplainer();
     final markets = await marketsF;
     final headlines = await headlinesF;
     final articles = await articlesF;
     final cricket = await cricketF;
-    final podcasts = await podcastsF;
     final take = await takeF;
     if (!mounted) return;
     setState(() {
@@ -87,7 +85,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       _headlines = headlines;
       _articles = articles;
       _cricket = cricket;
-      _podcasts = {for (final e in podcasts) e.key: e};
       _take = take;
       _loading = false;
     });
@@ -95,9 +92,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     // Latest stories already fetched, no extra request.
     ReaderStore.i.all = articles;
   }
-
-  // Podcast play + Mann Ki Baat archive logic lives in
-  // widgets/podcasts_grid.dart now, shared with the Shows tab.
 
   // Play the match's AI Telugu commentary via the shared player.
   void _playCommentary(CricketMatch m) {
@@ -137,6 +131,62 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     context.push('/reader');
   }
 
+  NewspaperArticle _toArticle(WebArticle a) => NewspaperArticle(
+        id: a.id,
+        title: a.title,
+        content: a.body,
+        preview: a.summary,
+        category: a.source,
+        estimatedDurationSeconds: NewspaperArticle.estimateDuration(a.body),
+        readingStyle: 'news_anchor',
+      );
+
+  // Latest stories, with the chosen district's stories pinned first (the
+  // location preference from the masthead) under a small label.
+  List<Widget> _storyRows(String lang) {
+    final visible = _sourceSel == null
+        ? _articles
+        : _articles.where((a) => a.source == _sourceSel).toList();
+    final district =
+        districtByEn(context.watch<SettingsProvider>().district);
+    var ordered = visible;
+    var hits = 0;
+    if (district != null && _sourceSel == null) {
+      final hit = <WebArticle>[];
+      final rest = <WebArticle>[];
+      for (final a in visible) {
+        (district.matches('${a.title} ${a.body}') ? hit : rest).add(a);
+      }
+      hits = hit.length;
+      ordered = [...hit, ...rest];
+    }
+    Widget row(WebArticle it) => _StoryRow(
+          item: it,
+          age: relativeAge(it.pubDate, lang),
+          onTap: () => _openReader(it),
+          onMore: () => showGatiArticleSheet(context, _toArticle(it),
+              onRead: () => _openReader(it)),
+        );
+    return [
+      if (hits > 0)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s2, Gati.s5, 0),
+          child: Row(children: [
+            const Icon(Icons.location_on, size: 14, color: Gati.accent),
+            const SizedBox(width: 4),
+            Text(
+                '${tr(lang, 'your_district')} · '
+                '${lang == 'te' ? district!.te : district!.en}',
+                style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    color: Gati.accent)),
+          ]),
+        ),
+      ...ordered.map(row),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
@@ -166,19 +216,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                 children: [
                   const SizedBox(height: Gati.s4),
                   if (_take != null) _TakeCard(take: _take!, onListen: () => _playTake(_take!)),
-                  if (_cricket != null) ...[
-                    const SizedBox(height: Gati.s5),
-                    _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
-                    _CricketCard(
-                      match: _cricket!,
-                      onListen: () => _playCommentary(_cricket!),
-                    ),
-                  ],
-                  const SizedBox(height: Gati.s5),
-                  _SectionLabel(_t(lang, 'Podcasts', 'పాడ్‌క్యాస్ట్‌లు')),
-                  PodcastsGrid(episodes: _podcasts, lang: lang),
-                  const SizedBox(height: Gati.s5),
-                  _NewspaperTile(lang: lang),
                   const SizedBox(height: Gati.s5),
                   _LatestHeader(
                     lang: lang,
@@ -228,17 +265,18 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                             .length,
                         onClear: () => setState(() => _sourceSel = null),
                       ),
-                    ...(_sourceSel == null
-                            ? _articles
-                            : _articles
-                                .where((a) => a.source == _sourceSel)
-                                .toList())
-                        .map((it) => _StoryRow(
-                              item: it,
-                              age: relativeAge(it.pubDate, lang),
-                              onTap: () => _openReader(it),
-                            )),
+                    ..._storyRows(lang),
                   ],
+                  if (_cricket != null) ...[
+                    const SizedBox(height: Gati.s5),
+                    _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
+                    _CricketCard(
+                      match: _cricket!,
+                      onListen: () => _playCommentary(_cricket!),
+                    ),
+                  ],
+                  const SizedBox(height: Gati.s5),
+                  _NewspaperTile(lang: lang),
                 ],
               ),
             ),
@@ -638,10 +676,14 @@ class _NewspaperTile extends StatelessWidget {
 
 class _StoryRow extends StatelessWidget {
   const _StoryRow(
-      {required this.item, required this.age, required this.onTap});
+      {required this.item,
+      required this.age,
+      required this.onTap,
+      required this.onMore});
   final WebArticle item;
   final String age;
   final VoidCallback onTap;
+  final VoidCallback onMore;
 
   @override
   Widget build(BuildContext context) {
@@ -680,13 +722,18 @@ class _StoryRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: Gati.s3),
-          Container(
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-                color: Gati.accentSoft, shape: BoxShape.circle),
-            child: const Icon(Icons.chevron_right, color: kAccent, size: 20),
+          GestureDetector(
+            onTap: onMore,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: Gati.accentSoft, shape: BoxShape.circle),
+              child:
+                  const Icon(Icons.more_horiz, color: kAccent, size: 20),
+            ),
           ),
         ]),
       ),

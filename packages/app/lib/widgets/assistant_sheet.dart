@@ -2,19 +2,28 @@ import 'package:flutter/material.dart';
 import '../design/tokens.dart';
 import '../services/document_service.dart';
 
-/// Grounded "ask about this edition" chat. Opens as a bottom sheet over the
-/// player; answers come only from the article + edition content.
+/// Vāni — GatiVāni's grounded assistant, as a bottom-sheet chat. Edition
+/// articles are grounded server-side from the DB; web stories and podcasts
+/// (which aren't in the DB) pass their text via [articleText] so Vāni can
+/// answer about them too.
 class AssistantSheet extends StatefulWidget {
-  const AssistantSheet({super.key, required this.articleId, required this.articleTitle});
+  const AssistantSheet(
+      {super.key,
+      required this.articleId,
+      required this.articleTitle,
+      this.articleText});
   final String articleId;
   final String articleTitle;
+  final String? articleText;
 
-  static void open(BuildContext context, String articleId, String title) {
+  static void open(BuildContext context, String articleId, String title,
+      {String? articleText}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => AssistantSheet(articleId: articleId, articleTitle: title),
+      builder: (_) => AssistantSheet(
+          articleId: articleId, articleTitle: title, articleText: articleText),
     );
   }
 
@@ -45,7 +54,8 @@ class _AssistantSheetState extends State<AssistantSheet> {
     });
     _scrollDown();
     try {
-      final a = await _svc.ask(widget.articleId, q);
+      final a = await _svc.ask(widget.articleId, q,
+          articleText: widget.articleText, articleTitle: widget.articleTitle);
       setState(() => _msgs.add((me: false, text: a)));
     } catch (e) {
       setState(() => _msgs.add((me: false, text: 'Sorry — $e')));
@@ -79,9 +89,9 @@ class _AssistantSheetState extends State<AssistantSheet> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
           child: Row(children: [
-            const Icon(Icons.auto_awesome, color: Gati.accent, size: 18),
+            const Icon(Icons.graphic_eq, color: Gati.accent, size: 18),
             const SizedBox(width: 8),
-            const Text('Ask about this edition',
+            const Text('Vāni',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Gati.ink)),
             const Spacer(),
             IconButton(

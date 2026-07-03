@@ -12,6 +12,7 @@ class GatiTile extends StatelessWidget {
     required this.meta,
     required this.ramp,
     required this.onTap,
+    this.onLongPress,
   });
 
   final String title;
@@ -20,11 +21,13 @@ class GatiTile extends StatelessWidget {
   /// `[background, title, subtitle]` from `sectionRamp`.
   final List<Color> ramp;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         padding: const EdgeInsets.all(Gati.s4),
         decoration: BoxDecoration(
