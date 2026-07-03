@@ -12,10 +12,12 @@ import '../services/document_service.dart';
 import '../services/edition_store.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
+import '../design/components/gati_wordmark.dart';
 import '../design/section_colors.dart';
+import '../design/tokens.dart';
 import '../widgets/article_card.dart';
 import '../widgets/edition_masthead.dart';
-import '../widgets/mini_player.dart';
+import '../widgets/gati_shell.dart';
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -218,7 +220,10 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   void _openMenu() {
-    if (widget.onMenu != null) {
+    final scope = GatiShellScope.maybeOf(context);
+    if (scope != null) {
+      scope.openMenu();
+    } else if (widget.onMenu != null) {
       widget.onMenu!();
     } else {
       context.push('/menu');
@@ -755,11 +760,23 @@ class _TodayScreenState extends State<TodayScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('Gativani',
-                          style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w500,
-                              color: p.ink)),
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        GestureDetector(
+                          onTap: _openMenu,
+                          child: Container(
+                            width: 36,
+                            height: 36,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                                color: p.chip,
+                                borderRadius: BorderRadius.circular(10)),
+                            child: Icon(Icons.menu_rounded,
+                                color: p.ink, size: 20),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        GatiWordmark(size: 20, color: p.ink, lang: lang),
+                      ]),
                       Row(mainAxisSize: MainAxisSize.min, children: [
                         _langToggle(),
                         const SizedBox(width: 8),
@@ -795,20 +812,6 @@ class _TodayScreenState extends State<TodayScreen> {
                                 color: p.chip,
                                 borderRadius: BorderRadius.circular(10)),
                             child: Icon(Icons.search_rounded,
-                                color: p.ink, size: 20),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: _openMenu,
-                          child: Container(
-                            width: 36,
-                            height: 36,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                                color: p.chip,
-                                borderRadius: BorderRadius.circular(10)),
-                            child: Icon(Icons.menu_rounded,
                                 color: p.ink, size: 20),
                           ),
                         ),
@@ -1149,7 +1152,6 @@ class _TodayScreenState extends State<TodayScreen> {
             ),
           ),
           if (_selectMode) _selectionBar(p, lang, visible),
-          MiniPlayer(onExpand: _openPlayer),
         ]),
       ),
     );

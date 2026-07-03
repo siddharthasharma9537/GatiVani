@@ -258,15 +258,23 @@ waves freeze flat, transitions become fades.
 ### 8.1 Information architecture (target)
 
 ```
-Shell (StatefulShellRoute + bottom nav + mini-player dock)
+Shell (StatefulShellRoute + bottom nav + mini-player dock + menu drawer)
 ├── Live      /            marquee · latest stories · podcasts · cricket strip
-├── Paper     /paper       today's newspaper (drawer shell, sections)
+├── Paper     /paper       today's newspaper (sections)
 ├── Shows     /shows       podcast archives (MKB…) · stories
-└── You       /you         saved · downloads · history · settings · account
-Overlay:      mini-player  docked above nav, all tabs → swipe/tap up = /player
-Pushed:       /reader · /section/:name · /search  (inside the active tab)
-Full-screen:  /player (expands from dock) · /auth
+└── Drawer    (left)       account · language · theme · playback — Claude-iOS
+                           slide-over: the whole front page (tabs included)
+                           slides right; open via header menu button (always
+                           top-LEFT) or left-edge swipe
+Overlay:      mini-player  docked above nav, all tabs → tap = /player
+Pushed:       /reader · /section/:name · /search · /menu (deep-link fallback)
+Full-screen:  /player (slides over content, pull-down follows finger) · /auth
 ```
+
+*(Revised 2026-07-03 with Siddhartha: the planned fourth "You" tab is replaced
+by the left menu drawer — the Claude-iOS slide mechanism he asked for. Saved /
+downloads / history land in the drawer or a future tab when those features
+ship.)*
 
 ### 8.2 Route migration
 
@@ -367,7 +375,7 @@ Mockup/style tile reviewed in chat; open decisions (§13) resolved with Siddhart
 - Build §10 components; migrate **player + Live screen** onto them (pills, chips, tiles, rows, seek bar → `VaniLine.seek`).
 - **Accept:** player & Live import only `design/` components/tokens; 4-way check (EN/TE × light/dark) screenshots on :8082; year-chip archive & queue behave exactly as today.
 
-### Phase 4 — Navigation shell (L)
+### Phase 4 — Navigation shell (L) ✅ (2026-07-03 — 3 tabs + left menu drawer per the revised §8.1; HomeDrawerShell deleted, its Claude-iOS reveal moved into GatiShell)
 - StatefulShellRoute in `router.dart`: 4 tabs (§8.1) + `GatiTabBar` + persistent `GatiMiniPlayer` dock; `/newspaper`→`/paper`, `/menu`→`/you` redirects; cricket strip into Live; Shows tab hosts MKB + stories.
 - **Accept:** mini-player persists across tabs & resumes on reload; browser back pops within tab (regression-check the `router.dart` history behaviors); deep links `/reader`, `/section/:name` still work; player still expands bottom-up from the dock.
 

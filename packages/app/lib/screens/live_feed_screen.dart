@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/components/gati_play_button.dart';
-import '../design/components/gati_states.dart';
-import '../design/components/gati_tile.dart';
 import '../design/components/gati_wordmark.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
@@ -13,7 +11,8 @@ import '../services/cricket_service.dart';
 import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
-import '../widgets/mini_player.dart';
+import '../widgets/gati_shell.dart';
+import '../widgets/podcasts_grid.dart';
 
 /// v2 landing — a discovery surface that sits in FRONT of the newspaper.
 ///
@@ -97,58 +96,8 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     ReaderStore.i.all = articles;
   }
 
-  // Play a podcast episode directly — audioUrl is a real MP3, so playOne skips
-  // TTS synthesis entirely (see PlaybackService._playIndex). Mann Ki Baat is
-  // the one exception: it opens the full archive as a playlist instead of
-  // just playing the latest episode.
-  void _playPodcast(PodcastEpisode ep) {
-    if (ep.key == 'mann_ki_baat') {
-      _openMkbPlaylist();
-      return;
-    }
-    final art = NewspaperArticle(
-      id: _podcastIds[ep.key] ?? 'a0000000-0000-4000-8000-0000000000d0',
-      title: ep.episodeTitle,
-      content: '',
-      preview: ep.title,
-      category: ep.title,
-      estimatedDurationSeconds:
-          ep.durationSeconds > 0 ? ep.durationSeconds : 60,
-      audioUrl: ep.audioUrl,
-    );
-    PlaybackService.i.playOne(art);
-  }
-
-  // Loads the full Mann Ki Baat archive (Part-1, 2014 → latest) as the play
-  // queue and starts the newest episode. Every other episode's audio stays
-  // unresolved until it's actually tapped in "Your Queue" — see
-  // playMkbQueueEntry, used by the player's queue panel.
-  Future<void> _openMkbPlaylist() async {
-    final episodes = await _feed.fetchMkbPlaylist();
-    if (episodes.isEmpty || !mounted) return;
-    final articles = episodes
-        .map((e) => NewspaperArticle(
-              id: e.id,
-              title: e.title,
-              content: '',
-              preview: e.title,
-              category: 'Mann Ki Baat',
-              estimatedDurationSeconds: 0, // unknown until resolved
-              documentType: 'mkb_episode',
-            ))
-        .toList();
-    final resolved = await _feed.resolveMkbEpisode(articles.first.id);
-    if (resolved == null || !mounted) return;
-    articles.first.audioUrl = resolved.audioUrl;
-    PlaybackService.i.playAll(articles, start: 0);
-  }
-
-  // Stable per-show ids so each show's tile always overwrites one recent-plays
-  // row instead of piling up as the latest episode changes.
-  static const _podcastIds = <String, String>{
-    'bhagavad_gita': 'a0000000-0000-4000-8000-0000000000d1',
-    'cinema_talk': 'a0000000-0000-4000-8000-0000000000d2',
-  };
+  // Podcast play + Mann Ki Baat archive logic lives in
+  // widgets/podcasts_grid.dart now, shared with the Shows tab.
 
   // Play the match's AI Telugu commentary via the shared player.
   void _playCommentary(CricketMatch m) {
@@ -224,12 +173,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                   ],
                   const SizedBox(height: Gati.s5),
                   _SectionLabel(_t(lang, 'Podcasts', 'పాడ్‌క్యాస్ట్‌లు')),
-                  _PodcastsGrid(
-                    tiles: _podcastTiles,
-                    episodes: _podcasts,
-                    lang: lang,
-                    onPlay: _playPodcast,
-                  ),
+                  PodcastsGrid(episodes: _podcasts, lang: lang),
                   const SizedBox(height: Gati.s5),
                   _NewspaperTile(lang: lang),
                   const SizedBox(height: Gati.s5),
@@ -296,7 +240,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
               ),
             ),
           ),
-          MiniPlayer(onExpand: () => context.push('/player')),
         ]),
       ),
     );
@@ -317,7 +260,14 @@ class _Header extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s2),
       child: Row(children: [
-        _iconBtn(p, Icons.menu, () => context.push('/menu')),
+        _iconBtn(p, Icons.menu, () {
+          final scope = GatiShellScope.maybeOf(context);
+          if (scope != null) {
+            scope.openMenu();
+          } else {
+            context.push('/menu');
+          }
+        }),
         const SizedBox(width: Gati.s3),
         Expanded(
           child: Column(
@@ -680,57 +630,6 @@ class _CricketCard extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-// ── Podcasts grid ───────────────────────────────────────────────────────────
-
-class _PodcastsGrid extends StatelessWidget {
-  const _PodcastsGrid({
-    required this.tiles,
-    required this.episodes,
-    required this.lang,
-    required this.onPlay,
-  });
-  final List<({String key, String title, String meta, String section})> tiles;
-  final Map<String, PodcastEpisode> episodes;
-  final String lang;
-  final void Function(PodcastEpisode) onPlay;
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = GatiPalette.of(context).dark;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
-      child: GridView.count(
-        crossAxisCount: 2,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        mainAxisSpacing: Gati.s3,
-        crossAxisSpacing: Gati.s3,
-        childAspectRatio: 1.55,
-        children: tiles.map((it) {
-          final ep = episodes[it.key];
-          return GatiTile(
-            title: it.title,
-            meta: ep != null ? _episodeMeta(ep, lang) : it.meta,
-            ramp: sectionRamp(it.section, dark: dark),
-            onTap: ep != null
-                ? () => onPlay(ep)
-                // No verified real audio source for this show yet.
-                : () => gatiSnack(context, 'Podcasts coming soon'),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  // e.g. "14 min · 2d" — real episode length + how recently it dropped.
-  String _episodeMeta(PodcastEpisode ep, String lang) {
-    final mins = (ep.durationSeconds / 60).round().clamp(1, 999);
-    final unit = lang == 'te' ? 'ని.' : 'min';
-    final age = relativeAge(ep.pubDate, lang);
-    return age.isEmpty ? '$mins $unit' : '$mins $unit · $age';
   }
 }
 
@@ -1097,14 +996,3 @@ String _marketString(MarketItem m, String lang) {
   }
 }
 
-// Podcasts grid. `key` matches a feeds-podcasts show id — when present in the
-// fetched map the tile plays the real latest episode; otherwise it falls back
-// to this static meta and a "coming soon" tap (AIR Telugu News and Mann Ki
-// Baat have no verified real audio source yet — see conversation notes).
-const _podcastTiles =
-    <({String key, String title, String meta, String section})>[
-  (key: 'air_news', title: 'AIR Telugu News', meta: '8 min · today', section: 'general'),
-  (key: 'mann_ki_baat', title: 'Mann Ki Baat', meta: '30 min · monthly', section: 'politics'),
-  (key: 'bhagavad_gita', title: 'Bhagavad Gita', meta: '12 min · daily', section: 'devotional'),
-  (key: 'cinema_talk', title: 'Cinema Talk', meta: '18 min · weekly', section: 'entertainment'),
-];
