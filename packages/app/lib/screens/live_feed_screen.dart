@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../design/components/gati_masthead.dart';
 import '../design/components/gati_play_button.dart';
-import '../design/components/gati_wordmark.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
 import '../l10n/strings.dart';
@@ -152,7 +152,10 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       body: SafeArea(
         bottom: false,
         child: Column(children: [
-          _Header(lang: lang),
+          GatiMasthead(lang: lang, actions: [
+            GatiHeaderButton(
+                icon: Icons.search, onTap: () => context.push('/search')),
+          ]),
           _BreakingMarquee(items: marquee),
           Expanded(
             child: RefreshIndicator(
@@ -244,63 +247,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       ),
     );
   }
-}
-
-// ── Header ──────────────────────────────────────────────────────────────────
-
-class _Header extends StatelessWidget {
-  const _Header({required this.lang});
-  final String lang;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = GatiPalette.of(context);
-    final now = DateTime.now();
-    final dateline = '${weekdayShort(now, lang)} · ${formatEditionDate(now, lang)}';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s2),
-      child: Row(children: [
-        _iconBtn(p, Icons.menu, () {
-          final scope = GatiShellScope.maybeOf(context);
-          if (scope != null) {
-            scope.openMenu();
-          } else {
-            context.push('/menu');
-          }
-        }),
-        const SizedBox(width: Gati.s3),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GatiWordmark(size: 22, color: p.ink, lang: lang),
-              Text(dateline,
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: p.muted)),
-            ],
-          ),
-        ),
-        _iconBtn(p, Icons.search, () => context.push('/search')),
-      ]),
-    );
-  }
-
-  Widget _iconBtn(GatiPalette p, IconData icon, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          width: 40,
-          height: 40,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-              color: p.chip, borderRadius: BorderRadius.circular(Gati.rChip)),
-          child: Icon(icon, size: 20, color: p.ink),
-        ),
-      );
 }
 
 // ── Breaking-news marquee ───────────────────────────────────────────────────

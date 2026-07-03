@@ -12,12 +12,11 @@ import '../services/document_service.dart';
 import '../services/edition_store.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
-import '../design/components/gati_wordmark.dart';
+import '../design/components/gati_masthead.dart';
 import '../design/section_colors.dart';
 import '../design/tokens.dart';
 import '../widgets/article_card.dart';
 import '../widgets/edition_masthead.dart';
-import '../widgets/gati_shell.dart';
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -185,50 +184,9 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
-  // Compact EN/తె language toggle for the header.
-  Widget _langToggle() {
-    final s = context.watch<SettingsProvider>();
-    final p = GatiPalette.of(context);
-    Widget cell(String label, String code) {
-      final sel = s.lang == code;
-      return GestureDetector(
-        onTap: () => s.setLanguage(code),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-          decoration: BoxDecoration(
-            color: sel ? kAccent : Colors.transparent,
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                  color: sel ? kPaper : p.muted)),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-          color: p.chip, borderRadius: BorderRadius.circular(10)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        cell('EN', 'en'),
-        cell('తె', 'te'),
-      ]),
-    );
-  }
-
-  void _openMenu() {
-    final scope = GatiShellScope.maybeOf(context);
-    if (scope != null) {
-      scope.openMenu();
-    } else if (widget.onMenu != null) {
-      widget.onMenu!();
-    } else {
-      context.push('/menu');
-    }
-  }
+  // The EN/తె toggle that used to live here moved to the menu drawer's
+  // Language section — the standardized GatiMasthead keeps headers uniform
+  // across tabs.
 
   // List ⇄ tiles toggle, like Google Drive/Files.
   Widget _viewBtn(IconData icon, String view) {
@@ -751,74 +709,33 @@ class _TodayScreenState extends State<TodayScreen> {
       backgroundColor: p.paper,
       body: SafeArea(
         child: Column(children: [
+          GatiMasthead(lang: lang, actions: [
+            if (!showHero)
+              GestureDetector(
+                onTap: _upload,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                  decoration: BoxDecoration(
+                      color: kAccent, borderRadius: BorderRadius.circular(20)),
+                  child: Row(children: [
+                    const Icon(Icons.add, color: kPaper, size: 17),
+                    const SizedBox(width: 3),
+                    Text(tr(lang, 'upload'),
+                        style: const TextStyle(
+                            color: kPaper,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500)),
+                  ]),
+                ),
+              ),
+            GatiHeaderButton(
+                icon: Icons.search, onTap: () => context.push('/search')),
+          ]),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        GestureDetector(
-                          onTap: _openMenu,
-                          child: Container(
-                            width: 36,
-                            height: 36,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                                color: p.chip,
-                                borderRadius: BorderRadius.circular(10)),
-                            child: Icon(Icons.menu_rounded,
-                                color: p.ink, size: 20),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        GatiWordmark(size: 20, color: p.ink, lang: lang),
-                      ]),
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        _langToggle(),
-                        const SizedBox(width: 8),
-                        if (!showHero) ...[
-                          GestureDetector(
-                            onTap: _upload,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 11, vertical: 7),
-                              decoration: BoxDecoration(
-                                  color: kAccent,
-                                  borderRadius: BorderRadius.circular(20)),
-                              child: Row(children: [
-                                const Icon(Icons.add, color: kPaper, size: 17),
-                                const SizedBox(width: 3),
-                                Text(tr(lang, 'upload'),
-                                    style: const TextStyle(
-                                        color: kPaper,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w500)),
-                              ]),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                        ],
-                        GestureDetector(
-                          onTap: () => context.push('/search'),
-                          child: Container(
-                            width: 36,
-                            height: 36,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                                color: p.chip,
-                                borderRadius: BorderRadius.circular(10)),
-                            child: Icon(Icons.search_rounded,
-                                color: p.ink, size: 20),
-                          ),
-                        ),
-                      ]),
-                    ],
-                  ),
-                ),
                 if (_error != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
