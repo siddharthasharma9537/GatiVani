@@ -356,7 +356,7 @@ Mockup/style tile reviewed in chat; open decisions (§13) resolved with Siddhart
 - Rebuild `AppTheme.light()/dark()` on these tokens (MaterialApp keeps working); map `kAccent` → pasupu; retune the 4 colliding section ramps.
 - **Accept:** app builds & runs both themes on :8082; no v2 screen references raw hex; terracotta gone from v2 surfaces; EN/TE type renders with correct line-heights in reader + player.
 
-### Phase 2 — Identity assets (M)
+### Phase 2 — Identity assets (M) ✅ (2026-07-03)
 - `GatiWordmark` widget (text + drawn animated macron, EN/TE lockups), `VaniLine` component (all 5 modes), `GatiMasthead`.
 - App icon + favicon + web manifest + splash (ink field, one macron wave cycle).
 - Mount masthead on Live + Paper headers.

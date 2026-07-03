@@ -67,7 +67,7 @@ class GatiVaniApp extends StatelessWidget {
       (s) => s.effectiveThemeMode,
     );
     return MaterialApp.router(
-      title: "Gativani",
+      title: "GatiVāni — News on the Go",
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),

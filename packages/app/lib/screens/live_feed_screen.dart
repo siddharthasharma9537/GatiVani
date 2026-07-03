@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../design/components/gati_wordmark.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
 import '../l10n/strings.dart';
@@ -320,9 +321,7 @@ class _Header extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('GatiVani',
-                  style: TextStyle(
-                      fontSize: 22, fontWeight: FontWeight.w500, color: p.ink)),
+              GatiWordmark(size: 22, color: p.ink, lang: lang),
               Text(dateline,
                   style: TextStyle(
                       fontSize: 12,

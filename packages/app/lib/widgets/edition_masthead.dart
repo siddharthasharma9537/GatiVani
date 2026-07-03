@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../design/components/gati_wordmark.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../services/edition_meta.dart';
@@ -30,7 +31,7 @@ class EditionMasthead extends StatelessWidget {
   static const _ink = Color(0xFF2C2C2A);
   static const _light = Color(0xFFF7F2EA);
   static const _dim = Color(0xFF9A958A);
-  static const _kicker = Color(0xFFE08A63);
+  static const _kicker = Gati.pasupuGlow;
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +65,10 @@ class EditionMasthead extends StatelessWidget {
               const SizedBox(width: 8),
             ],
             Text(tr(lang, 'todays_edition'),
-                style: const TextStyle(fontSize: 11.5, color: Color(0xFFB4B2A9))),
+                style:
+                    const TextStyle(fontSize: 11.5, color: Gati.onInkMuted)),
+            const Spacer(),
+            GatiWordmark(size: 13, color: Gati.onInk, lang: lang),
           ]),
           const SizedBox(height: 12),
 

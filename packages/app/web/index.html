@@ -18,21 +18,72 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="GatiVāni — News on the Go. Telugu news you can listen to.">
+  <meta name="theme-color" content="#0E0D0B">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="gativani_app">
+  <meta name="apple-mobile-web-app-title" content="GatiVāni">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>gativani_app</title>
+  <title>GatiVāni — News on the Go</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- Brand face for the boot splash (the app re-uses it via google_fonts). -->
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anek+Telugu:wght@600&display=swap">
+
+  <style>
+    #gv-splash {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #0E0D0B;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 14px;
+      transition: opacity .3s ease;
+    }
+    #gv-splash .gv-name {
+      font-family: 'Anek Telugu', system-ui, sans-serif;
+      font-weight: 600; font-size: 38px; color: #FAF7F0;
+    }
+    #gv-splash .gv-tag {
+      font-family: 'Anek Telugu', system-ui, sans-serif;
+      font-size: 13px; color: #B4B2A9;
+    }
+    /* The Vāni line: flat when still, waving while the app boots. */
+    #gv-splash .gv-wave { animation: gv-speak 2s ease-in-out infinite; }
+    @keyframes gv-speak { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) {
+      #gv-splash .gv-wave { animation: none; opacity: 0; }
+    }
+  </style>
 </head>
 <body>
+  <div id="gv-splash">
+    <div class="gv-name">GatiVāni</div>
+    <svg width="130" height="18" viewBox="0 0 120 16" fill="none" aria-hidden="true">
+      <path d="M0 8 L120 8"
+            stroke="#E39A0B" stroke-width="3" stroke-linecap="round"/>
+      <path class="gv-wave"
+            d="M0 8 L7.5 11.3 L15 11.7 L22.5 8.8 L30 5.2 L37.5 4.1 L45 6.5 L52.5 10.2 L60 12 L67.5 10.2 L75 6.5 L82.5 4.1 L90 5.2 L97.5 8.8 L105 11.7 L112.5 11.3 L120 8"
+            stroke="#E39A0B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="gv-tag">News on the Go</div>
+  </div>
+
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var s = document.getElementById('gv-splash');
+      if (!s) return;
+      s.style.opacity = '0';
+      setTimeout(function () { s.remove(); }, 320);
+    });
+  </script>
+
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

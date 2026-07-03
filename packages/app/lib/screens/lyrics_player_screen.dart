@@ -6,6 +6,7 @@ import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../services/edition_store.dart';
 import '../services/news_feed_service.dart';
+import '../design/components/gati_wordmark.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
 import '../models/newspaper_article.dart';
@@ -465,9 +466,8 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Gativani',
-                  style:
-                      TextStyle(color: r[2], fontSize: 14, letterSpacing: 0.5)),
+              GatiWordmark(
+                  size: 14, color: r[2], lang: lang, animated: false),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
