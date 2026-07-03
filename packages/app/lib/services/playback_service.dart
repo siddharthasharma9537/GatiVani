@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -7,6 +8,10 @@ import '../config/api_config.dart';
 import '../models/newspaper_article.dart';
 import 'media_session_stub.dart'
     if (dart.library.html) 'media_session_web.dart';
+
+/// How the queue behaves when a track finishes: play on, loop the whole
+/// queue, or repeat the current track.
+enum QueueRepeat { off, all, one }
 
 /// App-wide singleton: queue + audio, so playback survives navigation.
 /// Bind UI with ListenableBuilder on PlaybackService.i.
@@ -44,7 +49,7 @@ class PlaybackService extends ChangeNotifier {
             _clearSleep(); // stop here per the sleep timer
           } else {
             _advancing = true;
-            next().whenComplete(() => _advancing = false);
+            _autoAdvance().whenComplete(() => _advancing = false);
           }
         }
       }
@@ -206,11 +211,72 @@ class PlaybackService extends ChangeNotifier {
   }
 
   Future<void> next() async {
-    if (index + 1 < queue.length) await _playIndex(index + 1);
+    final ni = _nextIndex();
+    if (ni == null) return;
+    if (ni == index) {
+      // Single-track queue looping — restart instead of re-synthesizing.
+      player.seek(Duration.zero);
+      player.play();
+      return;
+    }
+    await _playIndex(ni);
   }
 
   Future<void> previous() async {
     if (index > 0) await _playIndex(index - 1);
+  }
+
+  /// What plays when the current track ends, honoring repeat + shuffle.
+  Future<void> _autoAdvance() async {
+    if (repeatMode == QueueRepeat.one) {
+      player.seek(Duration.zero);
+      player.play();
+      return;
+    }
+    await next();
+  }
+
+  /// Next queue position, or null when playback should stop at the end.
+  int? _nextIndex() {
+    if (queue.isEmpty || index < 0) return null;
+    if (shuffle && queue.length > 1) {
+      var j = index;
+      final r = math.Random();
+      while (j == index) {
+        j = r.nextInt(queue.length);
+      }
+      return j;
+    }
+    if (index + 1 < queue.length) return index + 1;
+    return repeatMode == QueueRepeat.all ? (queue.length == 1 ? index : 0) : null;
+  }
+
+  // ── Playback modes: mute, repeat, shuffle ─────────────────────────────────
+  bool muted = false;
+  double _volumeBeforeMute = 1.0;
+  QueueRepeat repeatMode = QueueRepeat.off;
+  bool shuffle = false;
+
+  void toggleMute() {
+    if (muted) {
+      player.setVolume(_volumeBeforeMute);
+    } else {
+      _volumeBeforeMute = player.volume;
+      player.setVolume(0);
+    }
+    muted = !muted;
+    notifyListeners();
+  }
+
+  void cycleRepeat() {
+    repeatMode =
+        QueueRepeat.values[(repeatMode.index + 1) % QueueRepeat.values.length];
+    notifyListeners();
+  }
+
+  void toggleShuffle() {
+    shuffle = !shuffle;
+    notifyListeners();
   }
 
   /// Stop playback and dismiss the now-playing bar entirely (queue cleared so

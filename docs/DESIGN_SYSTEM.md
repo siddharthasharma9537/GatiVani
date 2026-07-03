@@ -118,8 +118,9 @@ wordmark centered, macron animates once (flat → wave → flat) while booting.
 | Loading | Flat line with a low-amplitude shimmer travelling left→right |
 | Color | Pasupu gold on ink; Pasupu deep on paper; Kumkuma only for LIVE |
 
-Contexts: wordmark macron · player seek bar (progress fill = gold, remaining =
-`onInkTrack`) · LIVE badge underline · section dividers (static, 1 px, `line`
+Contexts: wordmark macron · player seek bar (**always flat** — progress fill =
+gold, remaining = `onInkTrack`; the wave read as jitter on a scrubber, decided
+2026-07-03) · LIVE badge underline · section dividers (static, 1 px, `line`
 color — shape only, no gold) · skeleton loading rows.
 
 ---

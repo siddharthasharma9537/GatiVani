@@ -39,8 +39,16 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   final _keys = <int, GlobalKey>{};
   int _lastScrolled = -1;
   bool _dismissing = false;
-  double _dragDy = 0; // accumulated pull-down → dismiss
   bool _downloading = false;
+  // Pull-down-to-dismiss: the whole page follows the finger (Claude-iOS-like
+  // sheet feel), springs back under the threshold, pops past it — the route's
+  // slide transition carries it the rest of the way down.
+  double _slide = 0;
+  double _settleFrom = 0;
+  late final AnimationController _settle =
+      AnimationController(vsync: this, duration: GatiMotion.madhyama)
+        ..addListener(() => setState(() => _slide =
+            _settleFrom * (1 - Curves.easeOutCubic.transform(_settle.value))));
   // 0 = album-art player; 1 = lyrics open (art collapsed into the top strip).
   // One value drives the whole coordinated transition (YouTube-Music style).
   late final AnimationController _lyrics = AnimationController(
@@ -52,20 +60,27 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   int? _mkbYear;
   int? _mkbResolvingIndex;
 
-  // Pull down on the header past this far (or with enough velocity) to
-  // dismiss back to the mini-player.
-  void _dismissDragEnd(DragEndDetails d) {
+  void _slideUpdate(DragUpdateDetails d) {
+    _settle.stop();
+    setState(
+        () => _slide = (_slide + (d.primaryDelta ?? 0)).clamp(0.0, 1000.0));
+  }
+
+  void _slideEnd(DragEndDetails d) {
     final v = d.primaryVelocity ?? 0;
-    if ((_dragDy > 70 || v > 250) && !_dismissing) {
+    if ((_slide > 130 || v > 350) && !_dismissing) {
       _dismissing = true;
       if (context.canPop()) context.pop();
+      return;
     }
-    _dragDy = 0;
+    _settleFrom = _slide;
+    _settle.forward(from: 0);
   }
 
   @override
   void dispose() {
     _lyrics.dispose();
+    _settle.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -212,22 +227,31 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               // below the transport, as part of the normal layout; see
               // _stage. Only a plain pull-down-to-dismiss on the header
               // remains from what used to be a combined drag gesture.
-              return Stack(fit: StackFit.expand, children: [
-                Positioned.fill(child: ColoredBox(color: bgTint)),
-                Column(children: [
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onVerticalDragStart: (_) => _dragDy = 0,
-                    onVerticalDragUpdate: (d) => _dragDy += d.primaryDelta ?? 0,
-                    onVerticalDragEnd: _dismissDragEnd,
-                    child: _header(context, a),
+              // Whole-body pull-down: the page translates with the finger.
+              // Lists inside (queue, lyrics) still win their own vertical
+              // drags in the gesture arena, so scrolling is unaffected.
+              return GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onVerticalDragUpdate: _slideUpdate,
+                onVerticalDragEnd: _slideEnd,
+                child: Transform.translate(
+                  offset: Offset(0, _slide),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(_slide > 0 ? 20 : 0)),
+                    child: Stack(fit: StackFit.expand, children: [
+                      Positioned.fill(child: ColoredBox(color: bgTint)),
+                      Column(children: [
+                        _header(context, a),
+                        Expanded(
+                          child: _stage(
+                              context, p, a, activeLine, activeWord, dur),
+                        ),
+                      ]),
+                    ]),
                   ),
-                  Expanded(
-                    child: _stage(
-                        context, p, a, activeLine, activeWord, dur),
-                  ),
-                ]),
-              ]);
+                ),
+              );
             });
           },
         ),
@@ -907,12 +931,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Column(children: [
-        GatiSeekBar(
-          position: pos,
-          duration: dur,
-          playing: p.isPlaying,
-          onSeek: p.seek,
-        ),
+        GatiSeekBar(position: pos, duration: dur, onSeek: p.seek),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(fmt(pos), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
           Text(fmt(dur), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
@@ -963,9 +982,37 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
             ),
           ),
         ]),
+        const SizedBox(height: 2),
+        // Playback modes: shuffle · repeat (off → all → one) · mute.
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          _modeBtn(Icons.shuffle_rounded, p.shuffle, p.toggleShuffle),
+          const SizedBox(width: 22),
+          _modeBtn(
+              p.repeatMode == QueueRepeat.one
+                  ? Icons.repeat_one_rounded
+                  : Icons.repeat_rounded,
+              p.repeatMode != QueueRepeat.off,
+              p.cycleRepeat),
+          const SizedBox(width: 22),
+          _modeBtn(
+              p.muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              p.muted,
+              p.toggleMute),
+        ]),
       ]),
     );
   }
+
+  Widget _modeBtn(IconData icon, bool active, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.translucent,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon,
+              size: 20, color: active ? Gati.pasupu : Gati.onInkFuture),
+        ),
+      );
 
   Widget _seekBtn(PlaybackService p, int secs) {
     final dur = p.duration.inMilliseconds;
