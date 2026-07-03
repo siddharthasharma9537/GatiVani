@@ -53,6 +53,10 @@ class _GatiSnapScrollState extends State<GatiSnapScroll> {
   }
 
   // Section-top offsets, measured from the live render tree at fling time.
+  // Targets sit 12px SHY of flush — a flush reveal planted section tops
+  // (and the first card) right against the chrome above.
+  static const _snapInset = 12.0;
+
   List<double> _offsets() {
     final out = <double>[];
     for (final k in _keys) {
@@ -60,7 +64,7 @@ class _GatiSnapScrollState extends State<GatiSnapScroll> {
       if (ro == null || !ro.attached) continue;
       final viewport = RenderAbstractViewport.maybeOf(ro);
       if (viewport == null) continue;
-      out.add(viewport.getOffsetToReveal(ro, 0.0).offset);
+      out.add(viewport.getOffsetToReveal(ro, 0.0).offset - _snapInset);
     }
     out.sort();
     return out;
