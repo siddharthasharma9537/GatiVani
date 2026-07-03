@@ -283,6 +283,12 @@ class PlaybackService extends ChangeNotifier {
   /// `current` is null and the mini-player hides). Saves the spot first so the
   /// article can still be resumed from "Recently played".
   Future<void> stop() async {
+    // Invalidate any in-flight _playIndex (mid-synthesis) — without this,
+    // closing the mini-player during processing let the request finish and
+    // start GHOST audio with no player visible to stop it.
+    _playEpoch++;
+    loading = false;
+    error = null;
     _saveProgress();
     _clearSleep();
     queue.clear();

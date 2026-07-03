@@ -2,14 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../config/districts.dart';
+import '../design/components/gati_states.dart';
 import '../design/components/gati_tab_bar.dart';
+import '../design/components/vani_line.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../screens/history_screen.dart';
 import '../screens/menu_screen.dart';
+import '../models/newspaper_article.dart';
+import '../services/document_service.dart';
 import '../services/edition_store.dart';
 import '../services/news_feed_service.dart';
+import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
+import '../services/speech_stub.dart'
+    if (dart.library.html) '../services/speech_web.dart' as speech;
 import 'assistant_sheet.dart';
 import 'mini_player.dart';
 
@@ -77,48 +85,75 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
     _recent.animateTo(0, curve: Curves.easeOutCubic);
   }
 
-  // Edge/scrim drags: positive dx drives the menu, negative drives Recent
-  // (whichever is already open wins the gesture).
-  void _onDrag(DragUpdateDetails d) {
-    final dx = d.primaryDelta ?? 0;
-    if (_recent.value > 0.01 || (dx < 0 && _menu.value < 0.01)) {
-      _recent.value = (_recent.value - dx / _openX).clamp(0.0, 1.0);
-    } else {
-      _menu.value = (_menu.value + dx / _openX).clamp(0.0, 1.0);
-    }
-  }
-
-  void _onDragEnd(DragEndDetails d) {
-    final v = d.primaryVelocity ?? 0;
-    if (_recent.value > 0.01) {
-      if (v < -350) {
-        _openRecent();
-      } else if (v > 350) {
-        _closeAll();
-      } else {
-        _recent.value > 0.45 ? _openRecent() : _closeAll();
-      }
-    } else {
-      if (v > 350) {
-        _openMenu();
-      } else if (v < -350) {
-        _closeAll();
-      } else {
-        _menu.value > 0.45 ? _openMenu() : _closeAll();
-      }
-    }
-  }
-
   void _goTab(int i) {
     if (i < 0 || i > 2 || i == widget.shell.currentIndex) return;
     widget.shell.goBranch(i, initialLocation: false);
   }
 
-  // Body swipe (away from the edge zones) slides between tabs.
-  void _onBodySwipe(DragEndDetails d) {
+  // ONE horizontal-drag handler for the whole front layer, routed by where
+  // the drag STARTED: left edge → menu, right edge → Recent, anywhere else →
+  // tab slide. (Separate edge-zone + body recognizers used to fight in the
+  // gesture arena — the drawer moved a few px, then the other recognizer
+  // won and it stuck.)
+  String? _dragMode; // 'menu' | 'recent' | 'tab'
+  double _dragTotal = 0;
+
+  void _hDragStart(DragStartDetails d) {
+    final w = context.size?.width ?? 400;
+    final x = d.globalPosition.dx;
+    if (_menu.value > 0.5) {
+      _dragMode = 'menu';
+    } else if (_recent.value > 0.5) {
+      _dragMode = 'recent';
+    } else if (x < 44) {
+      _dragMode = 'menu';
+    } else if (x > w - 44) {
+      _dragMode = 'recent';
+    } else {
+      _dragMode = 'tab';
+    }
+    _dragTotal = 0;
+  }
+
+  void _hDragUpdate(DragUpdateDetails d) {
+    final dx = d.primaryDelta ?? 0;
+    switch (_dragMode) {
+      case 'menu':
+        _menu.value = (_menu.value + dx / _openX).clamp(0.0, 1.0);
+      case 'recent':
+        _recent.value = (_recent.value - dx / _openX).clamp(0.0, 1.0);
+      case 'tab':
+        _dragTotal += dx;
+    }
+  }
+
+  void _hDragEnd(DragEndDetails d) {
     final v = d.primaryVelocity ?? 0;
-    if (v < -350) _goTab(widget.shell.currentIndex + 1);
-    if (v > 350) _goTab(widget.shell.currentIndex - 1);
+    switch (_dragMode) {
+      case 'menu':
+        if (v > 350) {
+          _openMenu();
+        } else if (v < -350) {
+          _closeAll();
+        } else {
+          _menu.value > 0.45 ? _openMenu() : _closeAll();
+        }
+      case 'recent':
+        if (v < -350) {
+          _openRecent();
+        } else if (v > 350) {
+          _closeAll();
+        } else {
+          _recent.value > 0.45 ? _openRecent() : _closeAll();
+        }
+      case 'tab':
+        if (v < -350 || _dragTotal < -90) {
+          _goTab(widget.shell.currentIndex + 1);
+        } else if (v > 350 || _dragTotal > 90) {
+          _goTab(widget.shell.currentIndex - 1);
+        }
+    }
+    _dragMode = null;
   }
 
   @override
@@ -171,12 +206,14 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
             animation: Listenable.merge([_menu, _recent]),
             child: GatiShellScope(
               openMenu: _openMenu,
-              child: Scaffold(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragStart: _hDragStart,
+                onHorizontalDragUpdate: _hDragUpdate,
+                onHorizontalDragEnd: _hDragEnd,
+                child: Scaffold(
                 backgroundColor: p.paper,
-                body: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onHorizontalDragEnd: _onBodySwipe,
-                  child: AnimatedBuilder(
+                body: AnimatedBuilder(
                     animation: _tabAnim,
                     builder: (context, child) => Transform.translate(
                       offset: Offset(_tabDir * 36 * (1 - _tabAnim.value), 0),
@@ -184,7 +221,6 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                           opacity: 0.5 + 0.5 * _tabAnim.value, child: child),
                     ),
                     child: widget.shell,
-                  ),
                 ),
                 floatingActionButton: const _VaniFab(),
                 bottomNavigationBar: SafeArea(
@@ -203,6 +239,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                     ),
                   ]),
                 ),
+              ),
               ),
             ),
             builder: (context, child) {
@@ -242,8 +279,9 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                               child: GestureDetector(
                                 behavior: HitTestBehavior.opaque,
                                 onTap: _closeAll,
-                                onHorizontalDragUpdate: _onDrag,
-                                onHorizontalDragEnd: _onDragEnd,
+                                onHorizontalDragStart: _hDragStart,
+                                onHorizontalDragUpdate: _hDragUpdate,
+                                onHorizontalDragEnd: _hDragEnd,
                                 child: ColoredBox(
                                     color: Colors.black
                                         .withValues(alpha: 0.22 * e)),
@@ -255,40 +293,6 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                   ),
                 ),
               );
-            },
-          ),
-          // Edge-swipe openers (only while closed): left → menu, right →
-          // Recent.
-          AnimatedBuilder(
-            animation: Listenable.merge([_menu, _recent]),
-            builder: (context, _) {
-              if (_menu.value > 0.02 || _recent.value > 0.02) {
-                return const SizedBox.shrink();
-              }
-              return Stack(children: [
-                Positioned(
-                  top: 0,
-                  bottom: 0,
-                  left: 0,
-                  width: 26,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onHorizontalDragUpdate: _onDrag,
-                    onHorizontalDragEnd: _onDragEnd,
-                  ),
-                ),
-                Positioned(
-                  top: 0,
-                  bottom: 0,
-                  right: 0,
-                  width: 26,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onHorizontalDragUpdate: _onDrag,
-                    onHorizontalDragEnd: _onDragEnd,
-                  ),
-                ),
-              ]);
             },
           ),
         ]),
@@ -325,12 +329,23 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   }
 }
 
-/// The floating Vāni button — the assistant's home on every tab. Opens the
-/// global chat grounded on an index of today's content (Live stories +
-/// the loaded print edition), where Vāni can also ACT on the app (location
-/// questions drive the district filter).
-class _VaniFab extends StatelessWidget {
+/// The floating Vāni button — the assistant's home on every tab.
+///
+/// Tap → the chat sheet. LONG-PRESS → push-to-talk: the button waves while
+/// it listens; on release Vāni acts on the words — a district shows that
+/// place's news, "open paper/shows/history" navigates there, and any other
+/// question is answered OUT LOUD (the reply is synthesized and played in
+/// the mini-player, where it can be stopped like anything else).
+class _VaniFab extends StatefulWidget {
   const _VaniFab();
+
+  @override
+  State<_VaniFab> createState() => _VaniFabState();
+}
+
+class _VaniFabState extends State<_VaniFab> {
+  bool _listening = false;
+  bool _thinking = false;
 
   String _contentIndex() {
     final live = ReaderStore.i.all
@@ -345,23 +360,121 @@ class _VaniFab extends StatelessWidget {
         "TODAY'S PRINT EDITION:\n$paper";
   }
 
+  void _startListening() {
+    if (_listening || _thinking) return;
+    final lang = context.read<SettingsProvider>().lang;
+    setState(() => _listening = true);
+    speech.startSpeech(
+      lang: lang,
+      onResult: (t) {
+        if (mounted) _handleVoice(t);
+      },
+      onEnd: () {
+        if (mounted) setState(() => _listening = false);
+      },
+    );
+  }
+
+  void _stopListening() => speech.stopSpeech();
+
+  Future<void> _handleVoice(String q) async {
+    final s = context.read<SettingsProvider>();
+    final lang = s.lang;
+    // 1) A district name = show that place's news (Live + Paper lists).
+    for (final d in kDistricts) {
+      if (q.contains(d.te) || q.toLowerCase().contains(d.en.toLowerCase())) {
+        s.setDistrict(d.en);
+        s.setFeedSort('location');
+        s.setDistrictOnly(true);
+        _speak(lang == 'te'
+            ? '${d.te} వార్తలను చూపిస్తున్నాను.'
+            : 'Showing ${d.en} news.');
+        return;
+      }
+    }
+    // 2) In-app navigation intents.
+    final ql = q.toLowerCase();
+    if (!mounted) return;
+    if (ql.contains('paper') || ql.contains('newspaper') || q.contains('పేపర్')) {
+      context.go('/paper');
+      return;
+    }
+    if (ql.contains('shows') || ql.contains('podcast') || q.contains('షోలు') || q.contains('పాడ్‌కాస్ట్')) {
+      context.go('/shows');
+      return;
+    }
+    if (ql.contains('history') || ql.contains('recent') || q.contains('చరిత్ర')) {
+      context.push('/history');
+      return;
+    }
+    if (ql.contains('live') || q.contains('లైవ్')) {
+      context.go('/');
+      return;
+    }
+    // 3) Anything else: ask Vāni and speak the answer.
+    setState(() => _thinking = true);
+    try {
+      final ans = await DocumentService().ask('', q,
+          articleText: _contentIndex(),
+          articleTitle: 'GatiVani today',
+          general: true);
+      _speak(ans);
+    } catch (_) {
+      if (mounted) gatiSnack(context, 'Vāni could not answer that.');
+    } finally {
+      if (mounted) setState(() => _thinking = false);
+    }
+  }
+
+  // Speak a reply out loud — through the normal playback path, so the
+  // mini-player appears and the user can always see and stop what plays.
+  void _speak(String text) {
+    final art = NewspaperArticle(
+      id: 'a0000000-0000-4000-8000-0000000000f1', // stable → one cache file
+      title: 'Vāni',
+      content: text,
+      preview: text,
+      category: 'Vāni',
+      estimatedDurationSeconds: NewspaperArticle.estimateDuration(text),
+    );
+    PlaybackService.i.playSummary(art, text);
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     return GestureDetector(
       onTap: () => AssistantSheet.open(context, '', 'GatiVani',
           articleText: _contentIndex(), general: true),
+      onLongPressStart: (_) => _startListening(),
+      onLongPressEnd: (_) => _stopListening(),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         Container(
           width: 52,
           height: 52,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: Gati.inkDeep,
+            color: _listening ? Gati.kumkuma : Gati.inkDeep,
             shape: BoxShape.circle,
             boxShadow: Gati.shadow,
           ),
-          child: const Icon(Icons.graphic_eq, color: Gati.pasupu, size: 24),
+          child: _thinking
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Gati.pasupu))
+              : _listening
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: VaniLine(
+                          mode: VaniLineMode.wave,
+                          color: Gati.onInk,
+                          strokeWidth: 2.5,
+                          height: 24),
+                    )
+                  : const Icon(Icons.graphic_eq,
+                      color: Gati.pasupu, size: 24),
         ),
         const SizedBox(height: 3),
         Container(
@@ -369,7 +482,7 @@ class _VaniFab extends StatelessWidget {
           decoration: BoxDecoration(
               color: p.paper.withValues(alpha: 0.9),
               borderRadius: BorderRadius.circular(8)),
-          child: Text('Vāni',
+          child: Text(_listening ? '…' : 'Vāni',
               style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w500,

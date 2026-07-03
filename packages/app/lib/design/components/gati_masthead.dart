@@ -56,8 +56,16 @@ class GatiMasthead extends StatelessWidget {
       '${weekdayShort(now, lang)} · ${formatEditionDate(now, lang)}',
       if (district != null) lang == 'te' ? district.te : district.en,
     ].join(' · ');
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s2),
+    // A soft tinted band + hairline so the masthead reads as its own layer
+    // above the content.
+    return Container(
+      decoration: BoxDecoration(
+        color: p.dark
+            ? const Color(0xFF221F1A)
+            : const Color(0xFFF3EDE0),
+        border: Border(bottom: BorderSide(color: p.line, width: 0.5)),
+      ),
+      padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s3),
       child: Row(children: [
         GatiHeaderButton(
           icon: Icons.menu,

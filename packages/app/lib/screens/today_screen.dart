@@ -17,10 +17,12 @@ import '../services/settings_provider.dart';
 import '../design/components/gati_article_sheet.dart';
 import '../design/components/gati_filter_button.dart';
 import '../design/components/gati_masthead.dart';
+import '../design/components/gati_snap_scroll.dart';
 import '../design/section_colors.dart';
 import '../design/tokens.dart';
 import '../widgets/article_card.dart';
 import '../widgets/edition_masthead.dart';
+import '../widgets/news_ticker.dart';
 
 /// Reimagined home: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -52,7 +54,6 @@ class _TodayScreenState extends State<TodayScreen> {
 
   bool _featuredLoaded = false;
 
-  final _pageCtl = PageController();
   Offset _pressPos = Offset.zero; // last tap-down, anchors long-press menus
 
   @override
@@ -77,7 +78,6 @@ class _TodayScreenState extends State<TodayScreen> {
   @override
   void dispose() {
     _poll?.cancel();
-    _pageCtl.dispose();
     super.dispose();
   }
 
@@ -577,6 +577,7 @@ class _TodayScreenState extends State<TodayScreen> {
             GatiHeaderButton(
                 icon: Icons.search, onTap: () => context.push('/search')),
           ]),
+          const NewsTicker(),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -584,31 +585,28 @@ class _TodayScreenState extends State<TodayScreen> {
                   style: const TextStyle(color: kAccent, fontSize: 12.5)),
             ),
           if (edition)
-            // Vertical page-snap between the sections (§8): the outer scroll
-            // settles on each section; the lists INSIDE a section scroll on
-            // their own, so the page only turns from outside the list.
+            // Section-snap scrolling (§8): sections keep natural heights (no
+            // page gaps), the scroll settles at each section's top, and the
+            // article list scrolls INSIDE its section.
             Expanded(
-              child: PageView(
-                scrollDirection: Axis.vertical,
-                controller: _pageCtl,
-                children: [
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        EditionMasthead(
-                          rawTitle: _editionTitle,
-                          articleCount: _articles.length,
-                          pageCount: pages.length,
-                          onListen: _playBriefing,
-                        ),
-                        _frontPageBand(p, lang),
-                      ],
+              child: LayoutBuilder(
+                builder: (context, cons) => GatiSnapScroll(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  sections: [
+                    EditionMasthead(
+                      rawTitle: _editionTitle,
+                      articleCount: _articles.length,
+                      pageCount: pages.length,
+                      onListen: _playBriefing,
                     ),
-                  ),
-                  _allArticlesSection(p, lang, catKeys, cats, pageKeys, visible),
-                ],
+                    _frontPageBand(p, lang),
+                    SizedBox(
+                      height: cons.maxHeight - 16,
+                      child: _allArticlesSection(
+                          p, lang, catKeys, cats, pageKeys, visible),
+                    ),
+                  ],
+                ),
               ),
             )
           else
@@ -789,7 +787,7 @@ class _TodayScreenState extends State<TodayScreen> {
   Widget _allArticlesSection(GatiPalette p, String lang, List<String> catKeys,
       Map<String, int> cats, List<int> pageKeys, List<NewspaperArticle> visible) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.only(top: 8),
       child: Column(children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
