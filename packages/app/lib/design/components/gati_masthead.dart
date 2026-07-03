@@ -7,7 +7,6 @@ import '../../l10n/strings.dart';
 import '../../services/settings_provider.dart';
 import '../../widgets/gati_shell.dart';
 import '../tokens.dart';
-import 'gati_district_sheet.dart';
 import 'gati_wordmark.dart';
 
 /// Standard header icon button (menu, search, …) — one size everywhere.
@@ -85,13 +84,6 @@ class GatiMasthead extends StatelessWidget {
                       color: p.muted)),
             ],
           ),
-        ),
-        const SizedBox(width: Gati.s2),
-        GatiHeaderButton(
-          icon: district == null
-              ? Icons.location_on_outlined
-              : Icons.location_on,
-          onTap: () => showGatiDistrictSheet(context),
         ),
         for (final a in actions) ...[const SizedBox(width: Gati.s2), a],
       ]),

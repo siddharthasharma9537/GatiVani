@@ -108,9 +108,10 @@ class PodcastsGrid extends StatelessWidget {
                 ? () => playPodcastEpisode(ep)
                 // No verified real audio source for this show yet.
                 : () => gatiSnack(context, 'Podcasts coming soon'),
-            // Same actions sheet as Paper cards and Live stories.
-            onLongPress: ep != null
-                ? () => showGatiArticleSheet(context, _episodeArticle(ep))
+            // Same actions menu as Paper cards and Live stories.
+            onLongPressAt: ep != null
+                ? (pos) =>
+                    showGatiArticleMenu(context, pos, _episodeArticle(ep))
                 : null,
           );
         }).toList(),

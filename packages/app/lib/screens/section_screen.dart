@@ -6,6 +6,8 @@ import '../models/newspaper_article.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/article_card.dart';
+import '../design/components/gati_article_sheet.dart';
+import '../services/news_feed_service.dart';
 import '../widgets/mini_player.dart';
 
 /// A single section's article list, reached by tapping a section tile on the
@@ -19,6 +21,22 @@ class SectionScreen extends StatelessWidget {
   final List<NewspaperArticle> articles;
 
   void _openPlayer(BuildContext context) => context.push('/player');
+
+  // Tap opens the article TEXT (same reader as everywhere); ▶ plays in the
+  // mini-player.
+  void _openArticle(BuildContext context, NewspaperArticle a) {
+    final lang = context.read<SettingsProvider>().lang;
+    ReaderStore.i.current = WebArticle(
+      id: a.id,
+      title: a.title,
+      link: '',
+      source: sectionLabel(a.category, lang),
+      pubDate: '',
+      summary: a.preview,
+      body: a.content,
+    );
+    context.push('/reader');
+  }
 
   void _play(BuildContext context, NewspaperArticle a) {
     _openPlayer(context);
@@ -64,8 +82,11 @@ class SectionScreen extends StatelessWidget {
                 for (final a in articles)
                   ArticleCard(
                     article: a,
-                    onOpen: () => _play(context, a),
+                    onOpen: () => _openArticle(context, a),
                     onPlay: () => PlaybackService.i.playOne(a),
+                    onLongPressAt: (pos) => showGatiArticleMenu(
+                        context, pos, a,
+                        onRead: () => _openArticle(context, a)),
                   ),
               ],
             ),

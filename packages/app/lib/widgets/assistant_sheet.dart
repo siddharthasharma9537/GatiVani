@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../config/districts.dart';
+import '../design/components/vani_line.dart';
 import '../design/tokens.dart';
+import '../l10n/strings.dart';
 import '../services/document_service.dart';
 import '../services/settings_provider.dart';
+import '../services/speech_stub.dart'
+    if (dart.library.html) '../services/speech_web.dart' as speech;
 
 /// Vāni — GatiVāni's grounded assistant, as a bottom-sheet chat. Edition
 /// articles are grounded server-side from the DB; web stories and podcasts
@@ -51,6 +55,32 @@ class _AssistantSheetState extends State<AssistantSheet> {
   final _scroll = ScrollController();
   final _msgs = <({bool me, String text})>[];
   bool _busy = false;
+  bool _listening = false;
+
+  void _toggleMic() {
+    if (_listening) {
+      speech.stopSpeech();
+      setState(() => _listening = false);
+      return;
+    }
+    final lang = context.read<SettingsProvider>().lang;
+    setState(() => _listening = true);
+    speech.startSpeech(
+      lang: lang,
+      onResult: (t) {
+        if (mounted) _send(t);
+      },
+      onEnd: () {
+        if (mounted) setState(() => _listening = false);
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    if (_listening) speech.stopSpeech();
+    super.dispose();
+  }
 
   static const _articleSuggestions = [
     'Summarize this article',
@@ -127,11 +157,12 @@ class _AssistantSheetState extends State<AssistantSheet> {
   Widget build(BuildContext context) {
     final inset = MediaQuery.of(context).viewInsets.bottom;
     return Container(
-      height: MediaQuery.of(context).size.height * 0.78,
-      padding: EdgeInsets.only(bottom: inset),
-      decoration: const BoxDecoration(
+      height: MediaQuery.of(context).size.height * 0.52,
+      margin: EdgeInsets.fromLTRB(10, 0, 10, 10 + inset),
+      decoration: BoxDecoration(
         color: Gati.paper,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: Gati.shadow,
       ),
       child: Column(children: [
         const SizedBox(height: 10),
@@ -226,8 +257,46 @@ class _AssistantSheetState extends State<AssistantSheet> {
   Widget _inputBar() => Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
         child: Row(children: [
+          if (speech.speechAvailable) ...[
+            GestureDetector(
+              onTap: _toggleMic,
+              child: Container(
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: _listening ? Gati.kumkumaSoft : Colors.white,
+                    border: Border.all(
+                        color: _listening
+                            ? Gati.kumkuma
+                            : const Color(0xFFE7E4DB)),
+                    shape: BoxShape.circle),
+                child: Icon(_listening ? Icons.stop : Icons.mic_none_rounded,
+                    color: _listening ? Gati.kumkuma : Gati.accent, size: 20),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           Expanded(
-            child: TextField(
+            child: _listening
+                ? SizedBox(
+                    height: 44,
+                    child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const VaniLine(
+                              mode: VaniLineMode.wave,
+                              color: Gati.pasupu,
+                              strokeWidth: 2.5,
+                              height: 22),
+                          Text(
+                              tr(context.read<SettingsProvider>().lang,
+                                  'listening'),
+                              style: const TextStyle(
+                                  fontSize: 11, color: Gati.muted)),
+                        ]),
+                  )
+                : TextField(
               controller: _input,
               minLines: 1,
               maxLines: 4,

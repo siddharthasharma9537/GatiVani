@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../design/components/gati_filter_button.dart';
 import '../design/components/gati_masthead.dart';
+import '../design/components/gati_section_label.dart';
 import '../design/components/gati_play_button.dart';
 import '../config/districts.dart';
 import '../design/components/gati_article_sheet.dart';
@@ -171,7 +172,8 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
           item: it,
           age: relativeAge(it.pubDate, lang),
           onTap: () => _openReader(it),
-          onMore: () => showGatiArticleSheet(context, _toArticle(it),
+          onPlay: () => PlaybackService.i.playOne(_toArticle(it)),
+          onMore: (pos) => showGatiArticleMenu(context, pos, _toArticle(it),
               onRead: () => _openReader(it)),
         );
     return [
@@ -284,7 +286,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                   ],
                   if (_cricket != null) ...[
                     const SizedBox(height: Gati.s5),
-                    _SectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
+                    GatiSectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
                     _CricketCard(
                       match: _cricket!,
                       onListen: () => _playCommentary(_cricket!),
@@ -690,67 +692,98 @@ class _NewspaperTile extends StatelessWidget {
 // ── Latest story row ────────────────────────────────────────────────────────
 
 class _StoryRow extends StatelessWidget {
+  // Styled exactly like the Paper tab's article cards (soft section-tinted
+  // card, play button right) so stories and articles read as one system.
+  // Tap opens the story text; only the ▶ plays it (in the mini-player).
   const _StoryRow(
       {required this.item,
       required this.age,
       required this.onTap,
+      required this.onPlay,
       required this.onMore});
   final WebArticle item;
   final String age;
   final VoidCallback onTap;
-  final VoidCallback onMore;
+  final VoidCallback onPlay;
+  final void Function(Offset globalPos) onMore;
 
   @override
   Widget build(BuildContext context) {
-    final p = GatiPalette.of(context);
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s5, Gati.s3),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(item.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 14.5, height: 1.3, color: p.ink)),
-                const SizedBox(height: Gati.s1),
-                Row(children: [
-                  Flexible(
-                    child: Text(item.source,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w500,
-                            color: kAccent)),
-                  ),
-                  if (age.isNotEmpty)
-                    Text('  ·  $age',
-                        style: TextStyle(fontSize: 11.5, color: p.muted)),
-                ]),
-              ],
-            ),
-          ),
-          const SizedBox(width: Gati.s3),
-          GestureDetector(
-            onTap: onMore,
-            behavior: HitTestBehavior.opaque,
-            child: Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  color: Gati.accentSoft, shape: BoxShape.circle),
+    final dark = GatiPalette.of(context).dark;
+    final r = sectionRamp('News', dark: dark);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, 10),
+      child: Container(
+        decoration: BoxDecoration(
+          color: r[0],
+          borderRadius: BorderRadius.circular(Gati.rCard),
+          border: Border.all(color: r[1].withValues(alpha: 0.07)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            onTapDown: (_) {},
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
               child:
-                  const Icon(Icons.more_horiz, color: kAccent, size: 20),
+                  Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w500,
+                              height: 1.3,
+                              color: r[1])),
+                      const SizedBox(height: 4),
+                      Text(
+                          age.isEmpty
+                              ? item.source
+                              : '${item.source} · $age',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: r[2])),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Builder(
+                  builder: (btnCtx) => GestureDetector(
+                    onTap: () {
+                      final box =
+                          btnCtx.findRenderObject()! as RenderBox;
+                      onMore(box
+                          .localToGlobal(box.size.center(Offset.zero)));
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: Icon(Icons.more_horiz, color: r[2], size: 20),
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: onPlay,
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                        color: kAccent, shape: BoxShape.circle),
+                    child: const Icon(Icons.play_arrow,
+                        color: kPaper, size: 20),
+                  ),
+                ),
+              ]),
             ),
           ),
-        ]),
+        ),
       ),
     );
   }
@@ -939,23 +972,7 @@ class _SourceFilterChip extends StatelessWidget {
 
 // ── Small shared bits ───────────────────────────────────────────────────────
 
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, Gati.s3),
-      child: Text(text,
-          style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0.3,
-              color: GatiPalette.of(context).muted)),
-    );
-  }
-}
 
 /// Tiny inline bilingual helper so the scaffold doesn't need new l10n keys yet.
 String _t(String lang, String en, String te) => lang == 'te' ? te : en;

@@ -11,6 +11,7 @@ import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
 import '../services/edition_store.dart';
+import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../design/components/gati_article_sheet.dart';
@@ -38,7 +39,6 @@ class _TodayScreenState extends State<TodayScreen> {
   String _editionTitle = '';
   String? _category;
   int? _pageSel;
-  String _lens = 'section'; // 'section' | 'page'
   String _view = 'list'; // 'tiles' | 'list' — list is the default browse view
   // Multi-select (list view): batch articles into the Up Next queue.
   bool _selectMode = false;
@@ -49,14 +49,15 @@ class _TodayScreenState extends State<TodayScreen> {
   String? _error;
   bool _uploading = false;
   double _uploadProgress = 0;
-  List<Map<String, dynamic>> _recent = [];
 
   bool _featuredLoaded = false;
+
+  final _pageCtl = PageController();
+  Offset _pressPos = Offset.zero; // last tap-down, anchors long-press menus
 
   @override
   void initState() {
     super.initState();
-    _loadRecent();
     _loadFeatured();
   }
 
@@ -76,28 +77,8 @@ class _TodayScreenState extends State<TodayScreen> {
   @override
   void dispose() {
     _poll?.cancel();
+    _pageCtl.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadRecent() async {
-    try {
-      final r = await http.get(
-        Uri.parse('${ApiConfig.restUrl}/recent_plays'
-            '?select=article_id,title,category,position_seconds,duration_seconds,completed'
-            '&order=played_at.desc&limit=20'),
-        headers: ApiConfig.authHeaders,
-      );
-      final rows = (json.decode(r.body) as List).cast<Map<String, dynamic>>();
-      final seen = <String>{};
-      final dedup = <Map<String, dynamic>>[];
-      for (final m in rows) {
-        final id = m['article_id'] as String?;
-        if (id == null || !seen.add(id)) continue;
-        dedup.add(m);
-        if (dedup.length >= 8) break;
-      }
-      if (mounted) setState(() => _recent = dedup);
-    } catch (_) {}
   }
 
   Future<void> _upload() async {
@@ -137,25 +118,31 @@ class _TodayScreenState extends State<TodayScreen> {
     }
   }
 
-  // Tapping the article text → open the full-screen player with the text.
-  void _play(NewspaperArticle a) {
-    _openPlayer();
-    PlaybackService.i.playOne(a);
-    Future.delayed(const Duration(seconds: 2), _loadRecent);
+  // Tapping an article opens its TEXT (same reader as Live stories, with a
+  // "Listen" button). Audio starts only from the ▶ — and in the mini-player.
+  void _openArticle(NewspaperArticle a) {
+    final lang = context.read<SettingsProvider>().lang;
+    ReaderStore.i.current = WebArticle(
+      id: a.id,
+      title: a.title,
+      link: '',
+      source: sectionLabel(a.category, lang),
+      pubDate: '',
+      summary: a.preview,
+      body: a.content,
+    );
+    context.push('/reader');
   }
 
-  // Tapping the row's play icon → just start playing (mini-player), no full
-  // screen — like a track list.
+  // The row's ▶ → play in place (mini-player), like a track list.
   void _playInline(NewspaperArticle a) {
     PlaybackService.i.playOne(a);
-    Future.delayed(const Duration(seconds: 2), _loadRecent);
   }
 
   // Play a whole section/filter back-to-back, like a playlist.
   void _playList(List<NewspaperArticle> list) {
     if (list.isEmpty) return;
     PlaybackService.i.playAll(list);
-    Future.delayed(const Duration(seconds: 2), _loadRecent);
   }
 
   // Sensible chip order: hard news first, the catch-all "News" last.
@@ -167,24 +154,6 @@ class _TodayScreenState extends State<TodayScreen> {
   int _sectionRank(String s) {
     final i = _sectionOrder.indexOf(s);
     return i < 0 ? _sectionOrder.length : i;
-  }
-
-  void _openPlayer() => context.push('/player');
-
-  Widget _chip(String label, bool selected, VoidCallback onTap) {
-    final p = GatiPalette.of(context);
-    return ChoiceChip(
-      label: Text(label,
-          style: TextStyle(
-              fontSize: 12,
-              color: selected ? Gati.accentText : p.ink)),
-      selected: selected,
-      showCheckmark: false,
-      backgroundColor: p.surface,
-      selectedColor: Gati.accentSoft,
-      side: BorderSide(color: p.line),
-      onSelected: (_) => onTap(),
-    );
   }
 
   // The EN/తె toggle that used to live here moved to the menu drawer's
@@ -259,40 +228,7 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
-  Widget _lensBtn(String label, String lens) {
-    final sel = _lens == lens;
-    final p = GatiPalette.of(context);
-    return GestureDetector(
-      onTap: () => setState(() => _lens = lens),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: sel ? p.ink : Colors.transparent,
-          border: Border.all(color: sel ? p.ink : p.line),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 12.5,
-                color: sel ? p.paper : p.muted,
-                fontWeight: FontWeight.w500)),
-      ),
-    );
-  }
-
-  // Tapping a recently-played tile: resume a partially-heard article at its
-  // saved spot, or replay a finished one from the top.
-  Future<void> _playRecent(Map<String, dynamic> m) async {
-    _openPlayer();
-    final a = await _svc.fetchArticleById(m['article_id'] as String);
-    if (a == null) return;
-    final done = m['completed'] as bool? ?? false;
-    final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
-    PlaybackService.i.playOne(a,
-        resumeAt: done ? Duration.zero : Duration(seconds: pos));
-  }
-
-  // "Listen to briefing": a curated handful — top editorial sections first —
+  // "Listen to briefing" narrates the short version of the top dozen picks
   // instead of all ~175 articles. One tap never synthesizes the whole edition,
   // and the dozen it does play are cached, so it's cents and free on replay.
   static const _briefingCount = 12;
@@ -305,7 +241,6 @@ class _TodayScreenState extends State<TodayScreen> {
     final pick = ranked.take(_briefingCount).toList();
     if (pick.isEmpty) return;
     PlaybackService.i.playAll(pick, brief: true); // narrate the short version
-    Future.delayed(const Duration(seconds: 2), _loadRecent);
   }
 
   // ── Multi-select → Up Next queue ───────────────────────────────────────────
@@ -370,15 +305,6 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   // ── Long-press → per-article options ───────────────────────────────────────
-  // Long-press actions moved to the shared kit sheet — the SAME options for
-  // Paper cards, Live stories and Shows tiles (Play now · Summarize · Play
-  // next · Add to Up Next · Download · Ask Vāni).
-  void _showArticleSheet(NewspaperArticle a) {
-    showGatiArticleSheet(context, a,
-        onPlayed: () =>
-            Future.delayed(const Duration(seconds: 2), _loadRecent));
-  }
-
   // ── Front page (Editorial / Editor's pick) ──────────────────────────────────
   // The editor's pick = the day's lead: the paper's own editorial if present,
   // else the front-page lead (earliest page, longest story).
@@ -415,10 +341,13 @@ class _TodayScreenState extends State<TodayScreen> {
         pick.category == 'Editorial' || pick.category == 'Opinion';
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
-        padding: const EdgeInsets.only(top: 2, bottom: 8),
+        padding: const EdgeInsets.only(top: 14, bottom: 8),
         child: Text(tr(lang, pickIsOpinion ? 'editorial_opinion' : 'front_page'),
             style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w600, color: p.ink)),
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.3,
+                color: p.muted)),
       ),
       _editorsPickCard(p, lang, pick),
       if (rail.isNotEmpty) ...[
@@ -453,8 +382,10 @@ class _TodayScreenState extends State<TodayScreen> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(Gati.rCard),
-        onTap: () => _play(a),
-        onLongPress: () => _showArticleSheet(a),
+        onTap: () => _openArticle(a),
+        onTapDown: (d) => _pressPos = d.globalPosition,
+        onLongPress: () => showGatiArticleMenu(context, _pressPos, a,
+            onRead: () => _openArticle(a)),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -530,8 +461,9 @@ class _TodayScreenState extends State<TodayScreen> {
   Widget _opinionCard(GatiPalette p, String lang, NewspaperArticle a) {
     final r = sectionRamp(a.category, dark: p.dark);
     return GestureDetector(
-      onTap: () => _play(a),
-      onLongPress: () => _showArticleSheet(a),
+      onTap: () => _openArticle(a),
+      onLongPressStart: (d) => showGatiArticleMenu(context, d.globalPosition, a,
+          onRead: () => _openArticle(a)),
       child: Container(
         width: 220,
         padding: const EdgeInsets.all(13),
@@ -593,13 +525,10 @@ class _TodayScreenState extends State<TodayScreen> {
     final pageKeys = pages.keys.toList()..sort();
     final catKeys = cats.keys.toList()
       ..sort((a, b) => _sectionRank(a).compareTo(_sectionRank(b)));
-    var visible = _lens == 'page'
-        ? (_pageSel == null
-            ? _articles
-            : _articles.where((a) => a.page == _pageSel).toList())
-        : (_category == null
-            ? _articles
-            : _articles.where((a) => a.category == _category).toList());
+    var visible = _articles
+        .where((a) => _pageSel == null || a.page == _pageSel)
+        .where((a) => _category == null || a.category == _category)
+        .toList();
     // District preference (filter dropdown / Vāni): pin the district's
     // articles first, or show only them — same behavior as Live stories.
     final settings = context.watch<SettingsProvider>();
@@ -622,44 +551,71 @@ class _TodayScreenState extends State<TodayScreen> {
     // is loaded, as the persistent "add another" action.
     final showHero = !_uploading && _articles.isEmpty && st == null;
 
+    final edition = !showHero && !_uploading && (st == null || st.isDone) &&
+        _articles.isNotEmpty;
+
     return Scaffold(
       backgroundColor: p.paper,
+      // Upload lives as a simple "+" floating above the Vāni button —
+      // Paper tab only. Hidden while the hero card IS the upload CTA.
+      floatingActionButton: showHero
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(bottom: 92),
+              child: FloatingActionButton.small(
+                heroTag: 'paper_upload',
+                backgroundColor: kAccent,
+                foregroundColor: kPaper,
+                elevation: 2,
+                onPressed: _upload,
+                child: const Icon(Icons.add),
+              ),
+            ),
       body: SafeArea(
         child: Column(children: [
           GatiMasthead(lang: lang, actions: [
-            if (!showHero)
-              GestureDetector(
-                onTap: _upload,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-                  decoration: BoxDecoration(
-                      color: kAccent, borderRadius: BorderRadius.circular(20)),
-                  child: Row(children: [
-                    const Icon(Icons.add, color: kPaper, size: 17),
-                    const SizedBox(width: 3),
-                    Text(tr(lang, 'upload'),
-                        style: const TextStyle(
-                            color: kPaper,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500)),
-                  ]),
-                ),
-              ),
             GatiHeaderButton(
                 icon: Icons.search, onTap: () => context.push('/search')),
           ]),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(_error!,
+                  style: const TextStyle(color: kAccent, fontSize: 12.5)),
+            ),
+          if (edition)
+            // Vertical page-snap between the sections (§8): the outer scroll
+            // settles on each section; the lists INSIDE a section scroll on
+            // their own, so the page only turns from outside the list.
+            Expanded(
+              child: PageView(
+                scrollDirection: Axis.vertical,
+                controller: _pageCtl,
+                children: [
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        EditionMasthead(
+                          rawTitle: _editionTitle,
+                          articleCount: _articles.length,
+                          pageCount: pages.length,
+                          onListen: _playBriefing,
+                        ),
+                        _frontPageBand(p, lang),
+                      ],
+                    ),
+                  ),
+                  _allArticlesSection(p, lang, catKeys, cats, pageKeys, visible),
+                ],
+              ),
+            )
+          else
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               children: [
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(_error!,
-                        style:
-                            const TextStyle(color: kAccent, fontSize: 12.5)),
-                  ),
                 if (_uploading)
                   Container(
                     padding: const EdgeInsets.all(16),
@@ -735,13 +691,6 @@ class _TodayScreenState extends State<TodayScreen> {
                         ),
                       ],
                     ),
-                  )
-                else if (_articles.isNotEmpty)
-                  EditionMasthead(
-                    rawTitle: _editionTitle,
-                    articleCount: _articles.length,
-                    pageCount: pages.length,
-                    onListen: _playBriefing,
                   )
                 else ...[
                   Container(
@@ -826,131 +775,90 @@ class _TodayScreenState extends State<TodayScreen> {
                     ),
                   const SizedBox(height: 8),
                 ],
-                // Front page: the editor's pick lead + Editorial/Opinion when
-                // the edition carries those fixed sections.
-                if (_articles.isNotEmpty) _frontPageBand(p, lang),
-                if (_recent.isNotEmpty) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4, bottom: 6),
-                    child: Text(tr(lang, 'recently_played'),
-                        style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: p.ink)),
-                  ),
-                  _RecentlyPlayedMarquee(
-                    items: _recent,
-                    lang: lang,
-                    onTap: _playRecent,
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                // Header for the browse area + the list ⇄ tiles toggle.
-                if (_articles.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                            tr(lang,
-                                _view == 'tiles'
-                                    ? 'browse_by_section'
-                                    : 'all_articles'),
-                            style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: p.ink)),
-                        Row(mainAxisSize: MainAxisSize.min, children: [
-                          if (_view == 'list')
-                            GestureDetector(
-                              onTap: () => setState(() {
-                                _selectMode = !_selectMode;
-                                if (!_selectMode) _selected.clear();
-                              }),
-                              child: Container(
-                                width: 32,
-                                height: 28,
-                                alignment: Alignment.center,
-                                margin: const EdgeInsets.only(right: 8),
-                                decoration: BoxDecoration(
-                                    color:
-                                        _selectMode ? kAccent : p.chip,
-                                    borderRadius: BorderRadius.circular(8)),
-                                child: Icon(Icons.checklist_rounded,
-                                    size: 17,
-                                    color: _selectMode ? kPaper : p.muted),
-                              ),
-                            ),
-                          Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                                color: p.chip,
-                                borderRadius: BorderRadius.circular(9)),
-                            child: Row(children: [
-                              _viewBtn(Icons.view_list_rounded, 'list'),
-                              _viewBtn(Icons.grid_view_rounded, 'tiles'),
-                              const GatiFilterButton(),
-                            ]),
-                          ),
-                        ]),
-                      ],
+              ],
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  // ── "All articles" as a self-contained snap section: consistent label +
+  // select/view/filter controls on one row (sections & pages live in the
+  // funnel dropdown now), with the article list scrolling INSIDE.
+  Widget _allArticlesSection(GatiPalette p, String lang, List<String> catKeys,
+      Map<String, int> cats, List<int> pageKeys, List<NewspaperArticle> visible) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                  tr(lang,
+                      _view == 'tiles' ? 'browse_by_section' : 'all_articles'),
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.3,
+                      color: p.muted)),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                if (_view == 'list')
+                  GestureDetector(
+                    onTap: () => setState(() {
+                      _selectMode = !_selectMode;
+                      if (!_selectMode) _selected.clear();
+                    }),
+                    child: Container(
+                      width: 32,
+                      height: 28,
+                      alignment: Alignment.center,
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                          color: _selectMode ? kAccent : p.chip,
+                          borderRadius: BorderRadius.circular(8)),
+                      child: Icon(Icons.checklist_rounded,
+                          size: 17, color: _selectMode ? kPaper : p.muted),
                     ),
                   ),
-                // Tile view: a colored grid of sections, drilling into a list.
-                if (_articles.isNotEmpty && _view == 'tiles')
-                  GridView.count(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    crossAxisCount: 2,
-                    childAspectRatio: 1.6,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                    children: [
-                      for (final k in catKeys)
-                        _sectionTile(k, cats[k]!,
-                            _articles.where((a) => a.category == k).toList()),
-                    ],
-                  )
-                // List view: lens + chips + play-all + flat article list.
-                else if (_articles.isNotEmpty) ...[
-                  if (pageKeys.length > 1)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(children: [
-                        _lensBtn(tr(lang, 'sections'), 'section'),
-                        const SizedBox(width: 8),
-                        _lensBtn(tr(lang, 'pages'), 'page'),
-                      ]),
+                Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                      color: p.chip, borderRadius: BorderRadius.circular(9)),
+                  child: Row(children: [
+                    _viewBtn(Icons.view_list_rounded, 'list'),
+                    _viewBtn(Icons.grid_view_rounded, 'tiles'),
+                    GatiFilterButton(
+                      sections: catKeys,
+                      selectedSection: _category,
+                      onSection: (v) => setState(() => _category = v),
+                      pages: pageKeys,
+                      selectedPage: _pageSel,
+                      onPage: (v) => setState(() => _pageSel = v),
+                      sectionLabelOf: (sec) => sectionLabel(sec, lang),
                     ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        if (_lens == 'page') ...[
-                          _chip('${tr(lang, 'all')} · ${_articles.length}',
-                              _pageSel == null,
-                              () => setState(() => _pageSel = null)),
-                          for (final p in pageKeys)
-                            _chip('${tr(lang, 'page')} $p · ${pages[p]}',
-                                _pageSel == p,
-                                () => setState(
-                                    () => _pageSel = _pageSel == p ? null : p)),
-                        ] else ...[
-                          _chip('${tr(lang, 'all')} · ${_articles.length}',
-                              _category == null,
-                              () => setState(() => _category = null)),
-                          for (final k in catKeys)
-                            _chip('${sectionLabel(k, lang)} · ${cats[k]}',
-                                _category == k,
-                                () => setState(() =>
-                                    _category = _category == k ? null : k)),
-                        ],
-                      ],
-                    ),
-                  ),
+                  ]),
+                ),
+              ]),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _view == 'tiles'
+              ? GridView.count(
+                  crossAxisCount: 2,
+                  childAspectRatio: 1.6,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  children: [
+                    for (final k in catKeys)
+                      _sectionTile(k, cats[k]!,
+                          _articles.where((a) => a.category == k).toList()),
+                  ],
+                )
+              : ListView(children: [
                   if ((_category != null || _pageSel != null) &&
                       visible.isNotEmpty)
                     Padding(
@@ -975,202 +883,19 @@ class _TodayScreenState extends State<TodayScreen> {
                   for (final a in visible)
                     ArticleCard(
                       article: a,
-                      onOpen: () => _play(a), // open the full player with text
-                      onPlay: () => _playInline(a), // play in place
-                      onLongPress: () => _showArticleSheet(a),
+                      onOpen: () => _openArticle(a), // read, don't autoplay
+                      onPlay: () => _playInline(a), // mini-player only
+                      onLongPressAt: (pos) =>
+                          showGatiArticleMenu(context, pos, a,
+                              onRead: () => _openArticle(a)),
                       selectionMode: _selectMode,
                       selected: _selected.contains(a.id),
                       onToggleSelect: () => _toggleSelect(a.id),
                     ),
-                ],
-              ],
-            ),
-          ),
-          if (_selectMode) _selectionBar(p, lang, visible),
-        ]),
-      ),
-    );
-  }
-}
-
-/// "Recently played" as a slow right-to-left marquee. The strip auto-scrolls on
-/// its own (no user drag); the items are repeated so the loop is seamless. Tap a
-/// card to play it.
-class _RecentlyPlayedMarquee extends StatefulWidget {
-  const _RecentlyPlayedMarquee(
-      {required this.items, required this.lang, required this.onTap});
-  final List<Map<String, dynamic>> items;
-  final String lang;
-  final void Function(Map<String, dynamic> item) onTap;
-  @override
-  State<_RecentlyPlayedMarquee> createState() => _RecentlyPlayedMarqueeState();
-}
-
-class _RecentlyPlayedMarqueeState extends State<_RecentlyPlayedMarquee> {
-  final _ctrl = ScrollController();
-  Timer? _timer;
-  Timer? _resume;
-  bool _userActive = false; // paused while the user drags / flings
-  static const _cardW = 220.0;
-  static const _gap = 10.0;
-
-  double get _setW => widget.items.length * (_cardW + _gap);
-
-  @override
-  void initState() {
-    super.initState();
-    // Start one set in, so there's content to scroll into on BOTH sides.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_ctrl.hasClients && _setW > 0) _ctrl.jumpTo(_setW);
-    });
-    // Drive the scroll a few pixels per tick → a calm ~13 px/s drift, unless the
-    // user is scrolling it themselves.
-    _timer = Timer.periodic(const Duration(milliseconds: 30), (_) {
-      if (_userActive || !_ctrl.hasClients || _setW <= 0) return;
-      final setW = _setW;
-      var next = _ctrl.offset + 0.4;
-      // Keep the offset in the middle set [setW, 2*setW); the repeated content
-      // makes the wrap seamless and leaves a set on each side to drag into.
-      while (next >= 2 * setW) next -= setW;
-      while (next < setW) next += setW;
-      _ctrl.jumpTo(next);
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _resume?.cancel();
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final p = GatiPalette.of(context);
-    final n = widget.items.length;
-    if (n == 0) return const SizedBox.shrink();
-    // ≥3 sets so the middle-set drift always has a set to scroll into either way.
-    final reps = n <= 3 ? 5 : 3;
-    return SizedBox(
-      height: 96,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (notif) {
-          // Pause the auto-drift while the user is dragging, and keep it paused
-          // through any fling until the scroll settles.
-          if (notif is ScrollStartNotification &&
-              notif.dragDetails != null) {
-            _userActive = true;
-            _resume?.cancel();
-          } else if (notif is ScrollEndNotification) {
-            _resume?.cancel();
-            _resume = Timer(const Duration(milliseconds: 1200),
-                () => _userActive = false);
-          }
-          return false;
-        },
-        child: ListView.builder(
-          controller: _ctrl,
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics()),
-          itemCount: n * reps,
-          itemBuilder: (_, i) {
-            final m = widget.items[i % n];
-            return Padding(
-              padding: const EdgeInsets.only(right: _gap),
-              child: _card(p, m),
-            );
-          },
+                ]),
         ),
-      ),
-    );
-  }
-
-  Widget _card(GatiPalette p, Map<String, dynamic> m) {
-    final c = sectionLabel(m['category'] as String? ?? 'News', widget.lang);
-    final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
-    final dur = (m['duration_seconds'] as num?)?.toInt() ?? 0;
-    final completed = m['completed'] as bool? ?? false;
-    final started = !completed && pos > 0 && dur > 0;
-    final frac = completed ? 1.0 : (dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0);
-
-    // Action label + length: Replay (finished) / Resume · N left (partial) / Play.
-    final IconData icon;
-    final String label;
-    final String? meta;
-    if (completed) {
-      icon = Icons.refresh_rounded;
-      label = tr(widget.lang, 'replay');
-      meta = dur > 0 ? '${(dur / 60).ceil()} ${tr(widget.lang, 'min')}' : null;
-    } else if (started) {
-      icon = Icons.play_arrow_rounded;
-      label = tr(widget.lang, 'resume');
-      meta = '${((dur - pos) / 60).ceil()} ${tr(widget.lang, 'min_left')}';
-    } else {
-      icon = Icons.play_arrow_rounded;
-      label = tr(widget.lang, 'play');
-      meta = dur > 0 ? '${(dur / 60).ceil()} ${tr(widget.lang, 'min')}' : null;
-    }
-
-    return GestureDetector(
-      onTap: () => widget.onTap(m),
-      child: Container(
-        width: _cardW,
-        padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
-        decoration: BoxDecoration(
-            color: p.surface,
-            border: Border.all(color: p.line),
-            borderRadius: BorderRadius.circular(Gati.rCard)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.lang == 'en' ? c.toUpperCase() : c,
-                style: const TextStyle(
-                    fontSize: 10,
-                    letterSpacing: 0.4,
-                    color: kAccent,
-                    fontWeight: FontWeight.w500)),
-            const SizedBox(height: 5),
-            Expanded(
-              child: Text(m['title'] as String? ?? '',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13, height: 1.3, color: p.ink)),
-            ),
-            if (dur > 0) ...[
-              const SizedBox(height: 7),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                    value: frac,
-                    minHeight: 3,
-                    backgroundColor: p.line,
-                    color: completed ? p.muted : kAccent),
-              ),
-            ],
-            const SizedBox(height: 6),
-            Row(children: [
-              Icon(icon, color: completed ? p.muted : kAccent, size: 17),
-              const SizedBox(width: 3),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w500,
-                      color: started ? p.ink : p.muted)),
-              if (meta != null) ...[
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text('· $meta',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11.5, color: p.muted)),
-                ),
-              ],
-            ]),
-          ],
-        ),
-      ),
+        if (_selectMode) _selectionBar(p, lang, visible),
+      ]),
     );
   }
 }

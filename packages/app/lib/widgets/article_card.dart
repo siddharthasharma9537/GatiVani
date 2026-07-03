@@ -15,15 +15,15 @@ class ArticleCard extends StatelessWidget {
       required this.article,
       required this.onOpen,
       required this.onPlay,
-      this.onLongPress,
+      this.onLongPressAt,
       this.selectionMode = false,
       this.selected = false,
       this.onToggleSelect});
   final NewspaperArticle article;
   final VoidCallback onOpen;
   final VoidCallback onPlay;
-  // Long-press → options sheet (play next, queue, save, download).
-  final VoidCallback? onLongPress;
+  // Long-press with position → anchored actions menu.
+  final void Function(Offset globalPos)? onLongPressAt;
   // Multi-select mode: tapping the card toggles selection; the ▶ becomes a tick.
   final bool selectionMode;
   final bool selected;
@@ -34,7 +34,11 @@ class ArticleCard extends StatelessWidget {
     final lang = context.watch<SettingsProvider>().lang;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final r = sectionRamp(article.category, dark: dark);
-    return Padding(
+    return GestureDetector(
+      onLongPressStart: onLongPressAt == null
+          ? null
+          : (d) => onLongPressAt!(d.globalPosition),
+      child: Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Container(
         decoration: BoxDecoration(
@@ -51,7 +55,6 @@ class ArticleCard extends StatelessWidget {
           color: Colors.transparent,
           child: InkWell(
             onTap: selectionMode ? onToggleSelect : onOpen,
-            onLongPress: onLongPress,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
               child: Row(children: [
@@ -116,6 +119,7 @@ class ArticleCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }

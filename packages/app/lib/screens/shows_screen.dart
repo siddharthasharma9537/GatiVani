@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../design/components/gati_masthead.dart';
+import '../design/components/gati_section_label.dart';
 import '../design/components/gati_states.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
@@ -65,8 +66,11 @@ class _ShowsScreenState extends State<ShowsScreen> {
                     ),
                   ),
                 )
-              else
+              else ...[
+                GatiSectionLabel(
+                    lang == 'te' ? 'పాడ్‌క్యాస్ట్‌లు' : 'Podcasts'),
                 PodcastsGrid(episodes: _podcasts, lang: lang),
+              ],
               const SizedBox(height: Gati.s6),
               Padding(
                 padding: const EdgeInsets.all(Gati.s6),

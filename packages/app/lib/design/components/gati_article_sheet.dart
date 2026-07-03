@@ -10,12 +10,14 @@ import '../../widgets/assistant_sheet.dart';
 import '../tokens.dart';
 import 'gati_states.dart';
 
-/// THE article actions sheet — the same options everywhere an article (or
-/// episode) appears: Paper cards, Live stories, Shows tiles. Play now ·
-/// Summarize · Play next · Add to Up Next · Download · Ask Vāni, plus an
-/// optional "read" row when the piece has a readable source (web stories).
-void showGatiArticleSheet(
+/// THE article actions menu — the same options everywhere an article (or
+/// episode) appears: Paper cards, Live stories, Shows tiles. A compact
+/// popup anchored at [globalPos] (the ⋯ button / long-press point), not a
+/// full-width sheet. Play now · Summarize · Play next · Add to Up Next ·
+/// Download · Read · Ask Vāni.
+void showGatiArticleMenu(
   BuildContext context,
+  Offset globalPos,
   NewspaperArticle a, {
   VoidCallback? onRead,
   VoidCallback? onPlayed,
@@ -23,64 +25,59 @@ void showGatiArticleSheet(
   final lang = context.read<SettingsProvider>().lang;
   final p = GatiPalette.of(context);
   final hasText = a.content.trim().isNotEmpty;
-  showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: p.surface,
-    shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-    builder: (ctx) {
-      Widget item(IconData icon, String label, VoidCallback onTap) => ListTile(
-            leading: Icon(icon, color: p.ink, size: 22),
-            title: Text(label, style: TextStyle(color: p.ink, fontSize: 15)),
-            onTap: () {
-              Navigator.pop(ctx);
-              onTap();
-            },
-          );
-      return SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(a.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: p.ink,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500)),
-            ),
-          ),
-          item(Icons.play_arrow_rounded, tr(lang, 'play_now'), () {
-            PlaybackService.i.playOne(a);
-            onPlayed?.call();
-          }),
-          if (hasText)
-            item(Icons.auto_awesome, tr(lang, 'summarize'),
-                () => _summarize(context, a, lang)),
-          item(Icons.queue_play_next_rounded, tr(lang, 'play_next'), () {
-            PlaybackService.i.playNext([a]);
-            gatiSnack(context, tr(lang, 'added_play_next'));
-          }),
-          item(Icons.playlist_add_rounded, tr(lang, 'add_to_queue'), () {
-            PlaybackService.i.addToQueue([a]);
-            gatiSnack(context, tr(lang, 'added_queue'));
-          }),
-          item(Icons.download_rounded, tr(lang, 'download'),
-              () => _download(context, a, lang)),
-          if (onRead != null)
-            item(Icons.chrome_reader_mode_outlined, tr(lang, 'read_story'),
-                onRead),
-          if (hasText)
-            item(Icons.graphic_eq, tr(lang, 'ask_vani'),
-                () => AssistantSheet.open(context, a.id, a.title,
-                    articleText: a.content)),
-          const SizedBox(height: 8),
+  final overlay =
+      Overlay.of(context).context.findRenderObject()! as RenderBox;
+
+  PopupMenuItem<VoidCallback> item(
+          IconData icon, String label, VoidCallback onTap) =>
+      PopupMenuItem<VoidCallback>(
+        value: onTap,
+        height: 38,
+        child: Row(children: [
+          Icon(icon, color: p.muted, size: 18),
+          const SizedBox(width: 10),
+          Text(label, style: TextStyle(color: p.ink, fontSize: 13.5)),
         ]),
       );
-    },
-  );
+
+  showMenu<VoidCallback>(
+    context: context,
+    position: RelativeRect.fromRect(
+        globalPos & const Size(1, 1), Offset.zero & overlay.size),
+    color: p.surface,
+    shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: p.line, width: 0.5)),
+    constraints: const BoxConstraints(minWidth: 200, maxWidth: 240),
+    items: [
+      item(Icons.play_arrow_rounded, tr(lang, 'play_now'), () {
+        PlaybackService.i.playOne(a);
+        onPlayed?.call();
+      }),
+      if (hasText)
+        item(Icons.auto_awesome, tr(lang, 'summarize'),
+            () => _summarize(context, a, lang)),
+      item(Icons.queue_play_next_rounded, tr(lang, 'play_next'), () {
+        PlaybackService.i.playNext([a]);
+        gatiSnack(context, tr(lang, 'added_play_next'));
+      }),
+      item(Icons.playlist_add_rounded, tr(lang, 'add_to_queue'), () {
+        PlaybackService.i.addToQueue([a]);
+        gatiSnack(context, tr(lang, 'added_queue'));
+      }),
+      item(Icons.download_rounded, tr(lang, 'download'),
+          () => _download(context, a, lang)),
+      if (onRead != null)
+        item(Icons.chrome_reader_mode_outlined, tr(lang, 'read_story'),
+            onRead),
+      if (hasText)
+        item(
+            Icons.graphic_eq,
+            tr(lang, 'ask_vani'),
+            () => AssistantSheet.open(context, a.id, a.title,
+                articleText: a.content)),
+    ],
+  ).then((action) => action?.call());
 }
 
 // Summarize = an AI gist (a few sentences) narrated in the mini-player,

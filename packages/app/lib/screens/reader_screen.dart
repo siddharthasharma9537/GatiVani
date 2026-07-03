@@ -82,13 +82,16 @@ class ReaderScreen extends StatelessWidget {
                     style: GatiType.headline(GatiType.scriptOf(a.title))
                         .copyWith(color: p.ink)),
                 const SizedBox(height: Gati.s4),
-                _ListenButton(onListen: () => _listen(a)),
+                _ListenButton(
+                    onListen: () => _listen(a), isArticle: a.link.isEmpty),
                 const SizedBox(height: Gati.s5),
                 Text(a.body,
                     style: GatiType.bodyRead(GatiType.scriptOf(a.body))
                         .copyWith(color: p.ink)),
                 const SizedBox(height: Gati.s5),
-                // Attribution + source of truth.
+                // Attribution + source of truth (web stories only — print
+                // edition articles have no external link).
+                if (a.link.isNotEmpty)
                 GestureDetector(
                   onTap: () => _openOriginal(a.link),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -115,8 +118,9 @@ class ReaderScreen extends StatelessWidget {
 /// Listen pill — reflects the shared player's state for THIS reader session:
 /// idle → "Listen", synthesizing → spinner, playing → "Playing…".
 class _ListenButton extends StatelessWidget {
-  const _ListenButton({required this.onListen});
+  const _ListenButton({required this.onListen, this.isArticle = false});
   final VoidCallback onListen;
+  final bool isArticle;
 
   @override
   Widget build(BuildContext context) {
@@ -140,7 +144,11 @@ class _ListenButton extends StatelessWidget {
               Text(
                   playing
                       ? _t(lang, 'Playing…', 'వినిపిస్తోంది…')
-                      : _t(lang, 'Listen to this story', 'ఈ కథనాన్ని వినండి'),
+                      : isArticle
+                          ? _t(lang, 'Listen to the article',
+                              'వ్యాసాన్ని వినండి')
+                          : _t(lang, 'Listen to this story',
+                              'ఈ కథనాన్ని వినండి'),
                   style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w500,

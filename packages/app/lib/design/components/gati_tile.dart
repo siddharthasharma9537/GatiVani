@@ -12,7 +12,7 @@ class GatiTile extends StatelessWidget {
     required this.meta,
     required this.ramp,
     required this.onTap,
-    this.onLongPress,
+    this.onLongPressAt,
   });
 
   final String title;
@@ -21,13 +21,17 @@ class GatiTile extends StatelessWidget {
   /// `[background, title, subtitle]` from `sectionRamp`.
   final List<Color> ramp;
   final VoidCallback onTap;
-  final VoidCallback? onLongPress;
+
+  /// Long-press with the press position — anchors the actions menu there.
+  final void Function(Offset globalPos)? onLongPressAt;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      onLongPress: onLongPress,
+      onLongPressStart: onLongPressAt == null
+          ? null
+          : (d) => onLongPressAt!(d.globalPosition),
       child: Container(
         padding: const EdgeInsets.all(Gati.s4),
         decoration: BoxDecoration(

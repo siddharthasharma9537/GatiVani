@@ -16,14 +16,51 @@ import '../widgets/mini_player.dart';
 
 /// Listening history (menu → History): everything played, newest first,
 /// with progress — tap to resume where it left off.
-class HistoryScreen extends StatefulWidget {
+class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
 
   @override
-  State<HistoryScreen> createState() => _HistoryScreenState();
+  Widget build(BuildContext context) {
+    final p = GatiPalette.of(context);
+    final lang = context.watch<SettingsProvider>().lang;
+    return Scaffold(
+      backgroundColor: p.paper,
+      body: SafeArea(
+        bottom: false,
+        child: Column(children: [
+          Padding(
+            padding:
+                const EdgeInsets.fromLTRB(Gati.s3, Gati.s2, Gati.s5, Gati.s2),
+            child: Row(children: [
+              IconButton(
+                icon: Icon(Icons.arrow_back, color: p.ink),
+                onPressed: () => context.pop(),
+              ),
+              Text(tr(lang, 'history'),
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w500,
+                      color: p.ink)),
+            ]),
+          ),
+          const Expanded(child: HistoryBody()),
+          MiniPlayer(onExpand: () => context.push('/player')),
+        ]),
+      ),
+    );
+  }
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
+/// The history list alone — shared by the /history route and the shell's
+/// right-edge "Recent" drawer.
+class HistoryBody extends StatefulWidget {
+  const HistoryBody({super.key});
+
+  @override
+  State<HistoryBody> createState() => _HistoryBodyState();
+}
+
+class _HistoryBodyState extends State<HistoryBody> {
   List<Map<String, dynamic>> _rows = [];
   bool _loading = true;
 
@@ -69,49 +106,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final lang = context.watch<SettingsProvider>().lang;
-    return Scaffold(
-      backgroundColor: p.paper,
-      body: SafeArea(
-        bottom: false,
-        child: Column(children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Gati.s3, Gati.s2, Gati.s5, Gati.s2),
-            child: Row(children: [
-              IconButton(
-                icon: Icon(Icons.arrow_back, color: p.ink),
-                onPressed: () => context.pop(),
-              ),
-              Text(tr(lang, 'history'),
-                  style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w500,
-                      color: p.ink)),
-            ]),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(
-                    child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Gati.accent)))
-                : _rows.isEmpty
-                    ? GatiEmpty(
-                        message: tr(lang, 'history_empty'), onInk: false)
-                    : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(
-                            Gati.s5, Gati.s2, Gati.s5, Gati.s6),
-                        itemCount: _rows.length,
-                        separatorBuilder: (_, __) =>
-                            Divider(height: 1, color: p.line),
-                        itemBuilder: (_, i) => _row(p, lang, _rows[i]),
-                      ),
-          ),
-          MiniPlayer(onExpand: () => context.push('/player')),
-        ]),
-      ),
-    );
+    return _loading
+        ? const Center(
+            child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Gati.accent)))
+        : _rows.isEmpty
+            ? GatiEmpty(message: tr(lang, 'history_empty'), onInk: false)
+            : ListView.separated(
+                padding: const EdgeInsets.fromLTRB(
+                    Gati.s5, Gati.s2, Gati.s5, Gati.s6),
+                itemCount: _rows.length,
+                separatorBuilder: (_, __) => Divider(height: 1, color: p.line),
+                itemBuilder: (_, i) => _row(p, lang, _rows[i]),
+              );
   }
 
   Widget _row(GatiPalette p, String lang, Map<String, dynamic> m) {
