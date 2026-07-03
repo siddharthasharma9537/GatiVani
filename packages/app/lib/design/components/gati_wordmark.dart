@@ -50,20 +50,30 @@ class GatiWordmark extends StatelessWidget {
     final canAnimate = animated && size >= 18;
 
     Widget mark(VaniLineMode mode) {
+      // Measure the carrier glyph so the macron hugs it exactly — sizing by
+      // font-size fractions made it bleed over the neighbouring letters.
+      final carrier = te ? 'వా' : 'a';
+      final tp = TextPainter(
+          text: TextSpan(text: carrier, style: style),
+          textDirection: TextDirection.ltr)
+        ..layout();
+      final macronW = tp.width * 0.94;
       final letter = Stack(
         clipBehavior: Clip.none,
         children: [
-          Text(te ? 'వా' : 'a', style: style),
+          Text(carrier, style: style),
           Positioned(
-            left: -size * 0.10,
-            right: -size * 0.10,
+            left: (tp.width - macronW) / 2,
             top: te ? -size * 0.04 : size * 0.10,
-            child: VaniLine(
-              mode: mode,
-              color: gold,
-              strokeWidth: size * 0.075,
-              cycles: 2,
-              height: size * 0.16,
+            child: SizedBox(
+              width: macronW,
+              child: VaniLine(
+                mode: mode,
+                color: gold,
+                strokeWidth: size * 0.075,
+                cycles: 2,
+                height: size * 0.16,
+              ),
             ),
           ),
         ],
