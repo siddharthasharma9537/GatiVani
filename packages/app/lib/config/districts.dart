@@ -87,3 +87,16 @@ District? districtByEn(String? en) {
   }
   return null;
 }
+
+/// Nearest city with published daily prices (petrol/diesel/gold) for the
+/// ticker: Telangana → Hyderabad; AP's north-coastal belt → Visakhapatnam;
+/// the rest of AP → Vijayawada.
+String citySlugFor(District d) {
+  if (d.state == 'Telangana') return 'hyderabad';
+  const vizagBelt = {
+    'Srikakulam', 'Vizianagaram', 'Parvathipuram Manyam', 'Visakhapatnam',
+    'Anakapalli', 'Alluri Sitharama Raju', 'Kakinada', 'East Godavari',
+    'Konaseema',
+  };
+  return vizagBelt.contains(d.en) ? 'visakhapatnam' : 'vijayawada';
+}

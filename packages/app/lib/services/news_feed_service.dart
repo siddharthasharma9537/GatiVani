@@ -76,8 +76,9 @@ class MarketItem {
 /// fetch + RSS parse server-side, so the web app never hits a CORS wall.
 class NewsFeedService {
   /// Live market ticker (Nifty, Sensex, gold ₹/10g, silver ₹/kg).
-  Future<List<MarketItem>> fetchMarkets() async {
-    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-markets');
+  Future<List<MarketItem>> fetchMarkets({String? city}) async {
+    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-markets'
+        '${city != null && city.isNotEmpty ? '?city=$city' : ''}');
     try {
       final r = await http.get(uri, headers: ApiConfig.authHeaders);
       if (r.statusCode != 200) return [];

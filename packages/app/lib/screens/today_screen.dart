@@ -345,9 +345,9 @@ class _TodayScreenState extends State<TodayScreen> {
         child: Text(tr(lang, pickIsOpinion ? 'editorial_opinion' : 'front_page'),
             style: TextStyle(
                 fontSize: 13,
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
                 letterSpacing: 0.3,
-                color: p.muted)),
+                color: p.ink)),
       ),
       _editorsPickCard(p, lang, pick),
       if (rail.isNotEmpty) ...[
@@ -799,9 +799,9 @@ class _TodayScreenState extends State<TodayScreen> {
                       _view == 'tiles' ? 'browse_by_section' : 'all_articles'),
                   style: TextStyle(
                       fontSize: 13,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
                       letterSpacing: 0.3,
-                      color: p.muted)),
+                      color: p.ink)),
               Row(mainAxisSize: MainAxisSize.min, children: [
                 if (_view == 'list')
                   GestureDetector(

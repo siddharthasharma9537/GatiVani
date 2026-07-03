@@ -335,9 +335,8 @@ class _TakeCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(Gati.s4),
           decoration: BoxDecoration(
-            color: p.surface,
+            color: kInk,
             borderRadius: BorderRadius.circular(Gati.rCard),
-            border: Border.all(color: Gati.accentSoft, width: 1.4),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -346,14 +345,14 @@ class _TakeCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                      color: Gati.accentSoft,
+                      color: GatiDark.accentSoft,
                       borderRadius: BorderRadius.circular(6)),
                   child: const Text('GatiVani Take',
                       style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.2,
-                          color: kAccent)),
+                          color: Gati.pasupuGlow)),
                 ),
                 const Spacer(),
                 GatiPlayButton(onTap: onListen, size: 30),
@@ -362,20 +361,26 @@ class _TakeCard extends StatelessWidget {
               Text(take.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w600, height: 1.3, color: p.ink)),
+                  style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                      color: kPaper)),
               const SizedBox(height: Gati.s2),
               Text(take.commentary,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13.5, height: 1.5, color: p.muted)),
+                  style: const TextStyle(
+                      fontSize: 13.5, height: 1.5, color: Gati.onInkMuted)),
               if (take.sources.isNotEmpty) ...[
                 const SizedBox(height: Gati.s2),
                 Text(take.sources.join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w500, color: p.muted)),
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Gati.onInkTrack)),
               ],
             ],
           ),
@@ -682,9 +687,9 @@ class _LatestHeader extends StatelessWidget {
           Text(_t(lang, 'Latest stories', 'తాజా వార్తలు'),
               style: TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
                   letterSpacing: 0.3,
-                  color: p.muted)),
+                  color: p.ink)),
           if (showToggle)
             Container(
               padding: const EdgeInsets.all(3),

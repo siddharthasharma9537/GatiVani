@@ -3,12 +3,15 @@ import 'package:flutter/rendering.dart';
 
 import '../tokens.dart';
 
-/// Vertical scroll that gently settles at each section's top (§8).
-/// Sections keep their natural heights — no page-sized gaps — and after a
-/// scroll ends, if a section boundary is nearby (within ~45% of the
-/// viewport) the list glides to it. Sections that contain their own
-/// scrollable keep it: the inner list wins drags inside its bounds, the
-/// outer scroll moves from the headers and edges around it.
+/// Vertical scroll that stops at each section's header (§8).
+///
+/// Real snap physics, not an after-the-fact correction: a fling's ballistic
+/// simulation is retargeted to the NEXT section boundary in the fling's
+/// direction, so the scroll decelerates and comes to rest exactly on a
+/// section header — one section per fling. Slow drags settle to the nearest
+/// boundary. Sections keep natural heights (no page gaps), and sections
+/// containing their own scrollable keep it: the inner list wins drags
+/// inside its bounds.
 class GatiSnapScroll extends StatefulWidget {
   const GatiSnapScroll({
     super.key,
@@ -28,7 +31,6 @@ class GatiSnapScroll extends StatefulWidget {
 class _GatiSnapScrollState extends State<GatiSnapScroll> {
   final _ctl = ScrollController();
   late List<GlobalKey> _keys;
-  bool _snapping = false;
 
   @override
   void initState() {
@@ -50,50 +52,25 @@ class _GatiSnapScrollState extends State<GatiSnapScroll> {
     super.dispose();
   }
 
-  bool _onNotification(ScrollNotification n) {
-    if (n.depth != 0) return false; // inner lists snap nothing
-    if (n is ScrollEndNotification && !_snapping) _maybeSnap();
-    return false;
-  }
-
-  void _maybeSnap() {
-    if (!_ctl.hasClients) return;
-    final pos = _ctl.position;
-    final current = pos.pixels;
-    double? best;
-    var bestDist = double.infinity;
+  // Section-top offsets, measured from the live render tree at fling time.
+  List<double> _offsets() {
+    final out = <double>[];
     for (final k in _keys) {
       final ro = k.currentContext?.findRenderObject();
       if (ro == null || !ro.attached) continue;
       final viewport = RenderAbstractViewport.maybeOf(ro);
       if (viewport == null) continue;
-      final target = viewport
-          .getOffsetToReveal(ro, 0.0)
-          .offset
-          .clamp(pos.minScrollExtent, pos.maxScrollExtent);
-      final d = (target - current).abs();
-      if (d < bestDist) {
-        bestDist = d;
-        best = target;
-      }
+      out.add(viewport.getOffsetToReveal(ro, 0.0).offset);
     }
-    if (best == null) return;
-    // Already settled, or the nearest boundary is too far to yank to.
-    // 0.55 × viewport: with sections at most viewport-height, SOME boundary
-    // is always within reach, so the scroll never strands between sections.
-    if (bestDist < 2 || bestDist > pos.viewportDimension * 0.55) return;
-    _snapping = true;
-    _ctl
-        .animateTo(best,
-            duration: const Duration(milliseconds: 320),
-            curve: Curves.easeOutCubic)
-        .whenComplete(() => _snapping = false);
+    out.sort();
+    return out;
   }
 
   @override
   Widget build(BuildContext context) {
     Widget list = ListView(
       controller: _ctl,
+      physics: _SectionSnapPhysics(offsets: _offsets),
       padding: widget.padding,
       children: [
         for (var i = 0; i < widget.sections.length; i++)
@@ -104,7 +81,56 @@ class _GatiSnapScrollState extends State<GatiSnapScroll> {
       list = RefreshIndicator(
           onRefresh: widget.onRefresh!, color: kAccent, child: list);
     }
-    return NotificationListener<ScrollNotification>(
-        onNotification: _onNotification, child: list);
+    return list;
+  }
+}
+
+class _SectionSnapPhysics extends ScrollPhysics {
+  const _SectionSnapPhysics({required this.offsets, super.parent});
+
+  final List<double> Function() offsets;
+
+  @override
+  _SectionSnapPhysics applyTo(ScrollPhysics? ancestor) =>
+      _SectionSnapPhysics(offsets: offsets, parent: buildParent(ancestor));
+
+  @override
+  Simulation? createBallisticSimulation(
+      ScrollMetrics position, double velocity) {
+    // Overscrolled → let the parent spring handle it normally.
+    if (position.outOfRange) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final offs = offsets()
+        .map((o) =>
+            o.clamp(position.minScrollExtent, position.maxScrollExtent))
+        .toList();
+    if (offs.isEmpty) return super.createBallisticSimulation(position, velocity);
+
+    final px = position.pixels;
+    double target;
+    if (velocity > 160) {
+      // Flinging down the page → stop at the NEXT section header.
+      target = offs.firstWhere((o) => o > px + 4,
+          orElse: () => position.maxScrollExtent);
+    } else if (velocity < -160) {
+      target = offs.lastWhere((o) => o < px - 4,
+          orElse: () => position.minScrollExtent);
+    } else {
+      // Slow release → settle on the nearest header (if reasonably close).
+      target = offs.reduce(
+          (a, b) => (a - px).abs() <= (b - px).abs() ? a : b);
+      if ((target - px).abs() > position.viewportDimension * 0.55) {
+        return super.createBallisticSimulation(position, velocity);
+      }
+    }
+    if ((target - px).abs() < 1) return null;
+    return ScrollSpringSimulation(
+      SpringDescription.withDampingRatio(mass: 0.6, stiffness: 120, ratio: 1.1),
+      px,
+      target,
+      velocity,
+      tolerance: toleranceFor(position),
+    );
   }
 }

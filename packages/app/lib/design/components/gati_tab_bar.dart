@@ -16,19 +16,31 @@ class GatiTabBar extends StatelessWidget {
     required this.items,
     required this.currentIndex,
     required this.onTap,
+    this.onSwipe,
   });
 
   final List<GatiTabItem> items;
   final int currentIndex;
   final ValueChanged<int> onTap;
 
+  /// Swiping the bar itself also changes tabs (+1 left, -1 right).
+  final ValueChanged<int>? onSwipe;
+
   @override
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final active = p.dark ? Gati.pasupuGlow : Gati.pasupuDeep;
-    return Container(
+    return GestureDetector(
+      onHorizontalDragEnd: onSwipe == null
+          ? null
+          : (d) {
+              final v = d.primaryVelocity ?? 0;
+              if (v < -250) onSwipe!(1);
+              if (v > 250) onSwipe!(-1);
+            },
+      child: Container(
       decoration: BoxDecoration(
-        color: p.paper,
+        color: p.dark ? GatiDark.band : Gati.band,
         border: Border(top: BorderSide(color: p.line, width: 0.5)),
       ),
       child: SafeArea(
@@ -60,6 +72,7 @@ class GatiTabBar extends StatelessWidget {
               ),
           ],
         ),
+      ),
       ),
     );
   }

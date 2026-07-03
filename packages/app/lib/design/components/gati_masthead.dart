@@ -60,9 +60,7 @@ class GatiMasthead extends StatelessWidget {
     // above the content.
     return Container(
       decoration: BoxDecoration(
-        color: p.dark
-            ? const Color(0xFF221F1A)
-            : const Color(0xFFF3EDE0),
+        color: p.dark ? GatiDark.band : Gati.band,
         border: Border(bottom: BorderSide(color: p.line, width: 0.5)),
       ),
       padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s3),

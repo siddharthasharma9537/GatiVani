@@ -231,6 +231,8 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                       currentIndex: widget.shell.currentIndex,
                       onTap: (i) => widget.shell.goBranch(i,
                           initialLocation: i == widget.shell.currentIndex),
+                      onSwipe: (dir) =>
+                          _goTab(widget.shell.currentIndex + dir),
                       items: [
                         GatiTabItem(Icons.sensors, tr(lang, 'tab_live')),
                         GatiTabItem(Icons.newspaper, tr(lang, 'tab_paper')),

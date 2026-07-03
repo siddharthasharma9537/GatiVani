@@ -65,7 +65,7 @@ class GatiWordmark extends StatelessWidget {
           Text(carrier, style: style),
           Positioned(
             left: (tp.width - macronW) / 2,
-            top: te ? -size * 0.04 : size * 0.10,
+            top: te ? -size * 0.10 : size * 0.02,
             child: SizedBox(
               width: macronW,
               child: VaniLine(

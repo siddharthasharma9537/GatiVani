@@ -16,9 +16,9 @@ class GatiSectionLabel extends StatelessWidget {
       child: Text(text,
           style: TextStyle(
               fontSize: 13,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
               letterSpacing: 0.3,
-              color: GatiPalette.of(context).muted)),
+              color: GatiPalette.of(context).ink)),
     );
   }
 }

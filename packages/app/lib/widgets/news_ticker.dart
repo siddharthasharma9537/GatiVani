@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../config/districts.dart';
 import '../design/tokens.dart';
 import '../services/news_feed_service.dart';
 import '../services/settings_provider.dart';
@@ -18,18 +19,31 @@ class _NewsTickerState extends State<NewsTicker> {
   final _feed = NewsFeedService();
   List<MarketItem> _markets = [];
   List<NewsItem> _headlines = [];
+  String? _city; // slug the current prices were fetched for
 
   @override
   void initState() {
     super.initState();
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
   }
 
-  Future<void> _load() async {
-    final marketsF = _feed.fetchMarkets();
-    final headlinesF = _feed.fetch(topic: 'top', limit: 8);
+  // Prices follow the user's district: refetch when the nearest priced
+  // city changes (district picked in the filter / menu / via Vāni).
+  void _sync() {
+    if (!mounted) return;
+    final d = districtByEn(context.read<SettingsProvider>().district);
+    final slug = d == null ? null : citySlugFor(d);
+    if (slug == _city && _markets.isNotEmpty) return;
+    _city = slug;
+    _load(slug);
+  }
+
+  Future<void> _load(String? city) async {
+    final marketsF = _feed.fetchMarkets(city: city);
+    final headlinesF =
+        _headlines.isEmpty ? _feed.fetch(topic: 'top', limit: 8) : null;
     final markets = await marketsF;
-    final headlines = await headlinesF;
+    final headlines = await headlinesF ?? _headlines;
     if (!mounted) return;
     setState(() {
       _markets = markets;
@@ -39,7 +53,9 @@ class _NewsTickerState extends State<NewsTicker> {
 
   @override
   Widget build(BuildContext context) {
-    final lang = context.watch<SettingsProvider>().lang;
+    final settings = context.watch<SettingsProvider>();
+    final lang = settings.lang;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
     final items = [
       ..._markets.map((m) => _marketString(m, lang)),
       ..._headlines.take(6).map((e) => e.title),
@@ -204,17 +220,25 @@ String _marketString(MarketItem m, String lang) {
     'sensex': ['Sensex', 'సెన్సెక్స్'],
     'gold': ['Gold', 'బంగారం'],
     'silver': ['Silver', 'వెండి'],
+    'petrol': ['Petrol', 'పెట్రోల్'],
+    'diesel': ['Diesel', 'డీజిల్'],
   };
   final l = labels[m.key];
   final label = l == null ? m.key : (lang == 'te' ? l[1] : l[0]);
-  final chg = '${m.changePct >= 0 ? '▲' : '▼'}${m.changePct.abs().toStringAsFixed(2)}%';
+  // Daily-fixed prices (city fuel/gold) carry no intraday change — no arrow.
+  final chg = m.changePct == 0
+      ? ''
+      : ' ${m.changePct >= 0 ? '▲' : '▼'}${m.changePct.abs().toStringAsFixed(2)}%';
   switch (m.key) {
     case 'gold':
-      return '$label ₹${_inr(m.value)}/10g $chg';
+      return '$label ₹${_inr(m.value)}/10g$chg';
     case 'silver':
-      return '$label ₹${_inr(m.value)}/kg $chg';
+      return '$label ₹${_inr(m.value)}/kg$chg';
+    case 'petrol':
+    case 'diesel':
+      return '$label ₹${m.value.toStringAsFixed(2)}/L$chg';
     default:
-      return '$label ${_inr(m.value, decimals: 2)} $chg';
+      return '$label ${_inr(m.value, decimals: 2)}$chg';
   }
 }
 String _inr(double v, {int decimals = 0}) {

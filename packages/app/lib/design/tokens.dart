@@ -14,6 +14,7 @@ class Gati {
   static const paper = Color(0xFFFAF7F0); // warm ivory page background
   static const muted = Color(0xFF888780); // secondary text
   static const line = Color(0xFFE7E4DB); // hairline borders on paper
+  static const band = Color(0xFFE9DFC9); // masthead + tab bar ground
 
   // ── Brand accents — Pasupu (the voice) & Kumkuma (live) ───────────────
   // Gold marks what speaks or plays; vermilion is reserved for live/breaking
@@ -140,6 +141,7 @@ class GatiDark {
   static const surface = Color(0xFF26241F); // cards / tiles on the dark bg
   static const line = Color(0xFF38342C); // hairline borders
   static const chip = Color(0xFF2E2B24); // segmented-control / chip background
+  static const band = Color(0xFF262019); // masthead + tab bar ground
   static const accentSoft = Color(0xFF3A2C08); // pasupu tint on dark surfaces
 }
 
