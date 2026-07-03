@@ -6,6 +6,12 @@ import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../services/edition_store.dart';
 import '../services/news_feed_service.dart';
+import '../design/components/gati_chip.dart';
+import '../design/components/gati_pill.dart';
+import '../design/components/gati_play_button.dart';
+import '../design/components/gati_row.dart';
+import '../design/components/gati_seek_bar.dart';
+import '../design/components/gati_states.dart';
 import '../design/components/gati_wordmark.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
@@ -397,48 +403,29 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
       SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(children: [
-          _pill(Icons.format_quote_rounded, tr(lang, 'read'),
-              () => _lyrics.forward()),
+          GatiPill(
+              icon: Icons.format_quote_rounded,
+              label: tr(lang, 'read'),
+              onTap: () => _lyrics.forward()),
           const SizedBox(width: 8),
-          _pill(Icons.shuffle_rounded, tr(lang, 'mix'), () => _mix(context, a)),
+          GatiPill(
+              icon: Icons.shuffle_rounded,
+              label: tr(lang, 'mix'),
+              onTap: () => _mix(context, a)),
           const SizedBox(width: 8),
-          _pill(Icons.bookmark_border_rounded, tr(lang, 'save'),
-              () => _snack(context, tr(lang, 'save_soon'))),
+          GatiPill(
+              icon: Icons.bookmark_border_rounded,
+              label: tr(lang, 'save'),
+              onTap: () => gatiSnack(context, tr(lang, 'save_soon'))),
           const SizedBox(width: 8),
-          _pill(Icons.download_outlined, tr(lang, 'download'),
-              () => _download(context, a),
+          GatiPill(
+              icon: Icons.download_outlined,
+              label: tr(lang, 'download'),
+              onTap: () => _download(context, a),
               busy: _downloading),
         ]),
       ),
     ]);
-  }
-
-  Widget _pill(IconData icon, String label, VoidCallback onTap,
-      {bool busy = false}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-        decoration: BoxDecoration(
-            color: Gati.inkChip,
-            borderRadius: BorderRadius.circular(22)),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          busy
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Gati.pasupu))
-              : Icon(icon, size: 16, color: Gati.onInk),
-          const SizedBox(width: 6),
-          Text(label,
-              style: const TextStyle(
-                  color: Gati.onInk,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500)),
-        ]),
-      ),
-    );
   }
 
   // Cover content sized to fill its rect (scales as one unit during the morph):
@@ -572,7 +559,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     }
     if (related.isEmpty) return;
     PlaybackService.i.addToQueue(related.take(12));
-    _snack(context, tr(lang, 'mix_added'));
+    gatiSnack(context, tr(lang, 'mix_added'));
   }
 
   Future<void> _download(BuildContext context, NewspaperArticle a) async {
@@ -582,12 +569,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     final ok = await PlaybackService.i.preload(a);
     if (!mounted) return;
     setState(() => _downloading = false);
-    _snack(context, tr(lang, ok ? 'downloaded' : 'download_failed'));
-  }
-
-  void _snack(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
+    gatiSnack(context, tr(lang, ok ? 'downloaded' : 'download_failed'));
   }
 
   // ── Queue / Mann Ki Baat archive — always visible, no more separate sheet ──
@@ -612,9 +594,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         _relatedArticlesStrip(context, p, lang),
       Expanded(
         child: q.isEmpty
-            ? Center(
-                child: Text(tr(lang, 'queue_empty'),
-                    style: const TextStyle(color: Gati.onInkMuted)))
+            ? GatiEmpty(message: tr(lang, 'queue_empty'))
             : isMkb
                 ? _mkbEpisodeList(context, p, q)
                 : _queueList(context, p, q, lang),
@@ -633,49 +613,25 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         final isCurrent = i == p.index;
         final r = sectionRamp(art.category, dark: true);
         final mins = (art.estimatedDurationSeconds / 60).ceil();
-        return InkWell(
+        return GatiRow(
           onTap: () => p.playAt(i),
-          child: Container(
-            color: isCurrent ? Gati.pasupuTint : Colors.transparent,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(children: [
-              Container(
-                width: 44,
-                height: 44,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                    color: r[0], borderRadius: BorderRadius.circular(8)),
-                child: Icon(
-                    isCurrent ? Icons.equalizer_rounded : Icons.article_rounded,
-                    color: isCurrent ? Gati.accent : Gati.onInkMuted,
-                    size: isCurrent ? 20 : 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(art.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: isCurrent ? Gati.pasupuGlow : Gati.onInk,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w500)),
-                    Text(
-                        '${sectionLabel(art.category, lang)} · $mins ${tr(lang, 'min')}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Gati.onInkMuted, fontSize: 12)),
-                  ],
-                ),
-              ),
-              const Icon(Icons.drag_handle_rounded,
-                  color: Gati.onInkTrack, size: 22),
-            ]),
+          current: isCurrent,
+          title: art.title,
+          subtitle:
+              '${sectionLabel(art.category, lang)} · $mins ${tr(lang, 'min')}',
+          leading: Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+                color: r[0], borderRadius: BorderRadius.circular(8)),
+            child: Icon(
+                isCurrent ? Icons.equalizer_rounded : Icons.article_rounded,
+                color: isCurrent ? Gati.accent : Gati.onInkMuted,
+                size: isCurrent ? 20 : 18),
           ),
+          trailing: const Icon(Icons.drag_handle_rounded,
+              color: Gati.onInkTrack, size: 22),
         );
       },
     );
@@ -736,7 +692,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   readingStyle: 'news_anchor',
                 );
                 PlaybackService.i.playNext([art]);
-                _snack(context, tr(lang, 'added_queue'));
+                gatiSnack(context, tr(lang, 'added_queue'));
               },
               child: Container(
                 width: 200,
@@ -791,22 +747,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         itemCount: years.length,
         itemBuilder: (context, i) {
           final y = years[i];
-          final selected = y == _mkbYear;
-          return GestureDetector(
-            onTap: () => setState(() => _mkbYear = y),
-            child: Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: selected ? Gati.pasupu : Gati.inkChip,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text('$y',
-                  style: TextStyle(
-                      color: selected ? Gati.inkDeep : Gati.onInkMuted,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w500)),
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GatiChip(
+              label: '$y',
+              selected: y == _mkbYear,
+              onTap: () => setState(() => _mkbYear = y),
             ),
           );
         },
@@ -837,7 +783,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
         final art = q[i];
         final isCurrent = i == p.index;
         final resolving = i == _mkbResolvingIndex;
-        return InkWell(
+        return GatiRow(
           onTap: resolving
               ? null
               : () async {
@@ -845,41 +791,25 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   await playMkbQueueEntry(i);
                   if (mounted) setState(() => _mkbResolvingIndex = null);
                 },
-          child: Container(
-            color: isCurrent ? Gati.pasupuTint : Colors.transparent,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(children: [
-              Container(
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                    color: Gati.accentSoft, shape: BoxShape.circle),
-                child: resolving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Gati.accent))
-                    : Icon(
-                        isCurrent
-                            ? Icons.equalizer_rounded
-                            : Icons.mic_rounded,
-                        color: isCurrent ? Gati.accent : Gati.accentText,
-                        size: 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(art.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: isCurrent ? Gati.pasupuGlow : Gati.onInk,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        height: 1.3)),
-              ),
-            ]),
+          current: isCurrent,
+          title: art.title,
+          titleMaxLines: 2,
+          leading: Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+                color: Gati.accentSoft, shape: BoxShape.circle),
+            child: resolving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Gati.accent))
+                : Icon(
+                    isCurrent ? Icons.equalizer_rounded : Icons.mic_rounded,
+                    color: isCurrent ? Gati.accent : Gati.accentText,
+                    size: 18),
           ),
         );
       },
@@ -977,22 +907,11 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Column(children: [
-        SliderTheme(
-          data: SliderThemeData(
-            trackHeight: 3,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            activeTrackColor: Gati.pasupu,
-            inactiveTrackColor: Gati.onInkTrack,
-            thumbColor: Gati.pasupu,
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-          ),
-          child: Slider(
-            value: dur.inMilliseconds == 0
-                ? 0
-                : pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble(),
-            max: dur.inMilliseconds == 0 ? 1 : dur.inMilliseconds.toDouble(),
-            onChanged: (v) => p.seek(Duration(milliseconds: v.round())),
-          ),
+        GatiSeekBar(
+          position: pos,
+          duration: dur,
+          playing: p.isPlaying,
+          onSeek: p.seek,
         ),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(fmt(pos), style: const TextStyle(color: Gati.onInkPast, fontSize: 11)),
@@ -1010,19 +929,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
             const SizedBox(width: 4),
             _seekBtn(p, -15),
             const SizedBox(width: 8),
-            Container(
-              width: 64,
-              height: 64,
-              decoration: const BoxDecoration(color: Gati.pasupu, shape: BoxShape.circle),
-              child: IconButton(
-                icon: p.loading
-                    ? const Padding(
-                        padding: EdgeInsets.all(18),
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Gati.inkDeep))
-                    : Icon(p.isPlaying ? Icons.pause : Icons.play_arrow,
-                        color: Gati.inkDeep, size: 32),
-                onPressed: p.toggle,
-              ),
+            GatiPlayButton(
+              onTap: p.toggle,
+              playing: p.isPlaying,
+              loading: p.loading,
             ),
             const SizedBox(width: 8),
             _seekBtn(p, 15),

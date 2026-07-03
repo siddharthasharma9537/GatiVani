@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../design/components/gati_play_button.dart';
+import '../design/components/gati_states.dart';
+import '../design/components/gati_tile.dart';
 import '../design/components/gati_wordmark.dart';
 import '../design/tokens.dart';
 import '../design/section_colors.dart';
@@ -541,7 +544,7 @@ class _TakeCard extends StatelessWidget {
                           color: kAccent)),
                 ),
                 const Spacer(),
-                const Icon(Icons.play_circle_fill, color: kAccent, size: 30),
+                GatiPlayButton(onTap: onListen, size: 30),
               ]),
               const SizedBox(height: Gati.s3),
               Text(take.title,
@@ -708,48 +711,14 @@ class _PodcastsGrid extends StatelessWidget {
         childAspectRatio: 1.55,
         children: tiles.map((it) {
           final ep = episodes[it.key];
-          final r = sectionRamp(it.section, dark: dark);
-          return GestureDetector(
+          return GatiTile(
+            title: it.title,
+            meta: ep != null ? _episodeMeta(ep, lang) : it.meta,
+            ramp: sectionRamp(it.section, dark: dark),
             onTap: ep != null
                 ? () => onPlay(ep)
                 // No verified real audio source for this show yet.
-                : () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Podcasts coming soon'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    ),
-            child: Container(
-              padding: const EdgeInsets.all(Gati.s4),
-              decoration: BoxDecoration(
-                  color: r[0], borderRadius: BorderRadius.circular(Gati.rCard)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.graphic_eq, color: r[1], size: 22),
-                  const Spacer(),
-                  Text(it.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w500,
-                          color: r[1])),
-                  const SizedBox(height: 2),
-                  Row(children: [
-                    Icon(Icons.play_arrow, size: 14, color: r[2]),
-                    const SizedBox(width: 2),
-                    Expanded(
-                      child: Text(
-                          ep != null ? _episodeMeta(ep, lang) : it.meta,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12, color: r[2])),
-                    ),
-                  ]),
-                ],
-              ),
-            ),
+                : () => gatiSnack(context, 'Podcasts coming soon'),
           );
         }).toList(),
       ),

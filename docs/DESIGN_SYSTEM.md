@@ -362,7 +362,7 @@ Mockup/style tile reviewed in chat; open decisions (§13) resolved with Siddhart
 - Mount masthead on Live + Paper headers.
 - **Accept:** wordmark animates only while audio plays; icon/favicon visible in browser tab; splash shows on cold load; reduced-motion freezes the wave.
 
-### Phase 3 — Core component kit (L)
+### Phase 3 — Core component kit (L) ✅ (2026-07-03 — GatiSheet deferred to Phase 4/5 where sheets get restyled; GatiSkeleton to Phase 6 with the states pass)
 - Build §10 components; migrate **player + Live screen** onto them (pills, chips, tiles, rows, seek bar → `VaniLine.seek`).
 - **Accept:** player & Live import only `design/` components/tokens; 4-way check (EN/TE × light/dark) screenshots on :8082; year-chip archive & queue behave exactly as today.
 
