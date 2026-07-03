@@ -62,6 +62,12 @@ class GatiMasthead extends StatelessWidget {
       decoration: BoxDecoration(
         color: p.dark ? GatiDark.band : Gati.band,
         border: Border(bottom: BorderSide(color: p.line, width: 0.5)),
+        boxShadow: [
+          BoxShadow(
+              color: const Color(0x14000000),
+              blurRadius: 6,
+              offset: const Offset(0, 2)),
+        ],
       ),
       padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s3, Gati.s4, Gati.s3),
       child: Row(children: [

@@ -109,24 +109,29 @@ class _SectionSnapPhysics extends ScrollPhysics {
 
     final px = position.pixels;
     double target;
-    if (velocity > 160) {
-      // Flinging down the page → stop at the NEXT section header.
+    // ANY directional motion advances to the next header — a higher
+    // threshold made gentle flings snap BACK to the previous section
+    // (a jittery tug-of-war around the middle of a section).
+    if (velocity > 60) {
       target = offs.firstWhere((o) => o > px + 4,
           orElse: () => position.maxScrollExtent);
-    } else if (velocity < -160) {
+    } else if (velocity < -60) {
       target = offs.lastWhere((o) => o < px - 4,
           orElse: () => position.minScrollExtent);
     } else {
-      // Slow release → settle on the nearest header (if reasonably close).
+      // Still release → settle on the nearest header.
       target = offs.reduce(
           (a, b) => (a - px).abs() <= (b - px).abs() ? a : b);
-      if ((target - px).abs() > position.viewportDimension * 0.55) {
+      if ((target - px).abs() > position.viewportDimension * 0.9) {
         return super.createBallisticSimulation(position, velocity);
       }
     }
     if ((target - px).abs() < 1) return null;
+    // Critically damped: glides to the header and stops — no overshoot,
+    // no wobble.
     return ScrollSpringSimulation(
-      SpringDescription.withDampingRatio(mass: 0.6, stiffness: 120, ratio: 1.1),
+      SpringDescription.withDampingRatio(
+          mass: 0.5, stiffness: 180, ratio: 1.0),
       px,
       target,
       velocity,

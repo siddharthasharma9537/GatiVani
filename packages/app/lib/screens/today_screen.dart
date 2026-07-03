@@ -561,7 +561,7 @@ class _TodayScreenState extends State<TodayScreen> {
       floatingActionButton: showHero
           ? null
           : Padding(
-              padding: const EdgeInsets.only(bottom: 92),
+              padding: const EdgeInsets.only(bottom: 52),
               child: FloatingActionButton.small(
                 heroTag: 'paper_upload',
                 backgroundColor: kAccent,
@@ -591,7 +591,7 @@ class _TodayScreenState extends State<TodayScreen> {
             Expanded(
               child: LayoutBuilder(
                 builder: (context, cons) => GatiSnapScroll(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  padding: const EdgeInsets.fromLTRB(16, Gati.s4, 16, 8),
                   sections: [
                     EditionMasthead(
                       rawTitle: _editionTitle,

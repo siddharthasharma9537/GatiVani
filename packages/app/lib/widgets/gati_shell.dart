@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import '../config/districts.dart';
 import '../design/components/gati_states.dart';
 import '../design/components/gati_tab_bar.dart';
-import '../design/components/vani_line.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../screens/history_screen.dart';
@@ -364,6 +363,10 @@ class _VaniFabState extends State<_VaniFab> {
 
   void _startListening() {
     if (_listening || _thinking) return;
+    if (!speech.speechAvailable) {
+      gatiSnack(context, 'Voice input is not supported in this browser.');
+      return;
+    }
     final lang = context.read<SettingsProvider>().lang;
     setState(() => _listening = true);
     speech.startSpeech(
@@ -377,7 +380,10 @@ class _VaniFabState extends State<_VaniFab> {
     );
   }
 
-  void _stopListening() => speech.stopSpeech();
+  void _stopListening() {
+    speech.stopSpeech();
+    if (mounted && _listening) setState(() => _listening = false);
+  }
 
   Future<void> _handleVoice(String q) async {
     final s = context.read<SettingsProvider>();
@@ -444,53 +450,29 @@ class _VaniFabState extends State<_VaniFab> {
 
   @override
   Widget build(BuildContext context) {
-    final p = GatiPalette.of(context);
+    // A regular small FAB with a mic — same size and alignment as the
+    // Paper tab's "+" upload button. Tap → the chat sheet; hold → talk.
     return GestureDetector(
-      onTap: () => AssistantSheet.open(context, '', 'GatiVani',
-          articleText: _contentIndex(), general: true),
       onLongPressStart: (_) => _startListening(),
       onLongPressEnd: (_) => _stopListening(),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 52,
-          height: 52,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: _listening ? Gati.kumkuma : Gati.inkDeep,
-            shape: BoxShape.circle,
-            boxShadow: Gati.shadow,
-          ),
-          child: _thinking
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Gati.pasupu))
-              : _listening
-                  ? const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: VaniLine(
-                          mode: VaniLineMode.wave,
-                          color: Gati.onInk,
-                          strokeWidth: 2.5,
-                          height: 24),
-                    )
-                  : const Icon(Icons.graphic_eq,
-                      color: Gati.pasupu, size: 24),
-        ),
-        const SizedBox(height: 3),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-          decoration: BoxDecoration(
-              color: p.paper.withValues(alpha: 0.9),
-              borderRadius: BorderRadius.circular(8)),
-          child: Text(_listening ? '…' : 'Vāni',
-              style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w500,
-                  color: p.ink)),
-        ),
-      ]),
+      onLongPressCancel: _stopListening,
+      child: FloatingActionButton.small(
+        heroTag: 'vani_fab',
+        backgroundColor: _listening ? Gati.kumkuma : Gati.inkDeep,
+        foregroundColor: _listening ? Colors.white : Gati.pasupu,
+        elevation: 2,
+        tooltip: 'Vāni',
+        onPressed: () => AssistantSheet.open(context, '', 'GatiVani',
+            articleText: _contentIndex(), general: true),
+        child: _thinking
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Gati.pasupu))
+            : Icon(_listening ? Icons.mic : Icons.mic_none_rounded,
+                size: 20),
+      ),
     );
   }
 }
