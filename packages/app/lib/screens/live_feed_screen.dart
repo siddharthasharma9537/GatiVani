@@ -622,21 +622,8 @@ class _StoryRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Builder(
-                  builder: (btnCtx) => GestureDetector(
-                    onTap: () {
-                      final box =
-                          btnCtx.findRenderObject()! as RenderBox;
-                      onMore(box
-                          .localToGlobal(box.size.center(Offset.zero)));
-                    },
-                    behavior: HitTestBehavior.opaque,
-                    child: Padding(
-                      padding: const EdgeInsets.all(6),
-                      child: Icon(Icons.more_horiz, color: r[2], size: 20),
-                    ),
-                  ),
-                ),
+                // One button, like the Paper cards: ▶ plays; the actions
+                // menu is on long-press.
                 GestureDetector(
                   onTap: onPlay,
                   child: Container(
