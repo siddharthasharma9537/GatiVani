@@ -12,7 +12,7 @@ import '../l10n/strings.dart';
 import '../services/document_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
-import '../widgets/mini_player.dart';
+import '../widgets/gati_puck.dart';
 
 /// Listening history (menu → History): everything played, newest first,
 /// with progress — tap to resume where it left off.
@@ -25,7 +25,8 @@ class HistoryScreen extends StatelessWidget {
     final lang = context.watch<SettingsProvider>().lang;
     return Scaffold(
       backgroundColor: p.paper,
-      body: SafeArea(
+      body: Stack(children: [
+        SafeArea(
         bottom: false,
         child: Column(children: [
           Padding(
@@ -44,9 +45,10 @@ class HistoryScreen extends StatelessWidget {
             ]),
           ),
           const Expanded(child: HistoryBody()),
-          MiniPlayer(onExpand: () => context.push('/player')),
         ]),
-      ),
+        ),
+        const GatiPuck(),
+      ]),
     );
   }
 }

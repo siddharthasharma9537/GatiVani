@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -18,7 +19,7 @@ import '../services/settings_provider.dart';
 import '../services/speech_stub.dart'
     if (dart.library.html) '../services/speech_web.dart' as speech;
 import 'assistant_sheet.dart';
-import 'mini_player.dart';
+import 'gati_puck.dart';
 
 /// Lets any screen inside the shell open the menu drawer (header buttons).
 class GatiShellScope extends InheritedWidget {
@@ -55,6 +56,10 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   // Quick directional slide-in when the active tab changes.
   late final AnimationController _tabAnim = AnimationController(
       vsync: this, duration: GatiMotion.madhyama, value: 1);
+  // Tab bar auto-hide: slides away while reading forward, returns on any
+  // upward scroll / at the top / on tab change.
+  late final AnimationController _bar = AnimationController(
+      vsync: this, duration: GatiMotion.madhyama, value: 1);
   double _openX = 1; // revealed width in px (set in build)
   int _prevIndex = 0;
   double _tabDir = 1;
@@ -66,7 +71,22 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
     _menu.dispose();
     _recent.dispose();
     _tabAnim.dispose();
+    _bar.dispose();
     super.dispose();
+  }
+
+  bool _onScroll(ScrollNotification n) {
+    if (n.metrics.axis != Axis.vertical) return false;
+    if (n is UserScrollNotification) {
+      if (n.direction == ScrollDirection.reverse) {
+        _bar.reverse();
+      } else if (n.direction == ScrollDirection.forward) {
+        _bar.forward();
+      }
+    } else if (n is ScrollUpdateNotification && n.metrics.pixels <= 0) {
+      _bar.forward();
+    }
+    return false;
   }
 
   void _openMenu() {
@@ -86,6 +106,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
 
   void _goTab(int i) {
     if (i < 0 || i > 2 || i == widget.shell.currentIndex) return;
+    _bar.forward();
     widget.shell.goBranch(i, initialLocation: false);
   }
 
@@ -212,21 +233,31 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                 onHorizontalDragEnd: _hDragEnd,
                 child: Scaffold(
                 backgroundColor: p.paper,
-                body: AnimatedBuilder(
-                    animation: _tabAnim,
-                    builder: (context, child) => Transform.translate(
-                      offset: Offset(_tabDir * 36 * (1 - _tabAnim.value), 0),
-                      child: Opacity(
-                          opacity: 0.5 + 0.5 * _tabAnim.value, child: child),
+                body: Stack(children: [
+                  NotificationListener<ScrollNotification>(
+                    onNotification: _onScroll,
+                    child: AnimatedBuilder(
+                      animation: _tabAnim,
+                      builder: (context, child) => Transform.translate(
+                        offset:
+                            Offset(_tabDir * 36 * (1 - _tabAnim.value), 0),
+                        child: Opacity(
+                            opacity: 0.5 + 0.5 * _tabAnim.value,
+                            child: child),
+                      ),
+                      child: widget.shell,
                     ),
-                    child: widget.shell,
-                ),
+                  ),
+                  const GatiPuck(),
+                ]),
                 floatingActionButton: const _VaniFab(),
                 bottomNavigationBar: SafeArea(
                   top: false,
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    MiniPlayer(onExpand: () => context.push('/player')),
-                    GatiTabBar(
+                  child: SizeTransition(
+                    sizeFactor:
+                        CurvedAnimation(parent: _bar, curve: Curves.easeOut),
+                    axisAlignment: -1,
+                    child: GatiTabBar(
                       currentIndex: widget.shell.currentIndex,
                       onTap: (i) => widget.shell.goBranch(i,
                           initialLocation: i == widget.shell.currentIndex),
@@ -238,7 +269,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                         GatiTabItem(Icons.mic_rounded, tr(lang, 'tab_shows')),
                       ],
                     ),
-                  ]),
+                  ),
                 ),
               ),
               ),

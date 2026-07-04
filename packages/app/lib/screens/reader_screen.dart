@@ -7,7 +7,7 @@ import '../models/newspaper_article.dart';
 import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
-import '../widgets/mini_player.dart';
+import '../widgets/gati_puck.dart';
 
 /// In-app full-story reader for a web article (from feeds-articles). Renders the
 /// title + full Telugu body already carried in the feed, and a Listen button
@@ -50,7 +50,8 @@ class ReaderScreen extends StatelessWidget {
     final age = relativeAge(a.pubDate, lang);
     return Scaffold(
       backgroundColor: p.paper,
-      body: SafeArea(
+      body: Stack(children: [
+        SafeArea(
         bottom: false,
         child: Column(children: [
           // Top bar: back + source.
@@ -108,9 +109,10 @@ class ReaderScreen extends StatelessWidget {
               ],
             ),
           ),
-          MiniPlayer(onExpand: () => context.push('/player')),
         ]),
-      ),
+        ),
+        const GatiPuck(),
+      ]),
     );
   }
 }

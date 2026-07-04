@@ -8,7 +8,7 @@ import '../services/edition_store.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/article_card.dart';
-import '../widgets/mini_player.dart';
+import '../widgets/gati_puck.dart';
 
 /// Search across the loaded edition's articles (title + body), client-side so
 /// it's instant. Tap a result's text → full player; tap ▶ → mini-player.
@@ -78,7 +78,8 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
         ],
       ),
-      body: SafeArea(
+      body: Stack(children: [
+        SafeArea(
         top: false,
         child: Column(children: [
           Expanded(
@@ -105,9 +106,10 @@ class _SearchScreenState extends State<SearchScreen> {
                         ],
                       ),
           ),
-          MiniPlayer(onExpand: () => context.push('/player')),
         ]),
-      ),
+        ),
+        const GatiPuck(),
+      ]),
     );
   }
 
