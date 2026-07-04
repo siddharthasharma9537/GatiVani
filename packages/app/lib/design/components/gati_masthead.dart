@@ -85,7 +85,10 @@ class GatiMasthead extends StatelessWidget {
         const SizedBox(width: Gati.s3),
         Expanded(
           // Sized so wordmark + dateline together stay INSIDE the 40px
-          // header buttons' vertical extent (≈35px total, centered).
+          // header buttons' vertical extent (≈35px total), nudged a few
+          // px down so it sits optically level with the buttons.
+          child: Padding(
+          padding: const EdgeInsets.only(top: 4),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -98,6 +101,7 @@ class GatiMasthead extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                       color: p.muted)),
             ],
+          ),
           ),
         ),
         for (final a in actions) ...[const SizedBox(width: Gati.s2), a],
