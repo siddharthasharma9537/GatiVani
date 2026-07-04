@@ -84,14 +84,17 @@ class GatiMasthead extends StatelessWidget {
         ),
         const SizedBox(width: Gati.s3),
         Expanded(
+          // Sized so wordmark + dateline together stay INSIDE the 40px
+          // header buttons' vertical extent (≈35px total, centered).
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GatiWordmark(size: 22, color: p.ink, lang: lang),
+              GatiWordmark(size: 19, color: p.ink, lang: lang),
               Text(dateline,
                   style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 11.5,
+                      height: 1.15,
                       fontWeight: FontWeight.w500,
                       color: p.muted)),
             ],
