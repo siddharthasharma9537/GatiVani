@@ -844,6 +844,7 @@ Deno.serve(async (req) => {
 
     // ── Stage 1: Sarvam OCR ────────────────────────────────────────────────
     let extractedText = "";
+    let ocrError: string | null = null;
     const tempPath = `/tmp/sarvam_${ts}_${safeName}`;
     let rawOcrHtml = "";   // raw HTML from Sarvam (outputFormat:"html"), used for column-aware parsing
     try {
@@ -873,9 +874,20 @@ Deno.serve(async (req) => {
           : rawOcrHtml;
       }
     } catch (e) {
-      console.error("[stage1] OCR failed:", (e as Error).message);
+      // A thrown OCR error (bad/rotated key, timeout, network failure) is not
+      // the same thing as a legitimately blank page — surface it below
+      // instead of silently masquerading as a successful scan.
+      ocrError = (e as Error).message;
+      console.error("[stage1] OCR failed:", ocrError);
     } finally {
       try { await Deno.remove(tempPath); } catch { /* ignore */ }
+    }
+
+    if (ocrError) {
+      return json({
+        error: "ocr_failed",
+        message: `Scanning failed: ${ocrError}. Please try again.`,
+      }, 502);
     }
 
     if (!extractedText || extractedText.length < 10) {
