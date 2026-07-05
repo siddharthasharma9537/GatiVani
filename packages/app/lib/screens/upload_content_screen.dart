@@ -19,12 +19,22 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
   late final DocumentService _uploadService;
   final ImagePicker _picker = ImagePicker();
   bool _isProcessing = false;
-  String _processingStep = '';
+  // Drives the processing dialog independently of this screen's own
+  // setState/rebuild cycle — showDialog's builder runs once when the route
+  // is pushed, so a StatelessWidget built from a plain field never updates
+  // again once shown. A ValueNotifier lets the dialog rebuild itself instead.
+  final ValueNotifier<String> _stepNotifier = ValueNotifier<String>('uploading');
 
   @override
   void initState() {
     super.initState();
     _uploadService = DocumentService();
+  }
+
+  @override
+  void dispose() {
+    _stepNotifier.dispose();
+    super.dispose();
   }
 
   Future<bool> _requestPermission(Permission permission) async {
@@ -36,14 +46,12 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
   // Shared processing entry point — called by all three upload sources
   Future<void> _processBytes(Uint8List bytes, String filename, String source) async {
     try {
-      setState(() {
-        _isProcessing = true;
-        _processingStep = 'uploading';
-      });
+      setState(() => _isProcessing = true);
+      _stepNotifier.value = 'uploading';
       _showProcessingDialog();
 
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) setState(() => _processingStep = 'extracting');
+      _stepNotifier.value = 'extracting';
 
       final newspaper = await _uploadService.processNewspaper(
         filePath: '',
@@ -53,7 +61,7 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       );
 
       if (mounted) {
-        setState(() => _processingStep = 'complete');
+        _stepNotifier.value = 'complete';
         await Future.delayed(const Duration(milliseconds: 400));
         Navigator.pop(context); // dismiss dialog
         Navigator.push(
@@ -68,16 +76,11 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
       }
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context); // dismiss dialog — surface the real failure
         _showError('Processing failed: $e');
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-          _processingStep = '';
-        });
-      }
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
@@ -144,7 +147,10 @@ class _UploadContentScreenState extends State<UploadContentScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => _ProcessingDialog(step: _processingStep),
+      builder: (ctx) => ValueListenableBuilder<String>(
+        valueListenable: _stepNotifier,
+        builder: (_, step, __) => _ProcessingDialog(step: step),
+      ),
     );
   }
 
