@@ -136,6 +136,7 @@ class DocumentService {
       jobId: data['jobId'] as String,
       newspaperId: data['newspaperId'] as String,
       totalPages: data['totalPages'] as int,
+      pubDate: data['pubDate'] as String?,
     );
   }
 
@@ -184,11 +185,11 @@ class DocumentService {
   /// Edition to open the app onto: the most recently processed one with
   /// articles, falling back to the pinned featured/demo edition. This makes a
   /// fresh upload become the home edition automatically.
-  Future<({String title, String id, List<NewspaperArticle> articles})?>
+  Future<({String title, String id, String? pubDate, List<NewspaperArticle> articles})?>
       fetchFeaturedEdition() async {
     final r = await http.get(
       Uri.parse('${ApiConfig.restUrl}/newspapers'
-          '?select=id,title,featured&order=created_at.desc&limit=6'),
+          '?select=id,title,publication_date,featured&order=created_at.desc&limit=6'),
       headers: ApiConfig.authHeaders,
     );
     final rows = (json.decode(r.body) as List<dynamic>).cast<Map<String, dynamic>>();
@@ -197,7 +198,12 @@ class DocumentService {
     for (final n in rows) {
       final arts = await fetchEditionArticles(n['id'] as String);
       if (arts.isNotEmpty) {
-        return (title: n['title'] as String, id: n['id'] as String, articles: arts);
+        return (
+          title: n['title'] as String,
+          id: n['id'] as String,
+          pubDate: n['publication_date'] as String?,
+          articles: arts,
+        );
       }
     }
     return null;
@@ -381,7 +387,13 @@ class EditionJob {
   final String jobId;
   final String newspaperId;
   final int totalPages;
-  EditionJob({required this.jobId, required this.newspaperId, required this.totalPages});
+  final String? pubDate;
+  EditionJob({
+    required this.jobId,
+    required this.newspaperId,
+    required this.totalPages,
+    this.pubDate,
+  });
 }
 
 class EditionJobStatus {

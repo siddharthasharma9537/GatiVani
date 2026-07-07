@@ -39,6 +39,8 @@ class _TodayScreenState extends State<TodayScreen> {
   final _svc = DocumentService();
   List<NewspaperArticle> _articles = [];
   String _editionTitle = '';
+  String? _pubDate; // ISO date (YYYY-MM-DD) of the current edition, if known
+  int _loadGen = 0; // invalidates an in-flight _loadFeatured() after _upload()
   String? _category;
   int? _pageSel;
   String _view = 'list'; // 'tiles' | 'list' — list is the default browse view
@@ -65,12 +67,15 @@ class _TodayScreenState extends State<TodayScreen> {
   // Open onto real content: load the featured/most-recent edition so the app is
   // never an empty screen. Skipped once the user starts their own upload.
   Future<void> _loadFeatured() async {
+    final gen = _loadGen;
     final ed = await _svc.fetchFeaturedEdition();
-    if (ed == null || !mounted || _job != null || _articles.isNotEmpty) return;
+    if (ed == null || !mounted || gen != _loadGen) return;
+    if (_job != null || _articles.isNotEmpty) return;
     EditionStore.i.articles = ed.articles;
     setState(() {
       _articles = ed.articles;
       _editionTitle = ed.title;
+      _pubDate = ed.pubDate;
       _featuredLoaded = true;
     });
   }
@@ -88,11 +93,14 @@ class _TodayScreenState extends State<TodayScreen> {
         withData: true);
     if (picked == null || picked.files.isEmpty) return;
     final f = picked.files.first;
+    _loadGen++; // a late _loadFeatured() response must not stomp this upload
+    _poll?.cancel();
     setState(() {
       _error = null;
       _uploading = true;
       _uploadProgress = 0;
       _editionTitle = f.name.replaceAll(RegExp(r'\.(pdf|jpe?g|png)$'), '');
+      _pubDate = null;
       _articles = [];
       _job = null;
       _jobStatus = null;
@@ -107,6 +115,7 @@ class _TodayScreenState extends State<TodayScreen> {
           });
       setState(() {
         _job = job;
+        _pubDate = job.pubDate;
         _uploading = false;
       });
       _poll = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
@@ -598,6 +607,8 @@ class _TodayScreenState extends State<TodayScreen> {
                       articleCount: _articles.length,
                       pageCount: pages.length,
                       onListen: _playBriefing,
+                      editionDate:
+                          _pubDate != null ? DateTime.tryParse(_pubDate!) : null,
                     ),
                     _frontPageBand(p, lang),
                     SizedBox(

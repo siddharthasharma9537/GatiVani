@@ -19,6 +19,7 @@ class EditionMasthead extends StatelessWidget {
     required this.onListen,
     this.contentLang = 'te',
     this.fallbackDate,
+    this.editionDate,
   });
 
   final String rawTitle;
@@ -27,6 +28,9 @@ class EditionMasthead extends StatelessWidget {
   final VoidCallback onListen;
   final String contentLang;
   final DateTime? fallbackDate;
+  // The edition's real publication date (from the backend, grounded in the
+  // page's printed date) — takes priority over anything parsed from the title.
+  final DateTime? editionDate;
 
   static const _ink = Color(0xFF2C2C2A);
   static const _light = Color(0xFFF7F2EA);
@@ -37,7 +41,7 @@ class EditionMasthead extends StatelessWidget {
   Widget build(BuildContext context) {
     final lang = context.watch<SettingsProvider>().lang;
     final meta = EditionMeta.parse(rawTitle);
-    final date = meta.date ?? fallbackDate;
+    final date = editionDate ?? meta.date ?? fallbackDate;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
@@ -64,7 +68,7 @@ class EditionMasthead extends StatelessWidget {
                       color: Color(0xFF5F5E5A), shape: BoxShape.circle)),
               const SizedBox(width: 8),
             ],
-            Text(tr(lang, 'todays_edition'),
+            Text(_editionLabel(date, lang),
                 style:
                     const TextStyle(fontSize: 11.5, color: Gati.onInkMuted)),
             const Spacer(),
@@ -139,6 +143,20 @@ class EditionMasthead extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  // Today's/Yesterday's/Previous edition, judged against the real calendar
+  // date — not just "whatever was uploaded most recently".
+  String _editionLabel(DateTime? date, String lang) {
+    if (date == null) return tr(lang, 'todays_edition');
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(date.year, date.month, date.day);
+    if (d == today) return tr(lang, 'todays_edition');
+    if (d == today.subtract(const Duration(days: 1))) {
+      return tr(lang, 'yesterdays_edition');
+    }
+    return tr(lang, 'previous_edition');
   }
 
   Widget _stat(String value, String label) => Column(

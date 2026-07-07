@@ -128,6 +128,68 @@ function parseDateFromFilename(name: string): string {
   return `${y}-${mo}-${d}`;
 }
 
+// Indian newspapers print by IST calendar day, but the edge runtime's wall
+// clock is UTC — a plain toISOString() split would misdate anything uploaded
+// 00:00-05:30 IST as the previous day. IST is a fixed UTC+5:30, no DST.
+function todayIST(): string {
+  return new Date(Date.now() + 5.5 * 3600_000).toISOString().split("T")[0];
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+// The date actually printed on the page (masthead/dateline) is the ground
+// truth for "which edition is this" — most uploads (camera photos) have no
+// dated filename, and would otherwise all collide on today's date. Cheap
+// flash-lite vision call; failures are non-fatal (caller falls back to the
+// filename, then today).
+async function detectPrintedDate(pageBytes: Uint8Array, geminiKey: string): Promise<string> {
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`;
+    const prompt = 'If a publication/issue date is printed on this newspaper page ' +
+      '(masthead or dateline), return it as YYYY-MM-DD. Otherwise return "". ' +
+      'Return ONLY JSON: {"publicationDate":""}';
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          role: "user",
+          parts: [
+            { inline_data: { mime_type: "application/pdf", data: bytesToBase64(pageBytes) } },
+            { text: prompt },
+          ],
+        }],
+        generationConfig: {
+          maxOutputTokens: 256,
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!resp.ok) {
+      await resp.body?.cancel();
+      return "";
+    }
+    const data = await resp.json() as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const text = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+    const m = text.match(/"publicationDate"\s*:\s*"(\d{4}-\d{2}-\d{2})"/);
+    return m ? m[1] : "";
+  } catch (e) {
+    console.warn("[edition] printed-date detection failed:", (e as Error).message);
+    return "";
+  }
+}
+
 function estimateDurationSeconds(text: string): number {
   return Math.max(15, Math.round((text.length / 700) * 60));
 }
@@ -444,7 +506,14 @@ async function runStart(
     const totalPages = Math.min(pdf.getPageCount(), MAX_PAGES);
     if (totalPages === 0) return json({ error: "empty_pdf" }, 400);
 
-    const pubDate = parseDateFromFilename(originalName) || new Date().toISOString().split("T")[0];
+    // Ground the edition's date in what's actually printed on page 1, so a
+    // fresh scan of yesterday's paper doesn't get mislabeled/merged as today.
+    const single = await PDFDocument.create();
+    const [pg] = await single.copyPages(pdf, [0]);
+    single.addPage(pg);
+    const printedDate = await detectPrintedDate(
+      await single.save(), Deno.env.get("GEMINI_API_KEY")!);
+    const pubDate = printedDate || parseDateFromFilename(originalName) || todayIST();
     const title = originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 
     let newspaperId: string;
@@ -476,7 +545,7 @@ async function runStart(
     const jobId = jobRow.id as string;
 
     fireContinuation(jobId, 1);
-    return json({ ok: true, jobId, newspaperId, totalPages });
+    return json({ ok: true, jobId, newspaperId, totalPages, pubDate });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[documents-process-edition]", err);
