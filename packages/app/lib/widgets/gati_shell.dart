@@ -266,7 +266,8 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                       items: [
                         GatiTabItem(Icons.sensors, tr(lang, 'tab_live')),
                         GatiTabItem(Icons.newspaper, tr(lang, 'tab_paper')),
-                        GatiTabItem(Icons.mic_rounded, tr(lang, 'tab_shows')),
+                        GatiTabItem(
+                            Icons.headphones_rounded, tr(lang, 'tab_shows')),
                       ],
                     ),
                   ),

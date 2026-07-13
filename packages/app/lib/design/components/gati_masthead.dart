@@ -87,6 +87,11 @@ class GatiMasthead extends StatelessWidget {
           // Sized so wordmark + dateline together stay INSIDE the 40px
           // header buttons' vertical extent (≈35px total), nudged a few
           // px down so it sits optically level with the buttons.
+          // Tapping the brand goes home (Live) — the universal masthead
+          // convention.
+          child: GestureDetector(
+          onTap: () => context.go('/'),
+          behavior: HitTestBehavior.opaque,
           child: Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Column(
@@ -101,6 +106,7 @@ class GatiMasthead extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                       color: p.muted)),
             ],
+          ),
           ),
           ),
         ),
