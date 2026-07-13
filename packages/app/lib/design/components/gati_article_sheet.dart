@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../l10n/strings.dart';
 import '../../models/newspaper_article.dart';
 import '../../services/document_service.dart';
+import '../../services/downloads_store.dart';
 import '../../services/playback_service.dart';
 import '../../services/settings_provider.dart';
 import '../../widgets/assistant_sheet.dart';
@@ -103,11 +104,13 @@ Future<void> _summarize(
   }
 }
 
-// Download = pre-generate the full audio so it's cached and instant later.
+// Download = pre-generate the full audio, then keep it: the article + audio
+// land in DownloadsStore so Menu → Downloads can list and replay them.
 Future<void> _download(
     BuildContext context, NewspaperArticle a, String lang) async {
   gatiSnack(context, tr(lang, 'downloading'));
   final ok = await PlaybackService.i.preload(a);
+  if (ok) await DownloadsStore.i.add(a);
   if (context.mounted) {
     gatiSnack(context, tr(lang, ok ? 'downloaded' : 'download_failed'));
   }

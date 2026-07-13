@@ -7,6 +7,7 @@ import '../design/components/gati_district_sheet.dart';
 import '../design/components/gati_wordmark.dart';
 import '../design/components/gemini_key_sheet.dart';
 import '../l10n/strings.dart';
+import '../services/alerts_service.dart';
 import '../services/auth_service.dart';
 import '../services/gemini_key_store.dart';
 import '../services/settings_provider.dart';
@@ -68,6 +69,11 @@ class MenuBody extends StatelessWidget {
                       ? districtByEn(s.district)!.te
                       : districtByEn(s.district)!.en),
               () => showGatiDistrictSheet(context)),
+          Divider(height: 1, color: p.line),
+          _alertsRow(context, p, lang),
+          Divider(height: 1, color: p.line),
+          _navRow(p, Icons.download_done_rounded, tr(lang, 'downloads'), null,
+              () => context.push('/downloads')),
           Divider(height: 1, color: p.line),
           _navRow(p, Icons.history_rounded, tr(lang, 'history'), null,
               () => context.push('/history')),
@@ -279,6 +285,48 @@ class MenuBody extends StatelessWidget {
 
   void _openAuth(BuildContext context, {required bool signUp}) {
     context.push('/auth', extra: signUp);
+  }
+
+  // Alerts row with an unread dot — new items since the screen was last
+  // opened light it up. AlertsService refreshes lazily in the background.
+  Widget _alertsRow(BuildContext context, GatiPalette p, String lang) {
+    AlertsService.i.refreshIfStale(context.read<SettingsProvider>());
+    return ListenableBuilder(
+      listenable: AlertsService.i,
+      builder: (context, _) => InkWell(
+        onTap: () => context.push('/alerts'),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(children: [
+            Icon(Icons.notifications_none_rounded, size: 20, color: p.muted),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tr(lang, 'alerts'),
+                      style: TextStyle(fontSize: 14.5, color: p.ink)),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(tr(lang, 'alerts_sub'),
+                        style: TextStyle(fontSize: 12, color: p.muted)),
+                  ),
+                ],
+              ),
+            ),
+            if (AlertsService.i.unread > 0)
+              Container(
+                width: 8,
+                height: 8,
+                margin: const EdgeInsets.only(right: 8),
+                decoration: const BoxDecoration(
+                    color: kAccent, shape: BoxShape.circle),
+              ),
+            Icon(Icons.chevron_right, size: 18, color: p.muted),
+          ]),
+        ),
+      ),
+    );
   }
 
   Widget _navRow(GatiPalette p, IconData icon, String label,

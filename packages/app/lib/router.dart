@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'screens/alerts_screen.dart';
+import 'screens/downloads_screen.dart';
+import 'screens/for_you_screen.dart';
 import 'screens/gemini_key_gate_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/live_feed_screen.dart';
@@ -71,6 +74,9 @@ final GoRouter appRouter = GoRouter(
         StatefulShellBranch(routes: [
           GoRoute(path: '/shows', builder: (_, __) => const ShowsScreen()),
         ]),
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/foryou', builder: (_, __) => const ForYouScreen()),
+        ]),
       ],
     ),
     // Old URL for the newspaper — keep bookmarks/history working.
@@ -128,6 +134,8 @@ final GoRouter appRouter = GoRouter(
     ),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
     GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
+    GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
+    GoRoute(path: '/alerts', builder: (_, __) => const AlertsScreen()),
     GoRoute(
       path: '/auth',
       builder: (_, state) =>

@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import '../tokens.dart';
 
 class GatiTabItem {
-  const GatiTabItem(this.icon, this.label);
+  const GatiTabItem(this.icon, this.label, {this.badge = false});
   final IconData icon;
   final String label;
+
+  /// Show the unread dot (For You uses it for fresh alerts).
+  final bool badge;
 }
 
 /// Bottom navigation (§8) — paper ground, hairline top rule, gold active
@@ -55,9 +58,28 @@ class GatiTabBar extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.only(top: 8, bottom: 6),
                     child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(items[i].icon,
-                          size: 22,
-                          color: i == currentIndex ? active : p.muted),
+                      Stack(clipBehavior: Clip.none, children: [
+                        Icon(items[i].icon,
+                            size: 22,
+                            color: i == currentIndex ? active : p.muted),
+                        if (items[i].badge)
+                          Positioned(
+                            top: -1,
+                            right: -3,
+                            child: Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                  color: Gati.kumkuma,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                      color: p.dark
+                                          ? GatiDark.band
+                                          : Gati.band,
+                                      width: 1)),
+                            ),
+                          ),
+                      ]),
                       const SizedBox(height: 2),
                       Text(items[i].label,
                           style: TextStyle(

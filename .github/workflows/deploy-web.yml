@@ -1,0 +1,61 @@
+name: Deploy Web to Vercel
+
+# Builds the Flutter web bundle and ships it to Vercel production — the
+# same flow previous manual deploys used (vercel.json serves the pre-built
+# packages/app/build/web). Requires the VERCEL_TOKEN repo secret — create
+# one at https://vercel.com/account/tokens then run:
+#   gh secret set VERCEL_TOKEN
+# Until the secret exists this workflow skips (does not fail).
+# Re-trigger by pushing any change under packages/app/ (or to this file).
+
+on:
+  push:
+    branches: [main, feature/live-discovery]
+    paths:
+      - "packages/app/**"
+      - "vercel.json"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+env:
+  # Not secrets — the team and project this repo deploys to. With these set
+  # the Vercel CLI needs no `vercel link` step.
+  VERCEL_ORG_ID: team_dZVFQQ4xzX6LvNm18nhjW824
+  VERCEL_PROJECT_ID: prj_OVe7Rumqf36AntBAxHZSrUl6X6vB
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if secret missing
+        id: gate
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::VERCEL_TOKEN not set — web deploy skipped"
+          fi
+      - uses: subosito/flutter-action@v2
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          channel: stable
+          cache: true
+      - name: Build Flutter web
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          cd packages/app
+          flutter pub get
+          flutter build web --release
+      - name: Deploy to Vercel (production)
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npm i -g vercel
+          vercel deploy --prod --yes --token "$VERCEL_TOKEN"

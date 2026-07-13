@@ -11,6 +11,7 @@ import '../l10n/strings.dart';
 import '../screens/history_screen.dart';
 import '../screens/menu_screen.dart';
 import '../models/newspaper_article.dart';
+import '../services/alerts_service.dart';
 import '../services/document_service.dart';
 import '../services/edition_store.dart';
 import '../services/news_feed_service.dart';
@@ -105,7 +106,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   }
 
   void _goTab(int i) {
-    if (i < 0 || i > 2 || i == widget.shell.currentIndex) return;
+    if (i < 0 || i > 3 || i == widget.shell.currentIndex) return;
     _bar.forward();
     widget.shell.goBranch(i, initialLocation: false);
   }
@@ -180,6 +181,9 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final lang = context.watch<SettingsProvider>().lang;
+    // Keep the For You unread dot honest from app start, not only after the
+    // menu or Alerts screen ran a fetch. Deferred + throttled internally.
+    AlertsService.i.refreshIfStale(context.read<SettingsProvider>());
     // Directional slide-in whenever the branch changed (tap or swipe).
     if (_prevIndex != widget.shell.currentIndex) {
       _tabDir = widget.shell.currentIndex > _prevIndex ? 1 : -1;
@@ -257,18 +261,25 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                     sizeFactor:
                         CurvedAnimation(parent: _bar, curve: Curves.easeOut),
                     axisAlignment: -1,
-                    child: GatiTabBar(
-                      currentIndex: widget.shell.currentIndex,
-                      onTap: (i) => widget.shell.goBranch(i,
-                          initialLocation: i == widget.shell.currentIndex),
-                      onSwipe: (dir) =>
-                          _goTab(widget.shell.currentIndex + dir),
-                      items: [
-                        GatiTabItem(Icons.sensors, tr(lang, 'tab_live')),
-                        GatiTabItem(Icons.newspaper, tr(lang, 'tab_paper')),
-                        GatiTabItem(
-                            Icons.headphones_rounded, tr(lang, 'tab_shows')),
-                      ],
+                    // Rebuild on alert updates so For You's unread dot is live.
+                    child: ListenableBuilder(
+                      listenable: AlertsService.i,
+                      builder: (context, _) => GatiTabBar(
+                        currentIndex: widget.shell.currentIndex,
+                        onTap: (i) => widget.shell.goBranch(i,
+                            initialLocation: i == widget.shell.currentIndex),
+                        onSwipe: (dir) =>
+                            _goTab(widget.shell.currentIndex + dir),
+                        items: [
+                          GatiTabItem(Icons.sensors, tr(lang, 'tab_live')),
+                          GatiTabItem(Icons.newspaper, tr(lang, 'tab_paper')),
+                          GatiTabItem(Icons.headphones_rounded,
+                              tr(lang, 'tab_shows')),
+                          GatiTabItem(
+                              Icons.person_rounded, tr(lang, 'tab_foryou'),
+                              badge: AlertsService.i.unread > 0),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -445,6 +456,11 @@ class _VaniFabState extends State<_VaniFab> {
     }
     if (ql.contains('history') || ql.contains('recent') || q.contains('చరిత్ర')) {
       context.push('/history');
+      return;
+    }
+    if (ql.contains('for you') || ql.contains('my feed') ||
+        q.contains('మీ కోసం') || q.contains('నా వార్తలు')) {
+      context.go('/foryou');
       return;
     }
     if (ql.contains('live') || q.contains('లైవ్')) {
