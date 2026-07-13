@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'screens/alerts_screen.dart';
 import 'screens/downloads_screen.dart';
+import 'screens/for_you_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/live_feed_screen.dart';
 import 'screens/reader_screen.dart';
@@ -38,6 +39,9 @@ final GoRouter appRouter = GoRouter(
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/shows', builder: (_, __) => const ShowsScreen()),
+        ]),
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/foryou', builder: (_, __) => const ForYouScreen()),
         ]),
       ],
     ),
