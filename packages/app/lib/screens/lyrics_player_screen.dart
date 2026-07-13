@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -42,9 +43,11 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   bool _downloading = false;
   // Pull-down-to-dismiss: the whole page follows the finger (Claude-iOS-like
   // sheet feel), springs back under the threshold, pops past it — the route's
-  // slide transition carries it the rest of the way down.
+  // slide transition carries it the rest of the way down. The same gesture
+  // going UP (see _dragAccum) opens the full-screen queue instead.
   double _slide = 0;
   double _settleFrom = 0;
+  double _dragAccum = 0; // raw signed drag distance, for the swipe-up check
   late final AnimationController _settle =
       AnimationController(vsync: this, duration: GatiMotion.madhyama)
         ..addListener(() => setState(() => _slide =
@@ -53,6 +56,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   // One value drives the whole coordinated transition (YouTube-Music style).
   late final AnimationController _lyrics = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 360));
+  // Same idea, triggered by swiping up instead of tapping "Read": art/meta/
+  // controls collapse into the top strip and the queue takes the full screen.
+  late final AnimationController _queueOpen = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 360));
 
   // Mann Ki Baat playlist mode: which year's chip is selected (null until
   // first built, then defaults to the newest episode's year) and which row
@@ -60,18 +67,64 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   int? _mkbYear;
   int? _mkbResolvingIndex;
 
+  // Whole-gesture mode, decided once at drag start and held for its duration:
+  // 'closeQueue'/'closeLyrics' while that panel is open (the drag directly
+  // drives its collapse, following the finger, wherever on the panel it
+  // starts — not just a thin top strip); null means the base player, where
+  // the same drag dismisses downward or opens the queue upward.
+  String? _dragMode;
+
+  void _slideStart(DragStartDetails d) {
+    _dragAccum = 0;
+    final expanded = math.max(_lyrics.value, _queueOpen.value) > 0.5;
+    _dragMode = !expanded
+        ? null
+        : (_queueOpen.value >= _lyrics.value ? 'closeQueue' : 'closeLyrics');
+    if (_dragMode != null) (_dragMode == 'closeQueue' ? _queueOpen : _lyrics).stop();
+  }
+
+  AnimationController get _activeExpandCtrl =>
+      _dragMode == 'closeQueue' ? _queueOpen : _lyrics;
+
   void _slideUpdate(DragUpdateDetails d) {
     _settle.stop();
-    setState(
-        () => _slide = (_slide + (d.primaryDelta ?? 0)).clamp(0.0, 1000.0));
+    final delta = d.primaryDelta ?? 0;
+    _dragAccum += delta;
+    if (_dragMode != null) {
+      // Drag directly drives the collapse value — closing the queue/lyrics
+      // panel follows the finger exactly like the whole-page dismiss below
+      // does, just on a 0..1 range instead of pixels.
+      final ctrl = _activeExpandCtrl;
+      setState(() => ctrl.value = (ctrl.value - delta / 280).clamp(0.0, 1.0));
+      return;
+    }
+    setState(() => _slide = (_slide + delta).clamp(0.0, 1000.0));
   }
 
   void _slideEnd(DragEndDetails d) {
     final v = d.primaryVelocity ?? 0;
+    if (_dragMode != null) {
+      final ctrl = _activeExpandCtrl;
+      final closing = ctrl.value < 0.6 || v > 350;
+      ctrl.animateTo(closing ? 0.0 : 1.0,
+          curve: Curves.easeOutCubic, duration: GatiMotion.madhyama);
+      _dragMode = null;
+      return;
+    }
     if ((_slide > 130 || v > 350) && !_dismissing) {
       _dismissing = true;
       if (context.canPop()) context.pop();
       return;
+    }
+    // Swipe up (never went positive, moved/flicked upward) while looking at
+    // the base player opens the full-screen queue — the mirror image of
+    // pull-down-to-dismiss, on the same gesture.
+    final upDistance = -_dragAccum;
+    if (_slide == 0 &&
+        (upDistance > 80 || v < -350) &&
+        _lyrics.value < 0.5 &&
+        _queueOpen.value < 0.5) {
+      _queueOpen.forward();
     }
     _settleFrom = _slide;
     _settle.forward(from: 0);
@@ -80,6 +133,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
   @override
   void dispose() {
     _lyrics.dispose();
+    _queueOpen.dispose();
     _settle.dispose();
     _scroll.dispose();
     super.dispose();
@@ -232,6 +286,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               // drags in the gesture arena, so scrolling is unaffected.
               return GestureDetector(
                 behavior: HitTestBehavior.translucent,
+                onVerticalDragStart: _slideStart,
                 onVerticalDragUpdate: _slideUpdate,
                 onVerticalDragEnd: _slideEnd,
                 child: Transform.translate(
@@ -259,9 +314,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     );
   }
 
-  // ── Coordinated player ⇄ lyrics stage (YouTube-Music style) ──────────────────
-  // One value (_lyrics 0→1) drives it: the cover art morphs from the big centred
-  // square into a small top-left thumbnail while the read-along rises from below.
+  // ── Coordinated player ⇄ lyrics/queue stage (YouTube-Music style) ────────────
+  // Two independent 0→1 values share one collapse animation: tapping "Read"
+  // opens the lyrics (_lyrics), swiping up opens the full-screen queue
+  // (_queueOpen). Either one collapses the cover art from a big centred
+  // square into a small top-left thumbnail the same way; whichever is
+  // further along "wins" the shared rect/top-strip morph.
   Widget _stage(BuildContext context, PlaybackService p, NewspaperArticle a,
       int activeLine, int activeWord, int dur) {
     final lang = context.read<SettingsProvider>().lang;
@@ -276,18 +334,20 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
       final big = Rect.fromLTWH((w - side) / 2, 6, side, side);
       const small = Rect.fromLTWH(2, 8, 46, 46);
       return AnimatedBuilder(
-        animation: _lyrics,
+        animation: Listenable.merge([_lyrics, _queueOpen]),
         builder: (context, _) {
-          final t = Curves.easeInOutCubic.transform(_lyrics.value);
+          final lyricsT = Curves.easeInOutCubic.transform(_lyrics.value);
+          final queueT = Curves.easeInOutCubic.transform(_queueOpen.value);
+          final t = math.max(lyricsT, queueT); // shared collapse progress
           final rect = Rect.lerp(big, small, t)!;
           return Stack(clipBehavior: Clip.none, children: [
             // Read-along — fades + rises from below, clearing the top strip.
-            if (t > 0.01)
+            if (lyricsT > 0.01)
               Positioned.fill(
                 child: Opacity(
-                  opacity: ((t - 0.25) / 0.75).clamp(0.0, 1.0),
+                  opacity: ((lyricsT - 0.25) / 0.75).clamp(0.0, 1.0),
                   child: Transform.translate(
-                    offset: Offset(0, (1 - t) * 48),
+                    offset: Offset(0, (1 - lyricsT) * 48),
                     child: Padding(
                       padding: const EdgeInsets.only(top: 62),
                       child:
@@ -296,12 +356,23 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   ),
                 ),
               ),
-            // Meta (title + subtitle + pills), transport controls, and the
-            // queue/archive list all flow together in one Column instead of
-            // being separately-positioned pieces — Expanded on the list
-            // gives it whatever's left below the pills and controls with no
-            // pixel-estimated gaps. The whole block fades out as lyrics opens
-            // (title/pills fade a touch faster so they clear the top strip).
+            // Full-screen queue — same rise-from-below entrance, opened by
+            // swiping up instead of tapping "Read".
+            if (queueT > 0.01)
+              Positioned.fill(
+                child: Opacity(
+                  opacity: ((queueT - 0.25) / 0.75).clamp(0.0, 1.0),
+                  child: Transform.translate(
+                    offset: Offset(0, (1 - queueT) * 48),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 62),
+                      child: _inlineQueueSection(context, p, lang),
+                    ),
+                  ),
+                ),
+              ),
+            // Meta (title + subtitle + pills) and transport controls — the
+            // base view. Fades out as EITHER lyrics or the queue opens.
             Positioned(
               top: big.bottom + 18,
               left: 0,
@@ -321,6 +392,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                     opacity: (1 - t).clamp(0.0, 1.0),
                     child: _controls(p),
                   ),
+                  // Queue preview, always on screen beneath the transport
+                  // (Spotify-style) instead of hidden behind the swipe-up —
+                  // that gesture still works, it just gives the same list
+                  // more room by collapsing the art above.
                   Expanded(
                     child: Opacity(
                       opacity: (1 - t).clamp(0.0, 1.0),
@@ -377,7 +452,6 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               ),
             ),
             // Shared cover art — morphs big-centre → small top-left thumbnail.
-            // (Not tappable: only the Read chip opens the lyrics.)
             Positioned.fromRect(
               rect: rect,
               child: ClipRRect(
@@ -385,21 +459,6 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                 child: _coverWidget(a, lang),
               ),
             ),
-            // Lyrics mode: swiping down on the top strip brings the player back
-            // down (closes the lyrics). Translucent so the play button still taps.
-            if (t > 0.5)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                height: 60,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onVerticalDragEnd: (d) {
-                    if ((d.primaryVelocity ?? 0) > 180) _lyrics.reverse();
-                  },
-                ),
-              ),
           ]);
         },
       );
@@ -430,7 +489,10 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
           GatiPill(
               icon: Icons.format_quote_rounded,
               label: tr(lang, 'read'),
-              onTap: () => _lyrics.forward()),
+              onTap: () {
+                if (_queueOpen.value > 0) _queueOpen.reverse();
+                _lyrics.forward();
+              }),
           const SizedBox(width: 8),
           GatiPill(
               icon: Icons.shuffle_rounded,
@@ -596,10 +658,12 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     gatiSnack(context, tr(lang, ok ? 'downloaded' : 'download_failed'));
   }
 
-  // ── Queue / Mann Ki Baat archive — always visible, no more separate sheet ──
+  // ── Queue / Mann Ki Baat archive — opened full-screen by swiping up ─────────
   // Two modes: the Mann Ki Baat archive (opened only from its Podcast tile)
   // shows year chips over the full episode list; everything else keeps the
-  // normal up-next queue, with a "Related articles" strip above it.
+  // normal up-next queue, with a "Related articles" strip above it. Always
+  // rendered inside a bounded full-height Positioned.fill (see _stage), so
+  // the list below gets a real Expanded instead of squeezing into leftovers.
   Widget _inlineQueueSection(BuildContext context, PlaybackService p, String lang) {
     final q = p.queue;
     final isMkb =
@@ -714,6 +778,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   estimatedDurationSeconds:
                       NewspaperArticle.estimateDuration(w.body),
                   readingStyle: 'news_anchor',
+                  language: w.language,
                 );
                 PlaybackService.i.playNext([art]);
                 gatiSnack(context, tr(lang, 'added_queue'));
