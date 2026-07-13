@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anek+Telugu:wght@600&display=swap">
+<style>
+  * { margin: 0; padding: 0; }
+  body {
+    width: 480px; height: 480px;
+    background: #0E0D0B;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 0px;
+    font-family: 'Anek Telugu', sans-serif;
+  }
+  .name {
+    font-weight: 600; font-size: 82px; line-height: 1.15;
+    color: #FAF7F0;
+    display: flex; align-items: baseline;
+  }
+  /* the ā: plain 'a' carrier + the brand's gold voice line drawn above,
+     mirroring GatiWordmark's proportions (0.62× width, top ≈ 2% of size) */
+  .aa { position: relative; display: inline-block; }
+  .aa .macron {
+    position: absolute;
+    left: 19%; width: 62%;
+    top: 1.5px; height: 6.5px;
+    background: #E39A0B; border-radius: 4px;
+  }
+  svg.wave { display: block; }
+</style>
+</head>
+<body>
+  <div class="name">GatiV<span class="aa">a<span class="macron"></span></span>ni</div>
+  <!-- the Vāni wave under the name — spans exactly G→i, tucked close -->
+  <svg class="wave" width="300" height="48" viewBox="0 0 300 48" fill="none">
+    <path d="M5 24 Q23 5 41 24 T77 24 T113 24 T149 24 T185 24 T221 24 T257 24 T295 24"
+          stroke="#E39A0B" stroke-width="9" stroke-linecap="round"/>
+  </svg>
+</body>
+</html>
