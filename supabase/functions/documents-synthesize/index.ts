@@ -6,7 +6,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-subscription-tier",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-subscription-tier, x-user-gemini-key",
 };
 
 // ── Language config ────────────────────────────────────────────────────────────
@@ -25,7 +25,10 @@ const LANGUAGE_CONFIG: Record<string, { code: string; sampleRate: number; speake
 // Sarvam female voices → Kore (clear, warm female)
 // Sarvam male voices   → Puck (natural male)
 
-const FEMALE_SARVAM = new Set(["priya", "neha", "kavya", "shreya", "suhani", "kavitha"]);
+// Includes the Hindi default speaker ("tanya") alongside the Telugu names —
+// this set is really "known female voice names across languages", not
+// Telugu-only, despite its name.
+const FEMALE_SARVAM = new Set(["priya", "neha", "kavya", "shreya", "suhani", "kavitha", "tanya"]);
 
 function geminiVoice(speaker: string): string {
   return FEMALE_SARVAM.has(speaker.toLowerCase()) ? "Kore" : "Puck";
@@ -236,8 +239,6 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   try {
-    const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
-
     const body = await req.json().catch(() => null);
     if (!body || typeof body.text !== "string") {
       return json({ error: "missing_text", message: 'Expected "text" field in body.' }, 400);
@@ -289,18 +290,23 @@ Deno.serve(async (req) => {
       }
     }
 
-    // TTS is Gemini 2.5 Flash ONLY. Sarvam TTS is disabled (cost): no tier
-    // routes to it, and there is NO Sarvam fallback when Gemini fails — we
-    // surface the error instead of silently (and expensively) falling back.
-    if (!GEMINI_KEY) {
-      return json({ error: "config_missing", message: "GEMINI_API_KEY not configured" }, 500);
+    // TTS is Gemini 2.5 Flash ONLY, and always runs on the CALLER's own key —
+    // there is no shared fallback anymore for any narration, Live or Paper
+    // (the app now requires sign-in + BYOK before any playback). Sarvam TTS
+    // remains disabled (cost) with no fallback either.
+    const geminiKey = req.headers.get("x-user-gemini-key") ?? "";
+    if (!geminiKey) {
+      return json({
+        error: "gemini_key_required",
+        message: "Add your Gemini API key to narrate this.",
+      }, 400);
     }
 
     console.log(`[synthesize] provider=gemini-2.5 chars=${text.length} speaker=${speaker}`);
 
     const usedProvider = "gemini-2.5";
     const { wavBytes, durationSec, chunks } =
-      await synthesizeWithGemini(text, speaker, GEMINI_KEY, readingStyle);
+      await synthesizeWithGemini(text, speaker, geminiKey, readingStyle);
 
     console.log(`[synthesize] done: ${Math.round(wavBytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
 

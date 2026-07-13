@@ -22,7 +22,7 @@ import { extractArticlesStructured } from "../_shared/structure.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-subscription-tier",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-subscription-tier, x-user-gemini-key",
 };
 
 function json(body: unknown, status = 200) {
@@ -212,9 +212,11 @@ async function normalizeToPdf(bytes: Uint8Array): Promise<Uint8Array> {
 // ── Page continuation ─────────────────────────────────────────────────────────
 
 // deno-lint-ignore no-explicit-any
-async function processPage(supabase: any, jobId: string, page: number): Promise<void> {
+async function processPage(
+  supabase: any, jobId: string, page: number, geminiKey: string,
+): Promise<void> {
   const SARVAM = Deno.env.get("SARVAM_API_KEY")!;
-  const GEMINI = Deno.env.get("GEMINI_API_KEY")!;
+  const GEMINI = geminiKey;
 
   const { data: job } = await supabase
     .from("processing_jobs").select("*").eq("id", jobId).single();
@@ -282,7 +284,7 @@ async function processPage(supabase: any, jobId: string, page: number): Promise<
   // chain next page, or finish: delete the source file (articles + audio are
   // the product; the source PDF is no longer needed — saves storage).
   if (page < job.total_pages) {
-    fireContinuation(jobId, page + 1);
+    fireContinuation(jobId, page + 1, geminiKey);
   } else {
     // All pages done — stitch cross-page article continuations, then clean up.
     await finalizeContinuations(supabase, job.newspaper_id);
@@ -389,7 +391,7 @@ async function finalizeContinuations(supabase: any, newspaperId: string): Promis
   }
 }
 
-function fireContinuation(jobId: string, page: number): void {
+function fireContinuation(jobId: string, page: number, geminiKey: string): void {
   const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/documents-process-edition`;
   // Anon JWT satisfies the gateway; the service key travels in x-internal-token
   // and is string-compared by our gate (it may be an opaque sb_secret_ key,
@@ -404,7 +406,9 @@ function fireContinuation(jobId: string, page: number): void {
       "apikey": anon,
       "x-internal-token": internal,
     },
-    body: JSON.stringify({ job_id: jobId, page }),
+    // The user's Gemini key rides along the internal continuation chain only —
+    // it's never written to a table (processing_jobs has no such column).
+    body: JSON.stringify({ job_id: jobId, page, geminiKey }),
   }).then(async (r) => {
     if (!r.ok) console.warn(`[edition] continuation page ${page} -> HTTP ${r.status}`);
     await r.body?.cancel();
@@ -421,7 +425,7 @@ Deno.serve(async (req) => {
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!SUPABASE_URL || !SERVICE_KEY || !Deno.env.get("SARVAM_API_KEY") || !Deno.env.get("GEMINI_API_KEY")) {
+  if (!SUPABASE_URL || !SERVICE_KEY || !Deno.env.get("SARVAM_API_KEY")) {
     return json({ error: "config_missing" }, 500);
   }
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -430,7 +434,8 @@ Deno.serve(async (req) => {
 
   if (contentType.includes("application/json")) {
     const body = await req.json().catch(() => ({})) as {
-      job_id?: string; page?: number; storagePath?: string; filename?: string;
+      job_id?: string; page?: number; geminiKey?: string;
+      storagePath?: string; filename?: string;
     };
 
     // ── internal continuation (service-key holders only) ──────────────────
@@ -439,7 +444,7 @@ Deno.serve(async (req) => {
       if (internal !== SERVICE_KEY && jwtRole(req) !== "service_role") {
         return json({ error: "forbidden" }, 403);
       }
-      await processPage(supabase, body.job_id, body.page);
+      await processPage(supabase, body.job_id, body.page, body.geminiKey ?? "");
       return json({ ok: true, job_id: body.job_id, page: body.page });
     }
 
@@ -466,6 +471,17 @@ async function runStart(
   source: { multipart?: boolean; storagePath?: string; filename?: string },
 ): Promise<Response> {
   try {
+    // BYOK: narrating/structuring a user's own uploaded edition runs on their
+    // own Gemini key, never the shared one — checked before the rate limit
+    // even gets touched, so a missing key doesn't burn a request slot.
+    const userGeminiKey = req.headers.get("x-user-gemini-key") ?? "";
+    if (!userGeminiKey) {
+      return json({
+        error: "gemini_key_required",
+        message: "Add your Gemini API key in Settings to process an edition.",
+      }, 400);
+    }
+
     const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
     const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await supabase
@@ -511,8 +527,7 @@ async function runStart(
     const single = await PDFDocument.create();
     const [pg] = await single.copyPages(pdf, [0]);
     single.addPage(pg);
-    const printedDate = await detectPrintedDate(
-      await single.save(), Deno.env.get("GEMINI_API_KEY")!);
+    const printedDate = await detectPrintedDate(await single.save(), userGeminiKey);
     const pubDate = printedDate || parseDateFromFilename(originalName) || todayIST();
     const title = originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 
@@ -544,7 +559,7 @@ async function runStart(
     if (jErr) throw new Error(`job insert: ${jErr.message}`);
     const jobId = jobRow.id as string;
 
-    fireContinuation(jobId, 1);
+    fireContinuation(jobId, 1, userGeminiKey);
     return json({ ok: true, jobId, newspaperId, totalPages, pubDate });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

@@ -43,7 +43,7 @@ function json(body: unknown, status = 200) {
 // it client-side like CricAPI/Cricbuzz either: its CORS header locks
 // Access-Control-Allow-Origin to https://10tv.in itself, not permissive.
 // Dropped rather than building a proxy for one source.
-const FEEDS: Array<{ source: string; url: string }> = [
+const FEEDS_TE: Array<{ source: string; url: string }> = [
   { source: "NTV Telugu", url: "https://ntvtelugu.com/feed" },
   { source: "HMTV", url: "https://www.hmtvlive.com/feed" },
   { source: "Big TV", url: "https://www.bigtvlive.com/feed" },
@@ -53,6 +53,26 @@ const FEEDS: Array<{ source: string; url: string }> = [
   { source: "Telugu360", url: "https://www.telugu360.com/feed" },
   { source: "Mana Telangana", url: "https://www.manatelangana.news/feed" },
 ];
+
+// Hindi publishers — verified live the same way as the Telugu list above:
+// fetched, confirmed real <content:encoded> bodies (not stub summaries),
+// confirmed current pubDate, confirmed genuinely Hindi (not an
+// English-language feed mislabeled under a Hindi-sounding domain — several
+// candidates failed exactly that check and were dropped: news24online.com
+// (English despite the name), NDTV Khabar (content:encoded present but only
+// ~180 chars, a teaser not a body), Navbharat Times/Jagran/Zee/News18/Patrika
+// (no working RSS or no content:encoded found).
+const FEEDS_HI: Array<{ source: string; url: string }> = [
+  { source: "Prabhat Khabar", url: "https://www.prabhatkhabar.com/feed" },
+  { source: "TV9 Hindi", url: "https://www.tv9hindi.com/feed" },
+  { source: "Desh Bandhu", url: "https://www.deshbandhu.co.in/feed" },
+  { source: "Samachar Jagat", url: "https://www.samacharjagat.com/feed" },
+];
+
+const FEEDS_BY_LANG: Record<string, Array<{ source: string; url: string }>> = {
+  te: FEEDS_TE,
+  hi: FEEDS_HI,
+};
 
 const BODY_CAP = 9000; // chars — bound TTS cost + payload
 
@@ -184,15 +204,18 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     let limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
+    let lang = url.searchParams.get("lang") ?? "te";
     if (req.method === "POST") {
       const b = await req.json().catch(() => ({})) as Record<string, unknown>;
       if (typeof b.limit === "number") limit = b.limit;
+      if (typeof b.lang === "string") lang = b.lang;
     }
     limit = Math.min(Math.max(Number.isFinite(limit) ? limit : 20, 1), 40);
+    const feeds = FEEDS_BY_LANG[lang] ?? FEEDS_TE;
 
-    const perFeed = Math.ceil(limit / FEEDS.length) + 5;
+    const perFeed = Math.ceil(limit / feeds.length) + 5;
     const results = await Promise.all(
-      FEEDS.map((f) => fetchFeed(f.source, f.url, perFeed)),
+      feeds.map((f) => fetchFeed(f.source, f.url, perFeed)),
     );
     const merged = results.flat();
     merged.sort((a, b) => {

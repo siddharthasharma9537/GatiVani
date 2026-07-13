@@ -28,25 +28,39 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// Telugu, India locale.
-const LOCALE = "hl=te&gl=IN&ceid=IN:te";
-
-// topic → Google News search query (Telugu). "top" uses the headlines feed.
-const TOPICS: Record<string, string> = {
-  top: "",
-  politics: "రాజకీయాలు",
-  cricket: "క్రికెట్",
-  cinema: "సినిమా టాలీవుడ్",
-  weather: "వాతావరణం ఆంధ్రప్రదేశ్ తెలంగాణ",
-  national: "భారతదేశం",
-  business: "వ్యాపారం స్టాక్ మార్కెట్",
+// News Language: per-language Google News locale + topic query strings.
+// "top" uses the plain headlines feed (no search query).
+const LOCALES: Record<string, string> = {
+  te: "hl=te&gl=IN&ceid=IN:te",
+  hi: "hl=hi&gl=IN&ceid=IN:hi",
+};
+const TOPICS: Record<string, Record<string, string>> = {
+  te: {
+    top: "",
+    politics: "రాజకీయాలు",
+    cricket: "క్రికెట్",
+    cinema: "సినిమా టాలీవుడ్",
+    weather: "వాతావరణం ఆంధ్రప్రదేశ్ తెలంగాణ",
+    national: "భారతదేశం",
+    business: "వ్యాపారం స్టాక్ మార్కెట్",
+  },
+  hi: {
+    top: "",
+    politics: "राजनीति",
+    cricket: "क्रिकेट",
+    cinema: "बॉलीवुड सिनेमा",
+    weather: "मौसम भारत",
+    national: "भारत",
+    business: "व्यापार शेयर बाजार",
+  },
 };
 
-function feedUrl(topic: string): string {
+function feedUrl(lang: string, topic: string): string {
   const base = "https://news.google.com/rss";
-  const q = TOPICS[topic];
-  if (!q) return `${base}?${LOCALE}`; // top headlines
-  return `${base}/search?q=${encodeURIComponent(q)}&${LOCALE}`;
+  const locale = LOCALES[lang] ?? LOCALES.te;
+  const q = (TOPICS[lang] ?? TOPICS.te)[topic];
+  if (!q) return `${base}?${locale}`; // top headlines
+  return `${base}/search?q=${encodeURIComponent(q)}&${locale}`;
 }
 
 // Minimal HTML/XML entity decode for the fields we surface.
@@ -100,16 +114,19 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     let topic = url.searchParams.get("topic") ?? "top";
+    let lang = url.searchParams.get("lang") ?? "te";
     let limit = parseInt(url.searchParams.get("limit") ?? "12", 10);
     if (req.method === "POST") {
       const b = await req.json().catch(() => ({})) as Record<string, unknown>;
       if (typeof b.topic === "string") topic = b.topic;
+      if (typeof b.lang === "string") lang = b.lang;
       if (typeof b.limit === "number") limit = b.limit;
     }
-    if (!(topic in TOPICS)) topic = "top";
+    if (!(lang in TOPICS)) lang = "te";
+    if (!(topic in TOPICS[lang])) topic = "top";
     limit = Math.min(Math.max(Number.isFinite(limit) ? limit : 12, 1), 30);
 
-    const resp = await fetch(feedUrl(topic), {
+    const resp = await fetch(feedUrl(lang, topic), {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)" },
     });
     if (!resp.ok) {
@@ -117,7 +134,7 @@ Deno.serve(async (req) => {
     }
     const xml = await resp.text();
     const items = parseItems(xml, limit);
-    return json({ ok: true, topic, count: items.length, items });
+    return json({ ok: true, topic, lang, count: items.length, items });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[feeds-news]", err);
