@@ -27,6 +27,7 @@ class ReaderScreen extends StatelessWidget {
       category: a.source,
       estimatedDurationSeconds: NewspaperArticle.estimateDuration(a.body),
       readingStyle: 'news_anchor',
+      language: a.language,
     );
     PlaybackService.i.playOne(art);
   }

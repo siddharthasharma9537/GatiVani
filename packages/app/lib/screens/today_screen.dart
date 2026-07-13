@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/api_config.dart';
 import '../config/districts.dart';
 import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
 import '../services/edition_store.dart';
+import '../services/gemini_key_store.dart';
 import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
@@ -87,6 +89,18 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   Future<void> _upload() async {
+    // Uploading is the account-tied action (browsing is free): sign in
+    // first, then BYOK — processing/narrating an edition runs on the user's
+    // own Gemini key, not a shared one. Both checked before even picking a
+    // file.
+    if (Supabase.instance.client.auth.currentUser == null) {
+      context.push('/auth');
+      return;
+    }
+    if (!GeminiKeyStore.hasKey) {
+      context.push('/gemini-key');
+      return;
+    }
     final picked = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],

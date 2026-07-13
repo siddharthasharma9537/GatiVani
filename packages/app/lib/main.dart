@@ -1,3 +1,4 @@
+import "package:app_links/app_links.dart";
 import "package:flutter/foundation.dart" show kIsWeb;
 import "package:flutter/material.dart";
 import "package:provider/provider.dart";
@@ -6,6 +7,7 @@ import "config/api_config.dart";
 import "design/app_theme.dart";
 import "router.dart";
 import "services/auth_service.dart";
+import "services/gemini_key_store.dart";
 import "services/settings_provider.dart";
 import "ssl_override_stub.dart"
     if (dart.library.io) "ssl_override_io.dart";
@@ -42,9 +44,34 @@ void main() async {
         debugPrint('OAuth callback exchange failed: $e');
       }
     }
+  } else {
+    // Native: the OAuth browser tab redirects to gativani://login-callback
+    // (see AuthService.signIn + the AndroidManifest intent-filter). Since
+    // detectSessionInUri is off globally, we listen for that link ourselves —
+    // the "warm" case (app already running, browser hands back to it) via
+    // uriLinkStream, and the "cold" case (OS launched the app fresh from the
+    // link) via getInitialLink.
+    Future<void> exchange(Uri uri) async {
+      if (uri.scheme != 'gativani') return;
+      final hasAuthParams = uri.queryParameters.containsKey('code') ||
+          uri.queryParameters.containsKey('error') ||
+          uri.queryParameters.containsKey('error_description');
+      if (!hasAuthParams) return;
+      try {
+        await Supabase.instance.client.auth.getSessionFromUrl(uri);
+      } catch (e) {
+        debugPrint('OAuth callback exchange failed: $e');
+      }
+    }
+
+    final appLinks = AppLinks();
+    appLinks.uriLinkStream.listen(exchange);
+    final initial = await appLinks.getInitialLink();
+    if (initial != null) await exchange(initial);
   }
   final settings = SettingsProvider();
   await settings.load();
+  await GeminiKeyStore.load();
   runApp(
     MultiProvider(
       providers: [

@@ -4,8 +4,11 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/api_config.dart';
 import '../models/newspaper_article.dart';
+import '../router.dart';
+import 'gemini_key_store.dart';
 import 'media_session_stub.dart'
     if (dart.library.html) 'media_session_web.dart';
 
@@ -154,11 +157,12 @@ class PlaybackService extends ChangeNotifier {
           .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
               headers: {
                 ...ApiConfig.authHeaders,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                ...GeminiKeyStore.headers,
               },
               body: json.encode({
                 'text': a.spokenText,
-                'language': 'te-IN',
+                'language': '${a.language}-IN',
                 'articleId': a.id,
                 if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
                 if (a.readingStyle.isNotEmpty) 'readingStyle': a.readingStyle,
@@ -423,6 +427,20 @@ class PlaybackService extends ChangeNotifier {
   }
 
   Future<void> _playIndex(int idx) async {
+    // Playing is the account-tied action (browsing itself stays free): sign
+    // in first, then BYOK. This is the single funnel every play path goes
+    // through (playOne/playAll/playAt/next/previous/addToQueue), so it's the
+    // one place that needs to check, before any state even changes. Each
+    // check pushes its own screen and aborts this attempt — tapping play
+    // again afterward continues normally once both pass.
+    if (Supabase.instance.client.auth.currentUser == null) {
+      appRouter.push('/auth');
+      return;
+    }
+    if (!GeminiKeyStore.hasKey) {
+      appRouter.push('/gemini-key');
+      return;
+    }
     final epoch = ++_playEpoch; // any earlier in-flight _playIndex is now stale
     index = idx;
     loading = true;
@@ -445,13 +463,14 @@ class PlaybackService extends ChangeNotifier {
             .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
                 headers: {
                   ...ApiConfig.authHeaders,
-                  'Content-Type': 'application/json'
+                  'Content-Type': 'application/json',
+                  ...GeminiKeyStore.headers,
                 },
                 body: json.encode({
                   'text': brief
                       ? (a.summaryText ?? a.briefingText)
                       : a.spokenText,
-                  'language': 'te-IN',
+                  'language': '${a.language}-IN',
                   'articleId': a.id,
                   if (brief) 'target': 'summary_audio_url',
                   if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
@@ -460,7 +479,12 @@ class PlaybackService extends ChangeNotifier {
             .timeout(const Duration(seconds: 150));
         if (epoch != _playEpoch) return; // superseded while synthesizing
         final data = json.decode(r.body) as Map<String, dynamic>;
-        if (data['ok'] != true) throw Exception(data['message'] ?? 'TTS failed');
+        if (data['ok'] != true) {
+          final msg = data['error'] == 'gemini_key_required'
+              ? 'Add your Gemini API key to narrate this.'
+              : (data['message'] ?? 'TTS failed');
+          throw Exception(msg);
+        }
         url = data['audioUrl'] as String;
         if (brief) {
           a.summaryAudioUrl = url;

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'screens/gemini_key_gate_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/live_feed_screen.dart';
 import 'screens/reader_screen.dart';
@@ -14,12 +16,44 @@ import 'screens/search_screen.dart';
 import 'services/edition_store.dart';
 import 'widgets/gati_shell.dart';
 
+/// Notifies go_router whenever Supabase's auth state changes, so the /auth
+/// bounce-home redirect below re-evaluates the instant a sign-in completes
+/// (OAuth redirect or email/password) — no manual navigation or reload
+/// needed. Deliberately independent of the Provider-managed AuthService:
+/// this file has no widget-tree access to reach it, and
+/// Supabase.instance.client.auth is already a live global by the time
+/// anything here actually gets used (main() awaits Supabase.initialize()
+/// before runApp).
+class _AuthRefresh extends ChangeNotifier {
+  _AuthRefresh() {
+    Supabase.instance.client.auth.onAuthStateChange
+        .listen((_) => notifyListeners());
+  }
+}
+
+final _authRefresh = _AuthRefresh();
+
 /// App navigation via go_router so each screen is a real browser history entry.
 /// This is what makes the browser Back button pop the player/section/menu
 /// instead of leaving the Flutter app entirely (which it did with bare
 /// Navigator.push, since those create no history entries on web).
 final GoRouter appRouter = GoRouter(
+  refreshListenable: _authRefresh,
+  // Browsing is free — no blanket login wall. Only account-tied actions
+  // (playing audio, uploading a Paper edition — see PlaybackService and
+  // today_screen.dart) push /auth themselves, at the moment they're taken.
+  // Here we just bounce an already-signed-in user OFF /auth if they land on
+  // it (e.g. browser Back right after finishing sign-in).
+  redirect: (context, state) {
+    final signedIn = Supabase.instance.client.auth.currentUser != null;
+    if (signedIn && state.matchedLocation == '/auth') return '/';
+    return null;
+  },
   routes: [
+    GoRoute(
+      path: '/gemini-key',
+      builder: (_, __) => const GeminiKeyGateScreen(),
+    ),
     // The tab shell (§8): Live · Paper · Shows inside GatiShell, which adds
     // the persistent mini-player dock + tab bar and the Claude-iOS-style
     // left menu drawer. IndexedStack keeps each tab's state (and per-tab

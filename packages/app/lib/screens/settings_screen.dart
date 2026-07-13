@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../design/app_theme.dart';
+import '../services/gemini_key_store.dart';
 import '../services/settings_provider.dart';
 
 // ── Voice catalogue (mirrors audio_queue_player_screen) ──────────────────────
@@ -39,11 +41,47 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late Future<({int fileCount, int bytes})> _statsFuture;
+  late final TextEditingController _geminiKeyCtrl =
+      TextEditingController(text: GeminiKeyStore.key ?? '');
+  bool _geminiKeyHidden = true;
 
   @override
   void initState() {
     super.initState();
     _refreshStats();
+  }
+
+  @override
+  void dispose() {
+    _geminiKeyCtrl.dispose();
+    super.dispose();
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(GVRadius.md)),
+      ),
+    );
+  }
+
+  Future<void> _saveGeminiKey() async {
+    await GeminiKeyStore.setKey(_geminiKeyCtrl.text);
+    if (!mounted) return;
+    setState(() {});
+    _toast(GeminiKeyStore.hasKey ? 'Gemini key saved.' : 'Gemini key cleared.');
+  }
+
+  Future<void> _clearGeminiKey() async {
+    _geminiKeyCtrl.clear();
+    await GeminiKeyStore.setKey(null);
+    if (!mounted) return;
+    setState(() {});
+    _toast('Gemini key cleared.');
   }
 
   void _refreshStats() {
@@ -118,6 +156,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 8),
 
+          // ── Gemini API key (BYOK) ────────────────────────────────────────
+          _SectionHeader(label: 'Gemini API key'),
+          _SettingsCard(
+            children: [
+              _TileHeader(
+                icon: Icons.key_outlined,
+                label: 'Your own Gemini key',
+                subtitle: 'Narrating your uploaded Paper editions runs on '
+                    'your own free key, not ours.',
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _geminiKeyCtrl,
+                obscureText: _geminiKeyHidden,
+                style: GVTypography.body(context),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Paste your Gemini API key',
+                  hintStyle: GVTypography.small(context),
+                  filled: true,
+                  fillColor: GVColors.bgSecondary(context),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(GVRadius.sm),
+                    borderSide: BorderSide.none,
+                  ),
+                  suffixIcon: IconButton(
+                    icon: Icon(_geminiKeyHidden
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined),
+                    iconSize: 18,
+                    color: GVColors.textSecondary(context),
+                    onPressed: () =>
+                        setState(() => _geminiKeyHidden = !_geminiKeyHidden),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => launchUrl(
+                        Uri.parse('https://aistudio.google.com/apikey'),
+                        mode: LaunchMode.externalApplication),
+                    child: const Text('Get a free key'),
+                  ),
+                  const Spacer(),
+                  if (GeminiKeyStore.hasKey)
+                    TextButton(
+                      onPressed: _clearGeminiKey,
+                      child: Text('Clear',
+                          style: TextStyle(color: GVColors.danger(context))),
+                    ),
+                  const SizedBox(width: 4),
+                  FilledButton(
+                    onPressed: _saveGeminiKey,
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+
           // ── Downloads ────────────────────────────────────────────────────
           if (!kIsWeb) ...[
             _SectionHeader(label: 'Downloads'),
@@ -165,7 +269,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _InfoRow(
                 icon: Icons.language_outlined,
                 label: 'TTS engine',
-                value: 'Sarvam Bulbul:v3 · Telugu',
+                value: 'Gemini 2.5 Flash · Telugu',
               ),
               Divider(height: 20, thickness: 0.5, color: GVColors.borderTertiary(context)),
               _InfoRow(

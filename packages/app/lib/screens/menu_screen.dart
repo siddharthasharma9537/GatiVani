@@ -5,8 +5,10 @@ import '../design/tokens.dart';
 import '../config/districts.dart';
 import '../design/components/gati_district_sheet.dart';
 import '../design/components/gati_wordmark.dart';
+import '../design/components/gemini_key_sheet.dart';
 import '../l10n/strings.dart';
 import '../services/auth_service.dart';
+import '../services/gemini_key_store.dart';
 import '../services/settings_provider.dart';
 
 /// The menu / account hub as a standalone route (kept for deep-links / native).
@@ -70,8 +72,15 @@ class MenuBody extends StatelessWidget {
           _navRow(p, Icons.history_rounded, tr(lang, 'history'), null,
               () => context.push('/history')),
           Divider(height: 1, color: p.line),
-          _navRow(p, Icons.mic_rounded, tr(lang, 'tab_shows'), null,
+          _navRow(p, Icons.headphones_rounded, tr(lang, 'tab_shows'), null,
               () => context.go('/shows')),
+          Divider(height: 1, color: p.line),
+          _navRow(
+              p,
+              Icons.key_outlined,
+              'Gemini API key',
+              GeminiKeyStore.hasKey ? 'Key saved' : 'Required for Paper',
+              () => showGeminiKeySheet(context)),
         ])),
         const SizedBox(height: 20),
 
@@ -81,6 +90,19 @@ class MenuBody extends StatelessWidget {
           _choiceRow(p, 'English', s.lang == 'en', () => s.setLanguage('en')),
           Divider(height: 1, color: p.line),
           _choiceRow(p, 'తెలుగు', s.lang == 'te', () => s.setLanguage('te')),
+        ])),
+        const SizedBox(height: 20),
+
+        // ── News Language (content, not UI chrome) ──────────────────────────
+        _sectionLabel(p, 'News Language'),
+        _card(p, Column(children: [
+          _choiceRow(p, 'తెలుగు', s.newsLanguage == 'te',
+              () => s.setNewsLanguage('te'),
+              subtitle: 'Telugu'),
+          Divider(height: 1, color: p.line),
+          _choiceRow(p, 'हिन्दी', s.newsLanguage == 'hi',
+              () => s.setNewsLanguage('hi'),
+              subtitle: 'Hindi'),
         ])),
         const SizedBox(height: 20),
 

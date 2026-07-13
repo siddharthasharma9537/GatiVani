@@ -25,13 +25,33 @@ class AuthService extends ChangeNotifier {
   String? get avatarUrl => user?.userMetadata?['avatar_url'] as String?;
 
   /// Start a provider OAuth flow. On web this redirects the page back to the
-  /// app's origin, where the SDK picks up the session and fires onAuthStateChange.
+  /// app's origin, where the SDK picks up the session and fires
+  /// onAuthStateChange. On native, the redirect goes to a custom-scheme deep
+  /// link (registered in AndroidManifest.xml / Info.plist and Supabase's
+  /// Redirect URLs allowlist) that hands the browser back to the app; main.dart
+  /// listens for it and exchanges the code, same as the web path does.
   Future<void> signIn(OAuthProvider provider) {
     return _auth.signInWithOAuth(
       provider,
-      redirectTo: kIsWeb ? Uri.base.origin : null,
+      redirectTo: kIsWeb ? Uri.base.origin : 'gativani://login-callback',
     );
   }
+
+  /// Email/password sign-up. Returns true if a session was granted immediately
+  /// (email confirmation disabled); false means a confirmation email was sent
+  /// and the caller should tell the user to check their inbox.
+  Future<bool> signUpWithPassword(String email, String password,
+      {String? name}) async {
+    final res = await _auth.signUp(
+      email: email,
+      password: password,
+      data: (name != null && name.isNotEmpty) ? {'full_name': name} : null,
+    );
+    return res.session != null;
+  }
+
+  Future<void> signInWithPassword(String email, String password) =>
+      _auth.signInWithPassword(email: email, password: password);
 
   Future<void> signOut() => _auth.signOut();
 

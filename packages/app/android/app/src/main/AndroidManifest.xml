@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The whole app is network-backed (Supabase feeds/auth, Gemini TTS,
+         publisher RSS). Release builds do NOT inherit INTERNET implicitly
+         the way debug builds do — without this the sideloaded APK renders
+         chrome and nothing else. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="gativani"
+        android:label="GatiVāni"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -23,6 +28,17 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- OAuth callback: Supabase redirects here (gativani://login-callback)
+                 after Google/Apple/Microsoft sign-in finishes in the browser, so
+                 the auth code makes it back into the app instead of being stranded
+                 in a browser tab. Must also be added to Supabase's Redirect URLs
+                 allowlist (Authentication → URL Configuration). -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="gativani" android:host="login-callback"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

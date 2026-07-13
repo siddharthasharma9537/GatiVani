@@ -7,12 +7,15 @@ import '../l10n/strings.dart';
 import '../services/auth_service.dart';
 import '../services/settings_provider.dart';
 
-/// Login / signup. OAuth (Google / Apple / Microsoft) is wired to Supabase's
-/// hosted authorize endpoint — tapping a provider redirects through Supabase,
-/// which completes the handshake and returns to the app. The providers must be
-/// enabled with their client id + secret in the Supabase dashboard for the
-/// round-trip to succeed (see docs/AUTH_OAUTH_SETUP.md). The email/password
-/// form is still scaffolding (no server yet).
+/// Login / signup — reached only when an account-tied action needs one
+/// (playing audio, uploading a Paper edition; see PlaybackService and
+/// today_screen.dart). Browsing itself never requires this screen, so it's
+/// always safely poppable. OAuth (Google / Apple / Microsoft) is wired to
+/// Supabase's hosted authorize endpoint — tapping a provider redirects
+/// through Supabase, which completes the handshake and returns to the app.
+/// The providers must be enabled with their client id + secret in the
+/// Supabase dashboard for the round-trip to succeed (see
+/// docs/AUTH_OAUTH_SETUP.md). Email/password goes straight to Supabase Auth.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key, this.signUp = false});
   final bool signUp;
@@ -22,6 +25,18 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   late bool _signUp = widget.signUp;
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
 
   // Supabase provider codes. Microsoft is the "azure" provider in Supabase.
   static const _providers = [
@@ -41,13 +56,44 @@ class _AuthScreenState extends State<AuthScreen> {
     if (prov == null) return;
     try {
       // The SDK redirects (web) and, on return, picks up the session — the
-      // menu's account card then reflects the signed-in user.
+      // router's redirect then lets the user through automatically.
       await context.read<AuthService>().signIn(prov);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Sign-in failed: $e')));
       }
+    }
+  }
+
+  Future<void> _submitPassword() async {
+    final email = _email.text.trim();
+    final password = _password.text;
+    if (email.isEmpty || password.isEmpty) return;
+    setState(() => _busy = true);
+    final auth = context.read<AuthService>();
+    try {
+      if (_signUp) {
+        final gotSession = await auth.signUpWithPassword(email, password,
+            name: _name.text.trim());
+        if (!mounted) return;
+        if (!gotSession) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Check your email to confirm your account.')));
+        } else if (context.canPop()) {
+          context.pop(); // back to whatever action asked for sign-in
+        }
+      } else {
+        await auth.signInWithPassword(email, password);
+        if (mounted && context.canPop()) context.pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -63,6 +109,10 @@ class _AuthScreenState extends State<AuthScreen> {
         surfaceTintColor: p.paper,
         elevation: 0,
         foregroundColor: p.ink,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
+        ),
         title: Text(title,
             style: TextStyle(
                 fontSize: 17, fontWeight: FontWeight.w500, color: p.ink)),
@@ -100,11 +150,13 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
 
             // ── email / password ─────────────────────────────────────────────
-            if (_signUp) _field(p, lang, 'name', Icons.person_outline),
+            if (_signUp) _field(p, lang, 'name', Icons.person_outline,
+                controller: _name),
             if (_signUp) const SizedBox(height: 12),
-            _field(p, lang, 'email', Icons.mail_outline),
+            _field(p, lang, 'email', Icons.mail_outline, controller: _email),
             const SizedBox(height: 12),
-            _field(p, lang, 'password', Icons.lock_outline, obscure: true),
+            _field(p, lang, 'password', Icons.lock_outline,
+                obscure: true, controller: _password),
             const SizedBox(height: 20),
             FilledButton(
               style: FilledButton.styleFrom(
@@ -113,12 +165,16 @@ class _AuthScreenState extends State<AuthScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14))),
-              onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(tr(lang, 'auth_note'))),
-              ),
-              child: Text(title,
-                  style:
-                      const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+              onPressed: _busy ? null : _submitPassword,
+              child: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: kPaper))
+                  : Text(title,
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w500)),
             ),
             const SizedBox(height: 14),
             Center(
@@ -131,18 +187,6 @@ class _AuthScreenState extends State<AuthScreen> {
                         fontWeight: FontWeight.w500)),
               ),
             ),
-            const SizedBox(height: 8),
-            Center(
-              child: TextButton(
-                onPressed: () => context.pop(),
-                child: Text(tr(lang, 'continue_guest'),
-                    style: TextStyle(fontSize: 13, color: p.muted)),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(tr(lang, 'auth_note'),
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11.5, color: p.muted)),
           ],
         ),
       ),
@@ -169,8 +213,9 @@ class _AuthScreenState extends State<AuthScreen> {
       );
 
   Widget _field(GatiPalette p, String lang, String key, IconData icon,
-      {bool obscure = false}) {
+      {bool obscure = false, TextEditingController? controller}) {
     return TextField(
+      controller: controller,
       obscureText: obscure,
       style: TextStyle(color: p.ink),
       decoration: InputDecoration(

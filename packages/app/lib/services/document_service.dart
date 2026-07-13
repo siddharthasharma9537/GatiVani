@@ -6,6 +6,7 @@ import 'package:http_parser/http_parser.dart';
 import '../config/api_config.dart';
 import '../models/article.dart';
 import '../models/newspaper_article.dart';
+import 'gemini_key_store.dart';
 
 class DocumentService {
   final String _endpoint = ApiConfig.documentsProcessUrl;
@@ -125,12 +126,19 @@ class DocumentService {
     // 2. Light leg: start the job from the stored path (returns in seconds).
     final r = await http
         .post(Uri.parse(ApiConfig.documentsProcessEditionUrl),
-            headers: {...ApiConfig.authHeaders, 'Content-Type': 'application/json'},
+            headers: {
+              ...ApiConfig.authHeaders,
+              'Content-Type': 'application/json',
+              ...GeminiKeyStore.headers,
+            },
             body: json.encode({'storagePath': path, 'filename': filename}))
         .timeout(const Duration(seconds: 120));
     final data = json.decode(r.body) as Map<String, dynamic>;
     if (r.statusCode != 200 || data['ok'] != true) {
-      throw Exception(data['message'] ?? 'Edition start failed (${r.statusCode})');
+      final msg = data['error'] == 'gemini_key_required'
+          ? 'Add your Gemini API key in Settings to process an edition.'
+          : (data['message'] ?? 'Edition start failed (${r.statusCode})');
+      throw Exception(msg);
     }
     return EditionJob(
       jobId: data['jobId'] as String,
