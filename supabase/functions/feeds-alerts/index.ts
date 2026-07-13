@@ -1,7 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // feeds-alerts — personal notification watch: exam results, admit cards and
-// government job notifications, per user-chosen topic.
+// government job notifications, per user-chosen topic. Powers the alerts
+// strip in the app's For You tab (see packages/app/lib/screens/
+// for_you_screen.dart and alerts_screen.dart).
 //
 // Same server-side Google News RSS mechanism as feeds-news (browser fetch of
 // news.google.com is CORS-blocked, so the edge function does it). For each
