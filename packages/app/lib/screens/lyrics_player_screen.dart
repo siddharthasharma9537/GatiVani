@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../l10n/strings.dart';
+import '../services/downloads_store.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../services/edition_store.dart';
@@ -591,7 +592,8 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     if (_downloading) return;
     setState(() => _downloading = true);
     final ok = await PlaybackService.i.preload(a);
-    if (!mounted) return;
+    if (ok) await DownloadsStore.i.add(a);
+    if (!mounted || !context.mounted) return;
     setState(() => _downloading = false);
     gatiSnack(context, tr(lang, ok ? 'downloaded' : 'download_failed'));
   }

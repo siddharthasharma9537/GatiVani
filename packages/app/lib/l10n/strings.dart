@@ -114,6 +114,22 @@ const Map<String, Map<String, String>> _kStrings = {
     'mkb_playlist_from': 'PM Radio Archive',
     'mkb_playlist_title': 'Mann Ki Baat',
     'episodes': 'episodes',
+    'downloads_empty': 'No downloads yet — use ⋯ → Download on any story.',
+    'offline': 'Offline',
+    'remove_download': 'Remove download',
+    'download_removed': 'Download removed',
+    'alerts': 'My Alerts',
+    'alerts_sub': 'Results, jobs & exam notifications',
+    'alerts_pick':
+        'Pick what to watch — results, admit cards and government job '
+            'notifications appear here as soon as they hit the news.',
+    'alerts_your_topics': 'Your topics',
+    'alerts_edit': 'Edit topics',
+    'alerts_done': 'Done',
+    'alerts_empty': 'Nothing new yet for your topics — we keep checking.',
+    'alerts_group_exams': 'Exams & results',
+    'alerts_group_jobs': 'Government jobs',
+    'alerts_error': 'Could not check for updates',
   },
   'te': {
     'listen': 'వినండి',
@@ -226,6 +242,23 @@ const Map<String, Map<String, String>> _kStrings = {
     'mkb_playlist_from': 'పీఎం రేడియో ఆర్కైవ్',
     'mkb_playlist_title': 'మన్ కీ బాత్',
     'episodes': 'ఎపిసోడ్‌లు',
+    'downloads_empty':
+        'ఇంకా డౌన్‌లోడ్‌లు లేవు — ఏ కథనంపైనైనా ⋯ → డౌన్‌లోడ్ నొక్కండి.',
+    'offline': 'ఆఫ్‌లైన్',
+    'remove_download': 'డౌన్‌లోడ్ తీసివేయి',
+    'download_removed': 'డౌన్‌లోడ్ తీసివేయబడింది',
+    'alerts': 'నా అలర్ట్‌లు',
+    'alerts_sub': 'ఫలితాలు, ఉద్యోగాలు & పరీక్ష నోటిఫికేషన్‌లు',
+    'alerts_pick':
+        'మీకు కావలసినవి ఎంచుకోండి — ఫలితాలు, అడ్మిట్ కార్డులు, ప్రభుత్వ '
+            'ఉద్యోగ నోటిఫికేషన్‌లు వార్తల్లో రాగానే ఇక్కడ కనిపిస్తాయి.',
+    'alerts_your_topics': 'మీ అంశాలు',
+    'alerts_edit': 'అంశాలను మార్చండి',
+    'alerts_done': 'పూర్తయింది',
+    'alerts_empty': 'మీ అంశాలకు కొత్తవి ఏమీ లేవు — మేము గమనిస్తూనే ఉంటాం.',
+    'alerts_group_exams': 'పరీక్షలు & ఫలితాలు',
+    'alerts_group_jobs': 'ప్రభుత్వ ఉద్యోగాలు',
+    'alerts_error': 'అప్‌డేట్‌లు తనిఖీ చేయలేకపోయాం',
   },
 };
 

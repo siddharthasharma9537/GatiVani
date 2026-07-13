@@ -24,6 +24,11 @@ class SettingsProvider extends ChangeNotifier {
   // hides everything else.
   String _feedSort = 'location'; // 'location' | 'latest'
   bool _districtOnly = false;
+  // Personal alerts: topic ids from kAlertTopics the user watches (exam
+  // results, govt job notifications…), and when they last opened the Alerts
+  // screen — anything newer counts as unread for the menu badge.
+  Set<String> _alertTopics = {};
+  DateTime? _alertsSeenAt;
 
   // ── Getters ─────────────────────────────────────────────────────────────────
   String get defaultVoice => _defaultVoice;
@@ -34,6 +39,8 @@ class SettingsProvider extends ChangeNotifier {
   String? get district => _district;
   String get feedSort => _feedSort;
   bool get districtOnly => _districtOnly;
+  Set<String> get alertTopics => Set.unmodifiable(_alertTopics);
+  DateTime? get alertsSeenAt => _alertsSeenAt;
 
   // ── "Auto" theme: light by day, dark at night ──────────────────────────────
   // ThemeMode.system is repurposed as a daylight-driven auto mode (a fixed local
@@ -122,6 +129,21 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void toggleAlertTopic(String id) {
+    _alertTopics.contains(id)
+        ? _alertTopics.remove(id)
+        : _alertTopics.add(id);
+    notifyListeners();
+    _save();
+  }
+
+  /// Everything currently shown has been seen — clears the menu badge.
+  void markAlertsSeen() {
+    _alertsSeenAt = DateTime.now();
+    notifyListeners();
+    _save();
+  }
+
   // ── Persistence ──────────────────────────────────────────────────────────────
   // SharedPreferences is cross-platform: localStorage on web, native key-value
   // store on iOS/Android — so settings persist everywhere with one code path
@@ -135,6 +157,9 @@ class SettingsProvider extends ChangeNotifier {
       _lang = prefs.getString('lang') ?? _lang;
       final d = prefs.getString('district');
       _district = (d == null || d.isEmpty) ? null : d;
+      _alertTopics = (prefs.getStringList('alertTopics') ?? []).toSet();
+      final seen = prefs.getString('alertsSeenAt');
+      _alertsSeenAt = seen == null ? null : DateTime.tryParse(seen);
     } catch (_) {}
     // Arm the day/night flip for the resolved mode.
     _scheduleDaylightFlip();
@@ -148,6 +173,9 @@ class SettingsProvider extends ChangeNotifier {
       await prefs.setDouble('playbackSpeed', _playbackSpeed);
       await prefs.setString('lang', _lang);
       await prefs.setString('district', _district ?? '');
+      await prefs.setStringList('alertTopics', _alertTopics.toList());
+      await prefs.setString(
+          'alertsSeenAt', _alertsSeenAt?.toIso8601String() ?? '');
     } catch (_) {}
   }
 
