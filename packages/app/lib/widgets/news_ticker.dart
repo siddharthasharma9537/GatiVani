@@ -20,6 +20,7 @@ class _NewsTickerState extends State<NewsTicker> {
   List<MarketItem> _markets = [];
   List<NewsItem> _headlines = [];
   String? _city; // slug the current prices were fetched for
+  String? _newsLang; // News Language the current headlines were fetched for
 
   @override
   void initState() {
@@ -28,20 +29,27 @@ class _NewsTickerState extends State<NewsTicker> {
   }
 
   // Prices follow the user's district: refetch when the nearest priced
-  // city changes (district picked in the filter / menu / via Vāni).
+  // city changes (district picked in the filter / menu / via Vāni). Headlines
+  // follow the News Language setting the same way.
   void _sync() {
     if (!mounted) return;
-    final d = districtByEn(context.read<SettingsProvider>().district);
+    final settings = context.read<SettingsProvider>();
+    final d = districtByEn(settings.district);
     final slug = d == null ? null : citySlugFor(d);
-    if (slug == _city && _markets.isNotEmpty) return;
+    final lang = settings.newsLanguage;
+    final langChanged = lang != _newsLang;
+    if (slug == _city && !langChanged && _markets.isNotEmpty) return;
     _city = slug;
-    _load(slug);
+    _newsLang = lang;
+    _load(slug, lang, forceHeadlines: langChanged);
   }
 
-  Future<void> _load(String? city) async {
+  Future<void> _load(String? city, String lang,
+      {bool forceHeadlines = false}) async {
     final marketsF = _feed.fetchMarkets(city: city);
-    final headlinesF =
-        _headlines.isEmpty ? _feed.fetch(topic: 'top', limit: 8) : null;
+    final headlinesF = (_headlines.isEmpty || forceHeadlines)
+        ? _feed.fetch(topic: 'top', limit: 8, lang: lang)
+        : null;
     final markets = await marketsF;
     final headlines = await headlinesF ?? _headlines;
     if (!mounted) return;

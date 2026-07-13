@@ -6,13 +6,19 @@ import '../tokens.dart';
 /// (Latest stories, Editorial & Opinion, All articles, Podcasts…), so the
 /// tabs read as one app.
 class GatiSectionLabel extends StatelessWidget {
-  const GatiSectionLabel(this.text, {super.key});
+  const GatiSectionLabel(this.text, {super.key, this.padding});
   final String text;
+
+  /// Override when the surrounding scroll view already supplies the
+  /// horizontal gutter (e.g. Live's snap scroll) — the default assumes the
+  /// label must inset itself.
+  final EdgeInsetsGeometry? padding;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, Gati.s3),
+      padding:
+          padding ?? const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, Gati.s3),
       child: Text(text,
           style: TextStyle(
               fontSize: 13,

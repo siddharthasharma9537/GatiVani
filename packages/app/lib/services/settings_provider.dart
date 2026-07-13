@@ -18,6 +18,9 @@ class SettingsProvider extends ChangeNotifier {
   // Home district (English key into kDistricts), null = no preference.
   // Biases Live stories and surfaces the edition's district news.
   String? _district;
+  // News Language: which language the Live feed's CONTENT is sourced/narrated
+  // in ('te' | 'hi') — distinct from `_lang`, which only switches UI chrome.
+  String _newsLanguage = 'te';
   // Feed ordering/filter shared by the Live and Paper lists (session-only,
   // set from the filter dropdown or by Vāni acting on a location query):
   // sort 'location' pins district-matching stories first; districtOnly
@@ -32,6 +35,7 @@ class SettingsProvider extends ChangeNotifier {
   String get lang => _lang;
   bool get isTelugu => _lang == 'te';
   String? get district => _district;
+  String get newsLanguage => _newsLanguage;
   String get feedSort => _feedSort;
   bool get districtOnly => _districtOnly;
 
@@ -110,6 +114,13 @@ class SettingsProvider extends ChangeNotifier {
     _save();
   }
 
+  void setNewsLanguage(String l) {
+    if (_newsLanguage == l || (l != 'te' && l != 'hi')) return;
+    _newsLanguage = l;
+    notifyListeners();
+    _save();
+  }
+
   void setFeedSort(String s) {
     if (_feedSort == s || (s != 'location' && s != 'latest')) return;
     _feedSort = s;
@@ -135,6 +146,7 @@ class SettingsProvider extends ChangeNotifier {
       _lang = prefs.getString('lang') ?? _lang;
       final d = prefs.getString('district');
       _district = (d == null || d.isEmpty) ? null : d;
+      _newsLanguage = prefs.getString('newsLanguage') ?? _newsLanguage;
     } catch (_) {}
     // Arm the day/night flip for the resolved mode.
     _scheduleDaylightFlip();
@@ -148,6 +160,7 @@ class SettingsProvider extends ChangeNotifier {
       await prefs.setDouble('playbackSpeed', _playbackSpeed);
       await prefs.setString('lang', _lang);
       await prefs.setString('district', _district ?? '');
+      await prefs.setString('newsLanguage', _newsLanguage);
     } catch (_) {}
   }
 

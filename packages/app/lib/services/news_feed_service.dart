@@ -36,6 +36,7 @@ class WebArticle {
     required this.pubDate,
     required this.summary,
     required this.body,
+    this.language = 'te',
   });
 
   final String id; // stable uuid (used as the TTS cache key)
@@ -45,8 +46,13 @@ class WebArticle {
   final String pubDate;
   final String summary;
   final String body;
+  // Content language ('te' | 'hi') — the feeds-articles response doesn't
+  // carry this itself (the client already knows what it asked for), so
+  // fetchArticles stamps it on after decoding; see NewsFeedService below.
+  final String language;
 
-  factory WebArticle.fromJson(Map<String, dynamic> j) => WebArticle(
+  factory WebArticle.fromJson(Map<String, dynamic> j, {String language = 'te'}) =>
+      WebArticle(
         id: (j['id'] as String?) ?? '',
         title: (j['title'] as String?) ?? '',
         link: (j['link'] as String?) ?? '',
@@ -54,6 +60,7 @@ class WebArticle {
         pubDate: (j['pubDate'] as String?) ?? '',
         summary: (j['summary'] as String?) ?? '',
         body: (j['body'] as String?) ?? '',
+        language: language,
       );
 }
 
@@ -93,9 +100,10 @@ class NewsFeedService {
   }
 
   /// Headlines only (Google News, diverse) — for the marquee.
-  Future<List<NewsItem>> fetch({String topic = 'top', int limit = 12}) async {
-    final uri = Uri.parse(
-        '${ApiConfig.functionsUrl}/feeds-news?topic=$topic&limit=$limit');
+  Future<List<NewsItem>> fetch(
+      {String topic = 'top', int limit = 12, String lang = 'te'}) async {
+    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-news'
+        '?topic=$topic&limit=$limit&lang=$lang');
     try {
       final r = await http.get(uri, headers: ApiConfig.authHeaders);
       if (r.statusCode != 200) return [];
@@ -111,16 +119,18 @@ class NewsFeedService {
 
   /// Full articles (publisher feeds with <content:encoded>) — readable +
   /// narratable in-app.
-  Future<List<WebArticle>> fetchArticles({int limit = 20}) async {
-    final uri =
-        Uri.parse('${ApiConfig.functionsUrl}/feeds-articles?limit=$limit');
+  Future<List<WebArticle>> fetchArticles(
+      {int limit = 20, String lang = 'te'}) async {
+    final uri = Uri.parse(
+        '${ApiConfig.functionsUrl}/feeds-articles?limit=$limit&lang=$lang');
     try {
       final r = await http.get(uri, headers: ApiConfig.authHeaders);
       if (r.statusCode != 200) return [];
       final d = json.decode(r.body) as Map<String, dynamic>;
       final items = (d['items'] as List?) ?? const [];
       return items
-          .map((e) => WebArticle.fromJson(e as Map<String, dynamic>))
+          .map((e) =>
+              WebArticle.fromJson(e as Map<String, dynamic>, language: lang))
           .toList();
     } catch (_) {
       return [];
@@ -187,8 +197,9 @@ class NewsFeedService {
   /// national/international headline right now, with an ORIGINAL Telugu
   /// title + explainer synthesized from independently-corroborated facts
   /// (never a translation of any one publisher's wording).
-  Future<Explainer?> fetchExplainer() async {
-    final uri = Uri.parse('${ApiConfig.functionsUrl}/feeds-explains');
+  Future<Explainer?> fetchExplainer({String lang = 'te'}) async {
+    final uri =
+        Uri.parse('${ApiConfig.functionsUrl}/feeds-explains?lang=$lang');
     try {
       final r = await http.get(uri, headers: ApiConfig.authHeaders)
           .timeout(const Duration(seconds: 20));

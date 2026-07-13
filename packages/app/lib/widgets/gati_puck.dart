@@ -107,8 +107,13 @@ class _GatiPuckState extends State<GatiPuck> {
                 top: pos.dy,
                 child: GestureDetector(
                   onPanStart: (_) => setState(() => _dragging = true),
+                  // Accumulate onto the _pos FIELD, not the `pos` local above —
+                  // that local is frozen at this build's value, and a fast drag
+                  // can fire several onPanUpdate calls before Flutter rebuilds
+                  // and rebinds this closure. Reading/writing the field instead
+                  // means every call sees the latest position, even mid-frame.
                   onPanUpdate: (d) => setState(() {
-                    _pos = _clamp(pos + d.delta, area);
+                    _pos = _clamp((_pos ?? pos) + d.delta, area);
                     _overStop = _inStopZone(_pos!, area);
                   }),
                   onPanEnd: (_) {

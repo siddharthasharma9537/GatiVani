@@ -18,6 +18,7 @@ import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/gati_shell.dart';
 import '../widgets/news_ticker.dart';
+import '../widgets/podcasts_grid.dart';
 
 /// v2 landing — a discovery surface that sits in FRONT of the newspaper.
 ///
@@ -55,7 +56,9 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   List<WebArticle> _articles = []; // Latest stories — full-body, readable in-app
   CricketMatch? _cricket; // null when nothing is live
   Explainer? _take; // "GatiVani Take" — today's weight-to-article pick
+  Map<String, PodcastEpisode> _podcasts = {}; // latest episode per show
   bool _loading = true;
+  String? _newsLang; // News Language the current _articles/_take were fetched for
 
   // Latest stories browse mode. List is the default; grid groups the stories
   // into per-publisher tiles. Tapping a tile filters the list to that source.
@@ -69,24 +72,40 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   }
 
   Future<void> _load() async {
+    final lang = context.read<SettingsProvider>().newsLanguage;
+    _newsLang = lang;
     // All feeds concurrently: market ticker + diverse headlines for the marquee,
-    // full articles for Latest stories, and the live cricket card (if any).
-    final articlesF = _feed.fetchArticles(limit: 12);
+    // full articles for Latest stories, podcasts for the shows strip, and the
+    // live cricket card (if any).
+    final articlesF = _feed.fetchArticles(limit: 12, lang: lang);
     final cricketF = _cricketSvc.fetch(mock: _cricketMock);
-    final takeF = _feed.fetchExplainer();
+    final takeF = _feed.fetchExplainer(lang: lang);
+    final podcastsF = _feed.fetchPodcasts();
     final articles = await articlesF;
     final cricket = await cricketF;
     final take = await takeF;
+    final podcasts = await podcastsF;
     if (!mounted) return;
     setState(() {
       _articles = articles;
       _cricket = cricket;
       _take = take;
+      _podcasts = {for (final e in podcasts) e.key: e};
       _loading = false;
     });
     // Shared with the reader + player's "Related articles" — same pool
     // Latest stories already fetched, no extra request.
     ReaderStore.i.all = articles;
+  }
+
+  // Refetch Latest stories + the Take when the News Language setting changes
+  // mid-session (picked in the menu) — same pattern as NewsTicker's district
+  // sync, checked once per build via a post-frame callback.
+  void _syncNewsLanguage() {
+    if (!mounted) return;
+    final lang = context.read<SettingsProvider>().newsLanguage;
+    if (lang == _newsLang) return;
+    _load();
   }
 
   // Play the match's AI Telugu commentary via the shared player.
@@ -114,6 +133,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       category: 'GatiVani Take',
       estimatedDurationSeconds: NewspaperArticle.estimateDuration(t.commentary),
       readingStyle: 'news_anchor',
+      language: _newsLang ?? 'te',
     );
     PlaybackService.i.playOne(art);
   }
@@ -132,6 +152,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
         category: a.source,
         estimatedDurationSeconds: NewspaperArticle.estimateDuration(a.body),
         readingStyle: 'news_anchor',
+        language: a.language,
       );
 
   // Latest stories, honoring the filter dropdown / Vāni: with a district
@@ -170,7 +191,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
     return [
       if (hits > 0)
         Padding(
-          padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s2, Gati.s5, 0),
+          padding: const EdgeInsets.fromLTRB(0, Gati.s2, 0, 0),
           child: Row(children: [
             const Icon(Icons.location_on, size: 14, color: Gati.accent),
             const SizedBox(width: 4),
@@ -186,7 +207,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
       ...ordered.map(row),
       if (ordered.isEmpty && settings.districtOnly)
         Padding(
-          padding: const EdgeInsets.all(Gati.s5),
+          padding: const EdgeInsets.symmetric(vertical: Gati.s5),
           child: Text(
               _t(lang, 'No stories from your district right now.',
                   'మీ జిల్లా నుంచి ప్రస్తుతం వార్తలు లేవు.'),
@@ -199,6 +220,8 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     final lang = context.watch<SettingsProvider>().lang;
+    context.watch<SettingsProvider>().newsLanguage; // rebuild on change
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncNewsLanguage());
     return Scaffold(
       backgroundColor: p.paper,
       body: SafeArea(
@@ -213,14 +236,48 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
             // Section-snap: the scroll settles on the Take and on Latest
             // stories; the story list scrolls INSIDE its section.
             child: LayoutBuilder(
+              // The side gutters belong to THIS outer snap scroll (same as
+              // Paper): cards no longer pad themselves horizontally, so a
+              // drag starting in the margins page-scrolls even when it lands
+              // beside the inner stories list.
               builder: (context, cons) => GatiSnapScroll(
                 onRefresh: _load,
+                padding: const EdgeInsets.only(left: Gati.s5, right: Gati.s5),
                 sections: [
+                  // Take / Podcasts / Newspaper are separate SECTIONS (not one
+                  // tall block) so the snap physics has a stop at each — one
+                  // block made scrolls magnet straight from the Take to
+                  // Latest stories with nothing to rest on in between.
                   Column(children: [
                     const SizedBox(height: Gati.s4),
                     if (_take != null)
                       _TakeCard(
                           take: _take!, onListen: () => _playTake(_take!)),
+                    const SizedBox(height: Gati.s5),
+                  ]),
+                  Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Audio shows teaser — the two real shows. Tapping
+                        // jumps to the Shows tab AND starts playback
+                        // (playback is global, so the puck follows).
+                        GatiSectionLabel(
+                            lang == 'te' ? 'పాడ్‌క్యాస్ట్‌లు' : 'Podcasts',
+                            padding: const EdgeInsets.only(bottom: Gati.s3)),
+                        PodcastsGrid(
+                          episodes: _podcasts,
+                          lang: lang,
+                          tiles: kPodcastTiles.sublist(0, 2),
+                          padding: EdgeInsets.zero,
+                          onTapEpisode: (ep) {
+                            context.go('/shows');
+                            playPodcastEpisode(ep);
+                          },
+                        ),
+                        const SizedBox(height: Gati.s5),
+                      ]),
+                  Column(children: [
+                    _NewspaperTile(lang: lang),
                     const SizedBox(height: Gati.s5),
                   ]),
                   SizedBox(
@@ -248,7 +305,6 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                             : _articles.isEmpty
                                 ? Padding(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: Gati.s5,
                                         vertical: Gati.s3),
                                     child: Text(
                                         _t(
@@ -292,14 +348,14 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                   Column(children: [
                     if (_cricket != null) ...[
                       const SizedBox(height: Gati.s5),
-                      GatiSectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్')),
+                      GatiSectionLabel(_t(lang, 'Live now', 'ఇప్పుడు లైవ్'),
+                          padding:
+                              const EdgeInsets.only(bottom: Gati.s3)),
                       _CricketCard(
                         match: _cricket!,
                         onListen: () => _playCommentary(_cricket!),
                       ),
                     ],
-                    const SizedBox(height: Gati.s5),
-                    _NewspaperTile(lang: lang),
                     const SizedBox(height: Gati.s6),
                   ]),
                 ],
@@ -329,7 +385,7 @@ class _TakeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, 0),
+      padding: EdgeInsets.zero,
       child: GestureDetector(
         onTap: onListen,
         child: Container(
@@ -405,7 +461,7 @@ class _CricketCard extends StatelessWidget {
     // card isn't tappable and the play icon doesn't show.
     final hasCommentary = match.commentary.trim().isNotEmpty;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, Gati.s2, Gati.s5, 0),
+      padding: const EdgeInsets.fromLTRB(0, Gati.s2, 0, 0),
       child: GestureDetector(
         onTap: hasCommentary ? onListen : null,
         child: Container(
@@ -510,7 +566,7 @@ class _NewspaperTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
+      padding: EdgeInsets.zero,
       child: GestureDetector(
         onTap: () => context.push('/newspaper'),
         child: Container(
@@ -582,7 +638,7 @@ class _StoryRow extends StatelessWidget {
       // the Paper articles get.
       onLongPressStart: (d) => onMore(d.globalPosition),
       child: Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, 10),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Container(
         decoration: BoxDecoration(
           color: r[0],
@@ -667,7 +723,7 @@ class _LatestHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = GatiPalette.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, Gati.s3),
+      padding: const EdgeInsets.only(bottom: Gati.s3),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -741,7 +797,7 @@ class _SourceGrid extends StatelessWidget {
     }
     final sources = counts.keys.toList();
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
+      padding: EdgeInsets.zero,
       child: GridView.count(
         crossAxisCount: 2,
         shrinkWrap: true,
@@ -800,7 +856,7 @@ class _SourceFilterChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Gati.s5, 0, Gati.s5, Gati.s2),
+      padding: const EdgeInsets.only(bottom: Gati.s2),
       child: Align(
         alignment: Alignment.centerLeft,
         child: GestureDetector(

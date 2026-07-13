@@ -80,17 +80,27 @@ class PodcastsGrid extends StatelessWidget {
     required this.episodes,
     required this.lang,
     this.tiles = kPodcastTiles,
+    this.padding,
+    this.onTapEpisode,
   });
 
   final Map<String, PodcastEpisode> episodes;
   final String lang;
   final List<({String key, String title, String meta, String section})> tiles;
 
+  /// Override when the surrounding scroll view already supplies the
+  /// horizontal gutter (e.g. Live's snap scroll).
+  final EdgeInsetsGeometry? padding;
+
+  /// Replaces the default play-in-place tap (used by Live to ALSO switch to
+  /// the Shows tab before playing). Long-press menu stays unchanged.
+  final void Function(PodcastEpisode ep)? onTapEpisode;
+
   @override
   Widget build(BuildContext context) {
     final dark = GatiPalette.of(context).dark;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
+      padding: padding ?? const EdgeInsets.symmetric(horizontal: Gati.s5),
       child: GridView.count(
         crossAxisCount: 2,
         shrinkWrap: true,
@@ -105,7 +115,7 @@ class PodcastsGrid extends StatelessWidget {
             meta: ep != null ? _episodeMeta(ep, lang) : it.meta,
             ramp: sectionRamp(it.section, dark: dark),
             onTap: ep != null
-                ? () => playPodcastEpisode(ep)
+                ? () => (onTapEpisode ?? playPodcastEpisode)(ep)
                 // No verified real audio source for this show yet.
                 : () => gatiSnack(context, 'Podcasts coming soon'),
             // Same actions menu as Paper cards and Live stories.

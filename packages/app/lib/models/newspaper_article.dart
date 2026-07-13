@@ -9,6 +9,12 @@ class NewspaperArticle {
   final int estimatedDurationSeconds;
   final int page;
 
+  /// Content language ('te' | 'hi') — drives the TTS voice/locale used when
+  /// this article is narrated. Defaults to 'te' since editions/most existing
+  /// content are Telugu; Live articles fetched under a Hindi News Language
+  /// selection carry 'hi' through from WebArticle.
+  final String language;
+
   /// Type detected by Gemini: "newspaper" | "sloka" | "mantra" | "book" | "other"
   final String documentType;
 
@@ -43,6 +49,7 @@ class NewspaperArticle {
     required this.category,
     required this.estimatedDurationSeconds,
     this.page = 1,
+    this.language = 'te',
     this.documentType = 'newspaper',
     this.readingStyle = 'news_anchor',
     this.suggestedSpeaker = '',
@@ -131,6 +138,7 @@ class NewspaperArticle {
       estimatedDurationSeconds:
           json['estimatedDurationSeconds'] as int? ?? estimateDuration(content),
       page: json['page'] as int? ?? 1,
+      language: json['language'] as String? ?? 'te',
       documentType: json['documentType'] as String? ?? 'newspaper',
       readingStyle: json['readingStyle'] as String? ?? 'news_anchor',
       suggestedSpeaker: json['suggestedSpeaker'] as String? ?? '',

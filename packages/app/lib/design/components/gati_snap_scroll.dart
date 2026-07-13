@@ -70,6 +70,91 @@ class _GatiSnapScrollState extends State<GatiSnapScroll> {
     return out;
   }
 
+  // ── Inner-list edge handoff ────────────────────────────────────────────
+  // Nested scrollables don't chain in Flutter: an inner list (Latest
+  // stories / All articles) that hits its top or bottom just stops, and the
+  // page beyond it is unreachable without moving to the gutter. So when an
+  // inner list overscrolls, the remainder drives THIS outer scroll — the
+  // drag keeps following the finger across the boundary, and on release the
+  // page glides one section in that direction and settles.
+  double _handoffDelta = 0; // signed accumulated inner-overscroll this drag
+  bool _settling = false; // an edge-handoff settle animation is running
+
+  void _settleTo(double target) {
+    final pos = _ctl.position;
+    target = target.clamp(pos.minScrollExtent, pos.maxScrollExtent);
+    if ((target - _ctl.offset).abs() < 1) return;
+    _settling = true;
+    _ctl
+        .animateTo(target,
+            duration: GatiMotion.vilamba, curve: Curves.easeOutCubic)
+        .whenComplete(() => _settling = false);
+  }
+
+  // The next section header in [direction] (+1 down / −1 up), or null when
+  // there is none (already at the outermost section).
+  double? _headerBeyond(int direction) {
+    final pos = _ctl.position;
+    final offs = _offsets()
+        .map((o) => o.clamp(pos.minScrollExtent, pos.maxScrollExtent))
+        .toList();
+    final px = _ctl.offset;
+    if (direction > 0) {
+      for (final o in offs) {
+        if (o > px + 4) return o;
+      }
+    } else {
+      for (final o in offs.reversed) {
+        if (o < px - 4) return o;
+      }
+    }
+    return null;
+  }
+
+  bool _onInnerScroll(ScrollNotification n) {
+    if (n.depth == 0 || _settling) return false;
+    if (n.metrics.axis != Axis.vertical) return false;
+
+    if (n is OverscrollNotification) {
+      if (n.dragDetails != null) {
+        // Finger still down past the inner edge → the page follows it 1:1.
+        final pos = _ctl.position;
+        _handoffDelta += n.overscroll;
+        pos.jumpTo((_ctl.offset + n.overscroll)
+            .clamp(pos.minScrollExtent, pos.maxScrollExtent));
+      } else if (n.velocity.abs() > 60) {
+        // Fling remainder crossing the edge → glide one section over.
+        final t = _headerBeyond(n.velocity > 0 ? 1 : -1);
+        if (t != null) _settleTo(t);
+        _handoffDelta = 0;
+      }
+      return false;
+    }
+
+    if (n is ScrollEndNotification && _handoffDelta.abs() > 12) {
+      // Drag-driven handoff released → settle on the section in the drag's
+      // direction (falling back to the nearest header, so a hesitant pull
+      // never strands the page between sections).
+      final dir = _handoffDelta > 0 ? 1 : -1;
+      final t = _headerBeyond(dir);
+      if (t != null) {
+        _settleTo(t);
+      } else {
+        final pos = _ctl.position;
+        final offs = _offsets()
+            .map((o) => o.clamp(pos.minScrollExtent, pos.maxScrollExtent))
+            .toList();
+        if (offs.isNotEmpty) {
+          final px = _ctl.offset;
+          _settleTo(offs
+              .reduce((a, b) => (a - px).abs() <= (b - px).abs() ? a : b));
+        }
+      }
+      _handoffDelta = 0;
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget list = ListView(
@@ -85,7 +170,16 @@ class _GatiSnapScrollState extends State<GatiSnapScroll> {
       list = RefreshIndicator(
           onRefresh: widget.onRefresh!, color: kAccent, child: list);
     }
-    return list;
+    // Clamping physics for every descendant list: the edge handoff rides on
+    // OverscrollNotification, which bouncing physics (iOS-flavored
+    // platforms) never emits — the inner list would rubber-band instead of
+    // handing the drag to the page.
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context)
+          .copyWith(physics: const ClampingScrollPhysics()),
+      child: NotificationListener<ScrollNotification>(
+          onNotification: _onInnerScroll, child: list),
+    );
   }
 }
 
@@ -113,15 +207,27 @@ class _SectionSnapPhysics extends ScrollPhysics {
 
     final px = position.pixels;
     double target;
-    // ANY directional motion advances to the next header — a higher
-    // threshold made gentle flings snap BACK to the previous section
-    // (a jittery tug-of-war around the middle of a section).
-    if (velocity > 60) {
-      target = offs.firstWhere((o) => o > px + 4,
-          orElse: () => position.maxScrollExtent);
-    } else if (velocity < -60) {
-      target = offs.lastWhere((o) => o < px - 4,
-          orElse: () => position.minScrollExtent);
+    if (velocity.abs() > 60) {
+      // iOS-style proximity snap: let the fling decelerate NATURALLY and
+      // settle on the header nearest to where it would have landed — a
+      // gentle flick travels one section, a hard fling several. (The old
+      // rule teleported to the immediate next header at ANY velocity,
+      // which read as a magnet yanking the page.)
+      final natural = super.createBallisticSimulation(position, velocity);
+      final end = (natural?.x(5.0) ?? px)
+          .clamp(position.minScrollExtent, position.maxScrollExtent);
+      target =
+          offs.reduce((a, b) => (a - end).abs() <= (b - end).abs() ? a : b);
+      // Never settle AGAINST the fling's direction (a short fling whose
+      // natural end is nearest its own starting header used to snap
+      // backwards — the jitter tug-of-war). Advance at least one header.
+      if (velocity > 0 && target <= px + 4) {
+        target = offs.firstWhere((o) => o > px + 4,
+            orElse: () => position.maxScrollExtent);
+      } else if (velocity < 0 && target >= px - 4) {
+        target = offs.lastWhere((o) => o < px - 4,
+            orElse: () => position.minScrollExtent);
+      }
     } else {
       // Still release → settle on the nearest header.
       target = offs.reduce(
@@ -132,10 +238,11 @@ class _SectionSnapPhysics extends ScrollPhysics {
     }
     if ((target - px).abs() < 1) return null;
     // Critically damped: glides to the header and stops — no overshoot,
-    // no wobble.
+    // no wobble. Softer than the original (m .5/k 180): that spring closed
+    // in ~150ms and felt like a magnet grabbing the page.
     return ScrollSpringSimulation(
       SpringDescription.withDampingRatio(
-          mass: 0.5, stiffness: 180, ratio: 1.0),
+          mass: 0.8, stiffness: 95, ratio: 1.0),
       px,
       target,
       velocity,
