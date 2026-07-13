@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 // feeds-podcasts — real Telugu podcast episodes for the Podcasts grid. Each
 // show is fetched from its own public RSS feed (found via Apple's keyless
@@ -169,30 +170,111 @@ async function fetchAirTelugu(): Promise<Episode | null> {
     const hh = time.slice(0, 2), mm = time.slice(2, 4);
     // Matches the app's RFC822-ish parser: "DD Mon YYYY HH:MM:SS".
     const pubDate = `${dateStr} ${hh}:${mm}:00 +0000`;
-    // Cheap duration estimate via a 1-byte range request (HEAD is blocked) —
-    // avoids downloading the whole multi-MB bulletin just to size it.
+    // newsonair's WAF black-holes in-browser <audio> fetches entirely, and
+    // even server-side fetches get TLS-reset intermittently — so streaming
+    // per-listen (direct OR proxied) is a coin flip. Instead each bulletin is
+    // copied ONCE into the public "audio" bucket and served from Supabase's
+    // CDN. The copy runs in the background (waitUntil) so this feed response
+    // never waits on the flaky host; until it lands, the audioUrl falls back
+    // to the mkb-audio-proxy stream, which works most of the time.
+    const storagePath = `air/${dateStr.replace(/\s+/g, "-")}-${hh}${mm}.mp3`;
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabase = (SUPABASE_URL && SERVICE_KEY)
+      ? createClient(SUPABASE_URL, SERVICE_KEY)
+      : null;
+
+    let servedUrl = `${MKB_PROXY_URL}?src=${encodeURIComponent(audioUrl)}`;
     let durationSeconds = 0;
-    try {
-      const rr = await fetch(audioUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)",
-          "Range": "bytes=0-1",
-        },
-        signal: ctrl.signal,
-      });
-      const range = rr.headers.get("content-range"); // "bytes 0-1/4092108"
-      const total = range ? parseInt(range.split("/")[1] ?? "0", 10) : 0;
-      if (total > 0) {
-        durationSeconds = Math.round((total * 8) / AIR_ASSUMED_BITRATE_BPS);
+    let cached = false;
+    if (supabase) {
+      const publicUrl =
+        supabase.storage.from("audio").getPublicUrl(storagePath).data.publicUrl;
+      try {
+        const head = await fetch(publicUrl, {
+          method: "HEAD",
+          signal: ctrl.signal,
+        });
+        if (head.ok) {
+          cached = true;
+          servedUrl = publicUrl;
+          const size = parseInt(head.headers.get("content-length") ?? "0", 10);
+          if (size > 0) {
+            durationSeconds = Math.round((size * 8) / AIR_ASSUMED_BITRATE_BPS);
+          }
+        }
+      } catch {
+        // storage HEAD failed — keep the proxy fallback
       }
-    } catch {
-      // best-effort — a missing duration just shows as unknown in the UI
+      if (!cached) {
+        EdgeRuntime.waitUntil((async () => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const dl = new AbortController();
+              const dt = setTimeout(() => dl.abort(), 60_000);
+              // "Range: bytes=0-" — a bare GET (no Range) gets TLS-reset far
+              // more often; asking for an explicit whole-file range passes.
+              const res = await fetch(audioUrl, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)",
+                  "Range": "bytes=0-",
+                },
+                signal: dl.signal,
+              });
+              if (res.status !== 200 && res.status !== 206) {
+                throw new Error(`upstream ${res.status}`);
+              }
+              const bytes = new Uint8Array(await res.arrayBuffer());
+              clearTimeout(dt);
+              if (bytes.length < 100_000) throw new Error("suspiciously small");
+              const { error } = await supabase.storage
+                .from("audio")
+                .upload(storagePath, bytes, {
+                  contentType: "audio/mpeg",
+                  upsert: true,
+                });
+              if (error) throw error;
+              console.log(`[feeds-podcasts] cached AIR bulletin ${storagePath} (${bytes.length}b)`);
+              return;
+            } catch (e) {
+              console.warn(`[feeds-podcasts] AIR cache attempt ${attempt + 1} failed:`, e);
+            }
+          }
+        })());
+      }
+    }
+    if (durationSeconds === 0) {
+      // Cheap size probe for the duration estimate (HEAD is blocked upstream).
+      try {
+        const rr = await fetch(audioUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)",
+            "Range": "bytes=0-1",
+          },
+          signal: ctrl.signal,
+        });
+        const range = rr.headers.get("content-range"); // "bytes 0-1/4092108"
+        let total = range ? parseInt(range.split("/")[1] ?? "0", 10) : 0;
+        // The WAF sometimes ignores Range and answers 200 with the full
+        // file — its content-length is the same total we wanted.
+        if (total <= 0 && rr.status === 200) {
+          total = parseInt(rr.headers.get("content-length") ?? "0", 10);
+        }
+        try {
+          await rr.body?.cancel(); // never actually download the bulletin here
+        } catch { /* already closed */ }
+        if (total > 0) {
+          durationSeconds = Math.round((total * 8) / AIR_ASSUMED_BITRATE_BPS);
+        }
+      } catch {
+        // best-effort — a missing duration just shows as unknown in the UI
+      }
     }
     return {
       key: "air_news",
       title: "AIR Telugu News",
       episodeTitle: `AIR Telugu News — ${hh}:${mm}`,
-      audioUrl,
+      audioUrl: servedUrl,
       durationSeconds,
       pubDate,
     };
@@ -200,6 +282,41 @@ async function fetchAirTelugu(): Promise<Episode | null> {
     return null;
   } finally {
     clearTimeout(t);
+  }
+}
+
+// When the live scrape fails (the WAF flakes on the listing page too), fall
+// back to the NEWEST bulletin already cached in storage — a few hours stale
+// beats the tile silently vanishing from the feed.
+async function airFromStorage(): Promise<Episode | null> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!SUPABASE_URL || !SERVICE_KEY) return null;
+  try {
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+    const { data, error } = await supabase.storage.from("audio").list("air", {
+      limit: 1,
+      sortBy: { column: "created_at", order: "desc" },
+    });
+    if (error || !data?.length) return null;
+    const f = data[0]; // name like "11-Jul-2026-0705.mp3"
+    const m = f.name.match(/^(\d{2})-([A-Za-z]{3})-(\d{4})-(\d{2})(\d{2})\.mp3$/);
+    const size = (f.metadata as { size?: number } | null)?.size ?? 0;
+    return {
+      key: "air_news",
+      title: "AIR Telugu News",
+      episodeTitle: m
+        ? `AIR Telugu News — ${m[4]}:${m[5]}`
+        : "AIR Telugu News",
+      audioUrl:
+        supabase.storage.from("audio").getPublicUrl(`air/${f.name}`).data
+          .publicUrl,
+      durationSeconds:
+        size > 0 ? Math.round((size * 8) / AIR_ASSUMED_BITRATE_BPS) : 0,
+      pubDate: m ? `${m[1]} ${m[2]} ${m[3]} ${m[4]}:${m[5]}:00 +0000` : "",
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -364,7 +481,7 @@ Deno.serve(async (req) => {
   try {
     const results = await Promise.all([
       ...SHOWS.map(fetchShow),
-      fetchAirTelugu(),
+      fetchAirTelugu().then((e) => e ?? airFromStorage()),
       fetchMannKiBaat(),
     ]);
     const items = results.filter((x): x is Episode => x !== null);

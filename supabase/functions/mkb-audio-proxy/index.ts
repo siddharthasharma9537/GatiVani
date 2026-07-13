@@ -1,19 +1,33 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-// mkb-audio-proxy — streams Mann Ki Baat audio from pmonradio.nic.in's CDN
-// (playhls.media.nic.in). That CDN 403s any request whose Referer isn't
-// https://pmonradio.nic.in/ itself (anti-hotlink), but a browser <audio>
-// element always sends the PAGE's own origin as Referer — and just_audio's
-// custom `headers` option only works on native platforms, not Flutter web,
-// so there's no way to fix this from the player. This proxy re-fetches the
-// file server-side with the right Referer and streams the bytes through,
-// forwarding the client's Range header so seeking still works.
+// mkb-audio-proxy — streams government-radio audio that browsers can't fetch
+// directly. Two hosts, two different blocks:
+//   - playhls.media.nic.in (Mann Ki Baat): 403s any request whose Referer
+//     isn't https://pmonradio.nic.in/ itself (anti-hotlink).
+//   - www.newsonair.gov.in (AIR bulletins): its WAF black-holes in-browser
+//     media fetches entirely (the request hangs — no error, no bytes) while
+//     serving plain server-side GETs fine.
+// A browser <audio> element can't send custom headers, and just_audio's
+// `headers` option only works on native platforms, not Flutter web — so this
+// proxy re-fetches the file server-side with acceptable headers and streams
+// the bytes through, forwarding the client's Range header so seeking still
+// works.
 //
-// Locked to the one CDN host feeds-podcasts discovers Mann Ki Baat episodes
-// from, so this can't be used as an open proxy for arbitrary URLs.
+// Locked to the hosts feeds-podcasts discovers episodes from, so this can't
+// be used as an open proxy for arbitrary URLs.
 
-const ALLOWED_HOST = "playhls.media.nic.in";
-const UPSTREAM_REFERER = "https://pmonradio.nic.in/";
+// newsonair's WAF is fingerprint-happy: adding a Referer (or even reordering
+// request headers) gets the connection TLS-reset. Send EXACTLY what
+// feeds-podcasts' duration probe sends — User-Agent + Range, nothing else —
+// since that's the one shape proven to pass from this runtime.
+const UPSTREAM_HOSTS: Record<string, { referer?: string; customTls: boolean }> = {
+  "playhls.media.nic.in": {
+    referer: "https://pmonradio.nic.in/", // anti-hotlink check wants this
+    customTls: true, // incomplete TLS chain — see the YR1 note below
+  },
+  "www.newsonair.gov.in": { customTls: false },
+  "newsonair.gov.in": { customTls: false },
+};
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -78,16 +92,19 @@ Deno.serve(async (req) => {
     } catch {
       return new Response("invalid src", { status: 400, headers: corsHeaders });
     }
-    if (upstream.hostname !== ALLOWED_HOST) {
+    const policy = UPSTREAM_HOSTS[upstream.hostname];
+    if (!policy) {
       return new Response("host not allowed", { status: 400, headers: corsHeaders });
     }
 
     const range = req.headers.get("range");
     const r = await fetch(upstream.toString(), {
-      client: upstreamClient,
+      // The custom client exists only for playhls's broken cert chain; other
+      // hosts get Deno's default TLS verification.
+      ...(policy.customTls ? { client: upstreamClient } : {}),
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)",
-        "Referer": UPSTREAM_REFERER,
+        ...(policy.referer ? { "Referer": policy.referer } : {}),
         ...(range ? { "Range": range } : {}),
       },
     });
