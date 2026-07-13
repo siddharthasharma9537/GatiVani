@@ -13,6 +13,7 @@ on:
     paths:
       - "packages/app/**"
       - "vercel.json"
+      - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
 
 concurrency:
