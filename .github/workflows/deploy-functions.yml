@@ -8,7 +8,7 @@ name: Deploy Edge Functions
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/live-discovery]
     paths:
       - "supabase/functions/**"
       - "supabase/config.toml"
