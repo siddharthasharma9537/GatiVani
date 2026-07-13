@@ -6,6 +6,7 @@ name: Deploy Web to Vercel
 # one at https://vercel.com/account/tokens then run:
 #   gh secret set VERCEL_TOKEN
 # Until the secret exists this workflow skips (does not fail).
+# Re-trigger by pushing any change under packages/app/ (or to this file).
 
 on:
   push:
