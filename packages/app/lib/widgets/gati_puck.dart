@@ -35,6 +35,20 @@ class _GatiPuckState extends State<GatiPuck> {
   bool _overStop = false;
   String? _lastError;
 
+  // Anchors captured on pointer-down, so drag position is computed as an
+  // absolute offset from the pointer's total movement rather than summed
+  // deltas — avoids any lag/catch-up jump once _dragThreshold is crossed.
+  Offset? _pointerDownGlobal;
+  Offset? _pointerDownPuck;
+  double _moveAccum = 0;
+  // Small enough to feel instant, big enough to keep finger jitter during a
+  // tap from being misread as a drag. A GestureDetector's onPan* here would
+  // instead compete with the ring/badge's onTap in the same gesture arena,
+  // which needs ~18px of movement before it resolves in favor of the drag —
+  // that resolution delay is what made the puck feel like it needed a
+  // deliberate wind-up before it would move.
+  static const _dragThreshold = 6.0;
+
   void _snapToEdge(Size area) {
     final p = _pos;
     if (p == null) return;
@@ -105,18 +119,36 @@ class _GatiPuckState extends State<GatiPuck> {
               Positioned(
                 left: pos.dx,
                 top: pos.dy,
-                child: GestureDetector(
-                  onPanStart: (_) => setState(() => _dragging = true),
-                  // Accumulate onto the _pos FIELD, not the `pos` local above —
-                  // that local is frozen at this build's value, and a fast drag
-                  // can fire several onPanUpdate calls before Flutter rebuilds
-                  // and rebinds this closure. Reading/writing the field instead
-                  // means every call sees the latest position, even mid-frame.
-                  onPanUpdate: (d) => setState(() {
-                    _pos = _clamp((_pos ?? pos) + d.delta, area);
-                    _overStop = _inStopZone(_pos!, area);
-                  }),
-                  onPanEnd: (_) {
+                child: Listener(
+                  onPointerDown: (e) {
+                    _pointerDownGlobal = e.position;
+                    _pointerDownPuck = _pos ?? pos;
+                    _moveAccum = 0;
+                  },
+                  // A plain Listener never enters the gesture arena, so it
+                  // can't compete with the ring/badge's onTap below — taps
+                  // resolve immediately on release with no drag recognizer
+                  // waiting to see if it should win instead. That's what
+                  // lets a tap stay a tap while any real movement, from the
+                  // very first pixel past _dragThreshold, moves the puck.
+                  onPointerMove: (e) {
+                    final downGlobal = _pointerDownGlobal;
+                    final downPuck = _pointerDownPuck;
+                    if (downGlobal == null || downPuck == null) return;
+                    _moveAccum += e.delta.distance;
+                    if (!_dragging && _moveAccum < _dragThreshold) return;
+                    final next =
+                        _clamp(downPuck + (e.position - downGlobal), area);
+                    setState(() {
+                      _dragging = true;
+                      _pos = next;
+                      _overStop = _inStopZone(next, area);
+                    });
+                  },
+                  onPointerUp: (_) {
+                    _pointerDownGlobal = null;
+                    _pointerDownPuck = null;
+                    if (!_dragging) return;
                     final stop = _overStop;
                     setState(() {
                       _dragging = false;
@@ -128,10 +160,14 @@ class _GatiPuckState extends State<GatiPuck> {
                       _snapToEdge(area);
                     }
                   },
-                  onPanCancel: () => setState(() {
-                    _dragging = false;
-                    _overStop = false;
-                  }),
+                  onPointerCancel: (_) {
+                    _pointerDownGlobal = null;
+                    _pointerDownPuck = null;
+                    setState(() {
+                      _dragging = false;
+                      _overStop = false;
+                    });
+                  },
                   child: _puck(ps, frac, errored),
                 ),
               ),
