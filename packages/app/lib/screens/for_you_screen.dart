@@ -22,6 +22,7 @@ import '../services/document_service.dart';
 import '../services/downloads_store.dart';
 import '../services/edition_store.dart';
 import '../services/playback_service.dart';
+import '../services/reactions_store.dart';
 import '../services/settings_provider.dart';
 
 /// For You tab (§8): everything personal in one place — fresh alerts for
@@ -42,6 +43,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
   void initState() {
     super.initState();
     DownloadsStore.i.ensureLoaded();
+    ReactionsStore.i.ensureLoaded();
     AlertsService.i.refreshIfStale(context.read<SettingsProvider>());
     _loadResume();
   }
@@ -88,7 +90,8 @@ class _ForYouScreenState extends State<ForYouScreen> {
           const SizedBox(height: Gati.s4),
           Expanded(
             child: ListenableBuilder(
-              listenable: Listenable.merge([AlertsService.i, DownloadsStore.i]),
+              listenable: Listenable.merge(
+                  [AlertsService.i, DownloadsStore.i, ReactionsStore.i]),
               builder: (context, _) => _body(p, s, lang),
             ),
           ),
@@ -103,6 +106,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
         ? <NewspaperArticle>[]
         : EditionStore.i.forSection('District').take(4).toList();
     final downloads = DownloadsStore.i.items.take(3).toList();
+    final liked = ReactionsStore.i.liked.take(4).toList();
 
     final children = <Widget>[];
 
@@ -156,10 +160,20 @@ class _ForYouScreenState extends State<ForYouScreen> {
       children.add(const SizedBox(height: Gati.s5));
     }
 
+    // ── Liked stories ───────────────────────────────────────────────────────
+    if (liked.isNotEmpty) {
+      children.add(GatiSectionLabel(tr(lang, 'liked_stories')));
+      for (final r in liked) {
+        children.add(_articleRow(p, lang, r.article));
+      }
+      children.add(const SizedBox(height: Gati.s5));
+    }
+
     final nothingPersonal = s.alertTopics.isEmpty &&
         _resume.isEmpty &&
         s.district == null &&
-        downloads.isEmpty;
+        downloads.isEmpty &&
+        liked.isEmpty;
     if (nothingPersonal) {
       children.add(Padding(
         padding: const EdgeInsets.symmetric(

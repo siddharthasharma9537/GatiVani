@@ -5,9 +5,11 @@ import 'package:provider/provider.dart';
 import '../l10n/strings.dart';
 import '../services/downloads_store.dart';
 import '../services/playback_service.dart';
+import '../services/reactions_store.dart';
 import '../services/settings_provider.dart';
 import '../services/edition_store.dart';
 import '../services/news_feed_service.dart';
+import '../design/components/add_to_playlist_sheet.dart';
 import '../design/components/gati_chip.dart';
 import '../design/components/gati_pill.dart';
 import '../design/components/gati_play_button.dart';
@@ -391,7 +393,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
                   ),
                   Opacity(
                     opacity: (1 - t).clamp(0.0, 1.0),
-                    child: _controls(p),
+                    child: _controls(p, a),
                   ),
                   // Queue preview, always on screen beneath the transport
                   // (Spotify-style) instead of hidden behind the swipe-up —
@@ -503,7 +505,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
           GatiPill(
               icon: Icons.bookmark_border_rounded,
               label: tr(lang, 'save'),
-              onTap: () => gatiSnack(context, tr(lang, 'save_soon'))),
+              onTap: () => showAddToPlaylistSheet(context, a)),
           const SizedBox(width: 8),
           GatiPill(
               icon: Icons.download_outlined,
@@ -991,7 +993,7 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
     );
   }
 
-  Widget _controls(PlaybackService p) {
+  Widget _controls(PlaybackService p, NewspaperArticle a) {
     final dur = p.duration;
     final pos = p.position;
     String fmt(Duration d) =>
@@ -1067,6 +1069,26 @@ class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
               p.muted,
               p.toggleMute),
         ]),
+        const SizedBox(height: 4),
+        // Like/Dislike — a quick interest signal distinct from the playback
+        // modes above; tapping the active one again clears it.
+        ListenableBuilder(
+          listenable: ReactionsStore.i,
+          builder: (context, _) {
+            final reaction = ReactionsStore.i.reactionFor(a.id);
+            return Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _modeBtn(
+                  Icons.thumb_up_rounded,
+                  reaction == ReactionKind.like,
+                  () => ReactionsStore.i.setReaction(a, ReactionKind.like)),
+              const SizedBox(width: 22),
+              _modeBtn(
+                  Icons.thumb_down_rounded,
+                  reaction == ReactionKind.dislike,
+                  () => ReactionsStore.i.setReaction(a, ReactionKind.dislike)),
+            ]);
+          },
+        ),
       ]),
     );
   }

@@ -7,6 +7,8 @@ import 'screens/for_you_screen.dart';
 import 'screens/gemini_key_gate_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/live_feed_screen.dart';
+import 'screens/playlist_detail_screen.dart';
+import 'screens/playlists_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/section_screen.dart';
 import 'screens/shows_screen.dart';
@@ -136,6 +138,12 @@ final GoRouter appRouter = GoRouter(
     GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
     GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
     GoRoute(path: '/alerts', builder: (_, __) => const AlertsScreen()),
+    GoRoute(path: '/playlists', builder: (_, __) => const PlaylistsScreen()),
+    GoRoute(
+      path: '/playlists/:id',
+      builder: (_, state) => PlaylistDetailScreen(
+          playlistId: state.pathParameters['id'] ?? ''),
+    ),
     GoRoute(
       path: '/auth',
       builder: (_, state) =>

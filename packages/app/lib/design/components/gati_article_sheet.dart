@@ -6,16 +6,18 @@ import '../../models/newspaper_article.dart';
 import '../../services/document_service.dart';
 import '../../services/downloads_store.dart';
 import '../../services/playback_service.dart';
+import '../../services/reactions_store.dart';
 import '../../services/settings_provider.dart';
 import '../../widgets/assistant_sheet.dart';
 import '../tokens.dart';
+import 'add_to_playlist_sheet.dart';
 import 'gati_states.dart';
 
 /// THE article actions menu — the same options everywhere an article (or
 /// episode) appears: Paper cards, Live stories, Shows tiles. A compact
 /// popup anchored at [globalPos] (the ⋯ button / long-press point), not a
 /// full-width sheet. Play now · Summarize · Play next · Add to Up Next ·
-/// Download · Read · Ask Vāni.
+/// Add to Playlist · Download · Like/Dislike · Read · Ask Vāni.
 void showGatiArticleMenu(
   BuildContext context,
   Offset globalPos,
@@ -26,18 +28,22 @@ void showGatiArticleMenu(
   final lang = context.read<SettingsProvider>().lang;
   final p = GatiPalette.of(context);
   final hasText = a.content.trim().isNotEmpty;
+  final reaction = ReactionsStore.i.reactionFor(a.id);
   final overlay =
       Overlay.of(context).context.findRenderObject()! as RenderBox;
 
   PopupMenuItem<VoidCallback> item(
-          IconData icon, String label, VoidCallback onTap) =>
+          IconData icon, String label, VoidCallback onTap,
+          {bool active = false}) =>
       PopupMenuItem<VoidCallback>(
         value: onTap,
         height: 38,
         child: Row(children: [
-          Icon(icon, color: p.muted, size: 18),
+          Icon(icon, color: active ? Gati.accent : p.muted, size: 18),
           const SizedBox(width: 10),
-          Text(label, style: TextStyle(color: p.ink, fontSize: 13.5)),
+          Text(label,
+              style: TextStyle(
+                  color: active ? Gati.accent : p.ink, fontSize: 13.5)),
         ]),
       );
 
@@ -66,8 +72,18 @@ void showGatiArticleMenu(
         PlaybackService.i.addToQueue([a]);
         gatiSnack(context, tr(lang, 'added_queue'));
       }),
+      item(Icons.queue_music_rounded, tr(lang, 'add_to_playlist'),
+          () => showAddToPlaylistSheet(context, a)),
       item(Icons.download_rounded, tr(lang, 'download'),
           () => _download(context, a, lang)),
+      item(
+          Icons.thumb_up_rounded, tr(lang, 'like'),
+          () => ReactionsStore.i.setReaction(a, ReactionKind.like),
+          active: reaction == ReactionKind.like),
+      item(
+          Icons.thumb_down_rounded, tr(lang, 'dislike'),
+          () => ReactionsStore.i.setReaction(a, ReactionKind.dislike),
+          active: reaction == ReactionKind.dislike),
       if (onRead != null)
         item(Icons.chrome_reader_mode_outlined, tr(lang, 'read_story'),
             onRead),

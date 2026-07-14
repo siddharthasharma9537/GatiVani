@@ -31,7 +31,6 @@ const Map<String, Map<String, String>> _kStrings = {
     'your_queue': 'Your Queue',
     'queue_empty': 'Queue is empty',
     'mix_added': 'Mix queued',
-    'save_soon': 'Playlists coming soon',
     'summarize': 'Summarize',
     'summarizing': 'Summarizing…',
     'summary_failed': 'Could not summarize',
@@ -137,6 +136,21 @@ const Map<String, Map<String, String>> _kStrings = {
     'foryou_empty':
         'Make GatiVāni yours — pick a district, watch alerts, '
             'download stories for the road.',
+    'like': 'Like',
+    'dislike': 'Dislike',
+    'liked_stories': 'Liked stories',
+    'playlists': 'Playlists',
+    'playlists_empty': 'No playlists yet — use Save on any story to start one.',
+    'playlist_empty': 'No stories yet — add some from any story\'s menu.',
+    'add_to_playlist': 'Add to Playlist',
+    'added_to_playlist': 'Added to playlist',
+    'new_playlist': 'New playlist',
+    'playlist_name_hint': 'Playlist name',
+    'rename_playlist': 'Rename playlist',
+    'delete_playlist': 'Delete playlist',
+    'remove_from_playlist': 'Remove from playlist',
+    'cancel': 'Cancel',
+    'create': 'Create',
   },
   'te': {
     'listen': 'వినండి',
@@ -166,7 +180,6 @@ const Map<String, Map<String, String>> _kStrings = {
     'your_queue': 'మీ క్యూ',
     'queue_empty': 'క్యూ ఖాళీగా ఉంది',
     'mix_added': 'మిక్స్ క్యూలో చేర్చబడింది',
-    'save_soon': 'ప్లేలిస్ట్‌లు త్వరలో',
     'summarize': 'సారాంశం',
     'summarizing': 'సారాంశం సిద్ధమవుతోంది…',
     'summary_failed': 'సారాంశం రూపొందించలేకపోయాం',
@@ -273,6 +286,23 @@ const Map<String, Map<String, String>> _kStrings = {
     'foryou_empty':
         'గతివాణిని మీదిగా చేసుకోండి — జిల్లా ఎంచుకోండి, అలర్ట్‌లు పెట్టుకోండి, '
             'ప్రయాణానికి కథనాలను డౌన్‌లోడ్ చేసుకోండి.',
+    'like': 'ఇష్టం',
+    'dislike': 'ఇష్టం లేదు',
+    'liked_stories': 'ఇష్టపడిన కథనాలు',
+    'playlists': 'ప్లేలిస్ట్‌లు',
+    'playlists_empty':
+        'ఇంకా ప్లేలిస్ట్‌లు లేవు — ఏదైనా కథనంలో సేవ్ ఉపయోగించి మొదలుపెట్టండి.',
+    'playlist_empty':
+        'ఇంకా కథనాలు లేవు — ఏదైనా కథనం మెనూ నుండి జోడించండి.',
+    'add_to_playlist': 'ప్లేలిస్ట్‌కు జోడించండి',
+    'added_to_playlist': 'ప్లేలిస్ట్‌కు జోడించబడింది',
+    'new_playlist': 'కొత్త ప్లేలిస్ట్',
+    'playlist_name_hint': 'ప్లేలిస్ట్ పేరు',
+    'rename_playlist': 'ప్లేలిస్ట్ పేరు మార్చండి',
+    'delete_playlist': 'ప్లేలిస్ట్ తొలగించండి',
+    'remove_from_playlist': 'ప్లేలిస్ట్ నుండి తీసివేయండి',
+    'cancel': 'రద్దు చేయండి',
+    'create': 'సృష్టించండి',
   },
 };
 
