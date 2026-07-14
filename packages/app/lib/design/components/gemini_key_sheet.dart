@@ -8,8 +8,9 @@ import '../tokens.dart';
 
 /// BYOK entry point (menu → GatiVāni → Gemini API key). Narrating/processing
 /// a user's own uploaded Paper edition runs on their own Gemini key instead of
-/// a shared one — the key is stored locally only (see GeminiKeyStore) and
-/// attached as a header on requests the user themselves triggers.
+/// a shared one — the key is cached locally (see GeminiKeyStore), attached as
+/// a header on requests the user themselves triggers, and synced to their
+/// account so it carries over to other signed-in devices.
 void showGeminiKeySheet(BuildContext context) {
   final p = GatiPalette.of(context);
   showModalBottomSheet<void>(
@@ -119,7 +120,8 @@ class _GeminiKeySheetState extends State<_GeminiKeySheet> {
           const SizedBox(height: 6),
           Text(
             "Narrating your uploaded Paper editions runs on your own free "
-            "Gemini key, not GatiVāni's — your key stays on this device.",
+            "Gemini key, not GatiVāni's — saved to your account, so you "
+            "won't need to re-enter it on other signed-in devices.",
             style: TextStyle(fontSize: 13, color: p.muted, height: 1.4),
           ),
           const SizedBox(height: 16),

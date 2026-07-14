@@ -1,13 +1,24 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'gemini_key_store.dart';
 
 /// Thin wrapper over Supabase auth (GoTrue): exposes the signed-in user and the
 /// OAuth sign-in / sign-out actions, and notifies listeners when auth changes
 /// (including the redirect that completes an OAuth round-trip on web).
 class AuthService extends ChangeNotifier {
   AuthService() {
-    _sub = _auth.onAuthStateChange.listen((_) => notifyListeners());
+    _sub = _auth.onAuthStateChange.listen((state) {
+      notifyListeners();
+      // Pull any Gemini key already registered to this account so a new
+      // device / reinstall doesn't re-prompt for one that's already set.
+      if (state.event == AuthChangeEvent.signedIn ||
+          state.event == AuthChangeEvent.initialSession) {
+        GeminiKeyStore.syncFromRemote();
+      } else if (state.event == AuthChangeEvent.signedOut) {
+        GeminiKeyStore.clearLocal();
+      }
+    });
   }
 
   final GoTrueClient _auth = Supabase.instance.client.auth;
