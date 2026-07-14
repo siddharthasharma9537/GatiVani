@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/newspaper_article.dart';
+import 'playlists_store.dart';
 
 enum ReactionKind { like, dislike }
 
@@ -91,14 +92,20 @@ class ReactionsStore extends ChangeNotifier {
 
   /// Tapping the same reaction again clears it (toggle-off); tapping the
   /// other one switches it — a story can't be both liked and disliked.
+  ///
+  /// Liking/un-liking also adds/removes the story from the "Liked" default
+  /// playlist (PlaylistsStore.likedPlaylistId), so the two stay in sync.
   Future<void> setReaction(NewspaperArticle article, ReactionKind kind) async {
     await ensureLoaded();
+    final wasLiked = _byId[article.id]?.kind == ReactionKind.like;
     final current = _byId[article.id]?.kind;
+    var nowLiked = false;
     if (current == kind) {
       _byId.remove(article.id);
     } else {
       _byId[article.id] =
           ReactionRecord(article: article, kind: kind, reactedAt: DateTime.now());
+      nowLiked = kind == ReactionKind.like;
       if (_byId.length > _maxRecords) {
         // Evict the oldest reaction across both kinds.
         final oldest = _byId.values.reduce(
@@ -108,6 +115,12 @@ class ReactionsStore extends ChangeNotifier {
     }
     notifyListeners();
     await _save();
+    if (nowLiked && !wasLiked) {
+      await PlaylistsStore.i.addArticle(PlaylistsStore.likedPlaylistId, article);
+    } else if (wasLiked && !nowLiked) {
+      await PlaylistsStore.i
+          .removeArticle(PlaylistsStore.likedPlaylistId, article.id);
+    }
   }
 
   Future<void> _save() async {

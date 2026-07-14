@@ -18,6 +18,10 @@ class PlaylistsStore extends ChangeNotifier {
   static const _prefsKey = 'playlists_v1';
   static final _rand = Random();
 
+  /// Fixed id so ReactionsStore can always find it, even across the rename
+  /// the user is free to give it like any other playlist.
+  static const likedPlaylistId = 'liked';
+
   final List<Playlist> _playlists = [];
   bool _loaded = false;
 
@@ -36,13 +40,31 @@ class PlaylistsStore extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefsKey);
-      if (raw == null || raw.isEmpty) return;
+      // No key at all means this device has never had playlists persisted —
+      // seed the defaults once. A later empty `[]` (user deleted everything)
+      // still has the key, so this never re-seeds after that.
+      if (raw == null) {
+        _seedDefaults();
+        notifyListeners();
+        await _save();
+        return;
+      }
+      if (raw.isEmpty) return;
       final list = (json.decode(raw) as List).cast<Map<String, dynamic>>();
       _playlists
         ..clear()
         ..addAll(list.map(Playlist.fromJson));
       notifyListeners();
     } catch (_) {}
+  }
+
+  void _seedDefaults() {
+    final now = DateTime.now();
+    _playlists.addAll([
+      Playlist(id: _newId(), name: 'My Favorites', createdAt: now),
+      Playlist(id: _newId(), name: 'Read Later', createdAt: now),
+      Playlist(id: likedPlaylistId, name: 'Liked', createdAt: now),
+    ]);
   }
 
   // 1 << 31 (not 1 << 32): dart2js's `<<` on web doesn't reproduce VM 64-bit

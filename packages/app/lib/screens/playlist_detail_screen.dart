@@ -7,13 +7,15 @@ import '../design/components/gati_states.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
+import '../services/news_feed_service.dart' show ReaderStore, WebArticle;
 import '../services/playback_service.dart';
 import '../services/playlists_store.dart';
 import '../services/settings_provider.dart';
 import '../widgets/gati_puck.dart';
 
 /// One playlist: reorder by dragging, remove a story, "Play all" starts it
-/// from the top, tapping a row starts it from that position.
+/// from the top. Tapping a row opens the full story (same reader as
+/// everywhere else in the app); the ▶ plays it in the mini-player.
 class PlaylistDetailScreen extends StatefulWidget {
   const PlaylistDetailScreen({super.key, required this.playlistId});
   final String playlistId;
@@ -64,6 +66,22 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       await PlaylistsStore.i.delete(widget.playlistId);
       if (mounted) context.pop();
     }
+  }
+
+  // Tap opens the article TEXT (same reader as everywhere else); the ▶
+  // starts playback in the mini-player instead.
+  void _openArticle(NewspaperArticle a) {
+    final lang = context.read<SettingsProvider>().lang;
+    ReaderStore.i.current = WebArticle(
+      id: a.id,
+      title: a.title,
+      link: '',
+      source: sectionLabel(a.category, lang),
+      pubDate: '',
+      summary: a.preview,
+      body: a.content,
+    );
+    context.push('/reader');
   }
 
   @override
@@ -174,38 +192,38 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       child: Row(children: [
         Expanded(
           child: InkWell(
-            onTap: () {
-              final pl = PlaylistsStore.i.byId(widget.playlistId);
-              if (pl != null) {
-                PlaybackService.i.playAll(pl.articles, start: index);
-              }
-            },
-            child: Row(children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(a.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 14.5, height: 1.35, color: p.ink)),
-                    const SizedBox(height: 4),
-                    Text(
-                        '${sectionLabel(a.category, lang)} · '
-                        '${(a.estimatedDurationSeconds / 60).ceil()} ${tr(lang, 'min')}',
-                        style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w500,
-                            color: Gati.accent)),
-                  ],
-                ),
-              ),
-              const SizedBox(width: Gati.s2),
-              const Icon(Icons.play_arrow_rounded,
-                  color: Gati.accent, size: 22),
-            ]),
+            onTap: () => _openArticle(a),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(a.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 14.5, height: 1.35, color: p.ink)),
+                const SizedBox(height: 4),
+                Text(
+                    '${sectionLabel(a.category, lang)} · '
+                    '${(a.estimatedDurationSeconds / 60).ceil()} ${tr(lang, 'min')}',
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        color: Gati.accent)),
+              ],
+            ),
           ),
+        ),
+        const SizedBox(width: Gati.s2),
+        IconButton(
+          icon: const Icon(Icons.play_arrow_rounded,
+              color: Gati.accent, size: 22),
+          tooltip: tr(lang, 'play_all'),
+          onPressed: () {
+            final pl = PlaylistsStore.i.byId(widget.playlistId);
+            if (pl != null) {
+              PlaybackService.i.playAll(pl.articles, start: index);
+            }
+          },
         ),
         IconButton(
           icon: Icon(Icons.remove_circle_outline, color: p.muted, size: 20),
