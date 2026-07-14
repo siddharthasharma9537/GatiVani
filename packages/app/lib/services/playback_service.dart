@@ -69,6 +69,7 @@ class PlaybackService extends ChangeNotifier {
           (pos.inSeconds - _lastSaveSec).abs() >= 10) {
         _saveProgress();
       }
+      _maybePrefetchNext(pos);
     });
   }
   static final PlaybackService i = PlaybackService._();
@@ -82,6 +83,17 @@ class PlaybackService extends ChangeNotifier {
   // _playIndex so only the most recent one ever touches the player.
   bool _advancing = false;
   int _playEpoch = 0;
+  // Article id we've already kicked off a background prefetch-synthesis for,
+  // so a burst of position-stream ticks near the end of a track doesn't fire
+  // duplicate requests.
+  String? _prefetchedArticleId;
+  // How close to the end of the current track to start synthesizing the next
+  // one. Close enough that closing the app / bailing out mid-article doesn't
+  // burn the user's Gemini quota on a track they never reach; early enough
+  // that synthesis (typically single-digit seconds to well under a minute for
+  // one article, given server-side chunk parallelism) usually finishes before
+  // it's actually needed.
+  static const _prefetchLookahead = Duration(seconds: 20);
   // When true, this session narrates the short briefing (headline + lede) and
   // caches it separately. The lyrics view reads this to show matching text.
   bool brief = false;
@@ -176,6 +188,74 @@ class PlaybackService extends ChangeNotifier {
       }
     } catch (_) {}
     return false;
+  }
+
+  /// The queue position that will play next in the current (non-shuffle)
+  /// order, or null if nothing predictable is next. Shuffle picks its next
+  /// index randomly at the moment of advancing (see `_nextIndex`), so there's
+  /// nothing to prefetch ahead of time there.
+  int? _peekNextIndex() {
+    if (shuffle || queue.isEmpty || index < 0) return null;
+    if (index + 1 < queue.length) return index + 1;
+    if (repeatMode == QueueRepeat.all && queue.length > 1) return 0;
+    return null;
+  }
+
+  /// Once the current track is within [_prefetchLookahead] of ending, kick off
+  /// synthesis for the next queued track in the background — so it's likely
+  /// already cached by the time the user reaches it, without having spent that
+  /// cost on tracks they never get to (closing the app, skipping around).
+  void _maybePrefetchNext(Duration pos) {
+    if (!player.playing) return;
+    final dur = player.duration;
+    if (dur == null || dur == Duration.zero) return;
+    if (dur - pos > _prefetchLookahead) return;
+    final ni = _peekNextIndex();
+    if (ni == null) return;
+    final next = queue[ni];
+    if (next.id == _prefetchedArticleId) return;
+    final alreadyReady = brief
+        ? (next.summaryAudioUrl?.startsWith('http') ?? false)
+        : (next.audioUrl?.startsWith('http') ?? false);
+    if (alreadyReady) return;
+    if (Supabase.instance.client.auth.currentUser == null) return;
+    if (!GeminiKeyStore.hasKey) return;
+    _prefetchedArticleId = next.id;
+    unawaited(_prefetchSynthesis(next));
+  }
+
+  Future<void> _prefetchSynthesis(NewspaperArticle a) async {
+    try {
+      final r = await http
+          .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
+              headers: {
+                ...ApiConfig.authHeaders,
+                'Content-Type': 'application/json',
+                ...GeminiKeyStore.headers,
+              },
+              body: json.encode({
+                'text':
+                    brief ? (a.summaryText ?? a.briefingText) : a.spokenText,
+                'language': '${a.language}-IN',
+                'articleId': a.id,
+                if (brief) 'target': 'summary_audio_url',
+                if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
+                if (a.readingStyle.isNotEmpty) 'readingStyle': a.readingStyle,
+              }))
+          .timeout(const Duration(seconds: 150));
+      final data = json.decode(r.body) as Map<String, dynamic>;
+      if (data['ok'] == true) {
+        final url = data['audioUrl'] as String?;
+        if (brief) {
+          a.summaryAudioUrl = url;
+        } else {
+          a.audioUrl = url;
+        }
+      }
+    } catch (_) {
+      // Best-effort — if this fails, _playIndex still synthesizes normally
+      // (with its own retry path) once the user actually reaches this track.
+    }
   }
 
   /// How many tracks are queued after the current one.
