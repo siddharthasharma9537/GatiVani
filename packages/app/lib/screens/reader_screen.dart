@@ -9,6 +9,8 @@ import '../design/tokens.dart';
 import '../models/newspaper_article.dart';
 import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
+import '../services/share_stub.dart'
+    if (dart.library.html) '../services/share_web.dart' as export_;
 import '../services/settings_provider.dart';
 import '../widgets/gati_puck.dart';
 
@@ -75,8 +77,30 @@ class ReaderScreen extends StatelessWidget {
                         fontWeight: FontWeight.w500,
                         color: kAccent)),
               ),
-              if (age.isNotEmpty)
+              if (age.isNotEmpty) ...[
                 Text(age, style: TextStyle(fontSize: 12, color: p.muted)),
+                const SizedBox(width: Gati.s2),
+              ],
+              if (export_.canShare || export_.canExportArticle)
+                IconButton(
+                  icon: Icon(Icons.share_outlined, color: p.ink, size: 21),
+                  tooltip: 'Share',
+                  onPressed: () {
+                    if (export_.canShare) {
+                      // The OS/browser's own share sheet — WhatsApp, Facebook,
+                      // Mail, Save to Files, and on many platforms Print
+                      // itself, all show up automatically with no extra work
+                      // here; it's populated by whatever's installed.
+                      export_.shareContent(
+                        title: a.title,
+                        text: a.summary.isNotEmpty ? a.summary : a.body,
+                        url: a.link,
+                      );
+                    } else {
+                      _showExportSheet(context, a);
+                    }
+                  },
+                ),
             ]),
           ),
           Expanded(
@@ -310,3 +334,34 @@ class _EmptyReader extends StatelessWidget {
 }
 
 String _t(String lang, String en, String te) => lang == 'te' ? te : en;
+
+/// Fallback for browsers without Web Share support (older desktop mainly):
+/// the same print/download options a share sheet would otherwise offer.
+void _showExportSheet(BuildContext context, WebArticle a) {
+  final lang = context.read<SettingsProvider>().lang;
+  showModalBottomSheet<void>(
+    context: context,
+    builder: (ctx) => SafeArea(
+      child: Wrap(children: [
+        ListTile(
+          leading: const Icon(Icons.print_outlined),
+          title: Text(
+              _t(lang, 'Print / Save as PDF', 'ప్రింట్ / PDFగా సేవ్ చేయండి')),
+          onTap: () {
+            Navigator.pop(ctx);
+            export_.printArticle(a.title, a.body);
+          },
+        ),
+        ListTile(
+          leading: const Icon(Icons.download_outlined),
+          title:
+              Text(_t(lang, 'Download as text', 'టెక్స్ట్‌గా డౌన్‌లోడ్')),
+          onTap: () {
+            Navigator.pop(ctx);
+            export_.downloadArticleText(a.title, a.body);
+          },
+        ),
+      ]),
+    ),
+  );
+}

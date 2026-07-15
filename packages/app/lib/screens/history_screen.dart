@@ -9,10 +9,10 @@ import '../config/api_config.dart';
 import '../design/components/gati_states.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
-import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
 import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
+import '../services/playlists_store.dart';
 import '../services/settings_provider.dart';
 import '../widgets/gati_puck.dart';
 
@@ -71,6 +71,7 @@ class _HistoryBodyState extends State<HistoryBody> {
   @override
   void initState() {
     super.initState();
+    PlaylistsStore.i.ensureLoaded();
     _load();
   }
 
@@ -78,7 +79,8 @@ class _HistoryBodyState extends State<HistoryBody> {
     try {
       final r = await http.get(
         Uri.parse('${ApiConfig.restUrl}/recent_plays'
-            '?select=article_id,title,category,position_seconds,duration_seconds,completed,played_at'
+            '?select=article_id,title,category,position_seconds,duration_seconds,'
+            'completed,played_at,content_expires_at'
             '&order=played_at.desc&limit=50'),
         headers: ApiConfig.authHeaders,
       );
@@ -94,62 +96,25 @@ class _HistoryBodyState extends State<HistoryBody> {
     }
   }
 
-  NewspaperArticle _toArticle(WebArticle a) => NewspaperArticle(
-        id: a.id,
-        title: a.title,
-        content: a.body,
-        preview: a.summary,
-        category: a.source,
-        estimatedDurationSeconds: NewspaperArticle.estimateDuration(a.body),
-        readingStyle: 'news_anchor',
-        language: a.language,
-      );
-
-  // Resolve the played article by id: Live articles have no row in Supabase
-  // to fetch later, so check this session's in-memory feed pool first;
-  // Paper articles fall back to the DB. Null if genuinely unavailable
-  // (feed refreshed since, article removed, etc).
-  Future<NewspaperArticle?> _resolveArticle(String id) async {
-    final live = liveArticleById(id);
-    if (live != null) return _toArticle(live);
-    return DocumentService().fetchArticleById(id);
-  }
-
   // Row tap: open the full story text, same as everywhere else in the app
   // (Live/Paper/Playlist all split tap this way — text opens the reader,
-  // a separate ▶/resume icon plays directly).
+  // a separate ▶/resume icon plays directly). resolvePlayedWebArticle checks
+  // the 24h content snapshot, then the in-memory Live pool, then the
+  // permanent Paper table, in that order.
   Future<void> _openReader(Map<String, dynamic> m) async {
-    final id = m['article_id'] as String?;
-    if (id == null) return;
-    final live = liveArticleById(id);
-    if (live != null) {
-      ReaderStore.i.current = live;
-      if (mounted) context.push('/reader');
-      return;
-    }
-    final a = await DocumentService().fetchArticleById(id);
+    final a = await resolvePlayedWebArticle(m);
     if (a == null) {
       if (mounted) gatiSnack(context, 'This article is no longer available.');
       return;
     }
-    ReaderStore.i.current = WebArticle(
-      id: a.id,
-      title: a.title,
-      link: '',
-      source: a.category,
-      pubDate: '',
-      summary: a.preview,
-      body: a.content,
-    );
+    ReaderStore.i.current = a;
     if (mounted) context.push('/reader');
   }
 
   // Resume button: play directly in the mini-player from the saved spot,
   // bypassing the reader.
   Future<void> _resume(Map<String, dynamic> m) async {
-    final id = m['article_id'] as String?;
-    if (id == null) return;
-    final a = await _resolveArticle(id);
+    final a = await resolvePlayedArticle(m);
     if (a == null) {
       if (mounted) {
         gatiSnack(context, 'This article is no longer available to resume.');
@@ -160,6 +125,24 @@ class _HistoryBodyState extends State<HistoryBody> {
     final done = m['completed'] == true;
     await PlaybackService.i.playOne(a,
         resumeAt: done ? null : Duration(seconds: pos));
+  }
+
+  // "Available for ~Xh more" — only shown while the 24h temporary content
+  // snapshot is what's actually keeping this resumable (a playlist save
+  // makes it permanent through a separate mechanism; an already-expired or
+  // never-set snapshot just shows nothing rather than a stale warning).
+  String? _expiryLabel(Map<String, dynamic> m) {
+    final id = m['article_id'] as String?;
+    if (id == null || PlaylistsStore.i.isInAnyPlaylist(id)) return null;
+    final expiresAt =
+        DateTime.tryParse(m['content_expires_at'] as String? ?? '');
+    if (expiresAt == null) return null;
+    final remaining = expiresAt.difference(DateTime.now().toUtc());
+    if (remaining.isNegative) return null;
+    final hours = remaining.inHours;
+    return hours < 1
+        ? 'available for less than 1h'
+        : 'available for ~${hours}h more';
   }
 
   @override
@@ -189,6 +172,7 @@ class _HistoryBodyState extends State<HistoryBody> {
     final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
     final done = m['completed'] == true;
     final frac = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
+    final expiry = _expiryLabel(m);
     // Split tap, same convention as Live/Paper/Playlist rows elsewhere: the
     // text opens the reader (with a Resume/Replay/Listen button that reads
     // this same saved progress), the trailing icon resumes/replays directly
@@ -210,7 +194,8 @@ class _HistoryBodyState extends State<HistoryBody> {
                 const SizedBox(height: 4),
                 Text(
                     '${m['category'] ?? ''}'
-                    '${dur > 0 && !done ? ' · ${((1 - frac) * dur / 60).ceil()} ${tr(lang, 'min')}' : ''}',
+                    '${dur > 0 && !done ? ' · ${((1 - frac) * dur / 60).ceil()} ${tr(lang, 'min')}' : ''}'
+                    '${expiry != null ? ' · $expiry' : ''}',
                     style: const TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w500,

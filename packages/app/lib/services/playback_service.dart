@@ -714,8 +714,14 @@ class PlaybackService extends ChangeNotifier {
   /// Upsert the current article's playback progress into recent_plays (one row
   /// per article). DB-backed so web and the future native apps share it without
   /// any platform-specific storage. [atSeconds] overrides the live position
-  /// (used at track start, before a resume-seek has applied).
-  void _saveProgress({bool completed = false, int? atSeconds}) {
+  /// (used at track start, before a resume-seek has applied). [includeContent]
+  /// (re)writes a 24h content snapshot alongside the progress — set only at
+  /// track start (see _finishStartingPlayback), not on every periodic tick,
+  /// so a several-KB article body isn't re-uploaded every ~10s. This is what
+  /// lets a Live article (which has no other persisted copy once it scrolls
+  /// out of the in-memory feed pool) still be resumed/reopened for a day.
+  void _saveProgress(
+      {bool completed = false, int? atSeconds, bool includeContent = false}) {
     final a = current;
     if (a == null) return;
     // Throttle to at most one write per 5s, so a burst of player events can't
@@ -751,6 +757,15 @@ class PlaybackService extends ChangeNotifier {
               'duration_seconds': dur,
               'completed': done,
               'played_at': DateTime.now().toUtc().toIso8601String(),
+              if (includeContent && !brief) ...{
+                'content': a.content,
+                'preview': a.preview,
+                'language': a.language,
+                'content_expires_at': DateTime.now()
+                    .toUtc()
+                    .add(const Duration(hours: 24))
+                    .toIso8601String(),
+              },
             }))
         .catchError((_) => http.Response('', 204));
   }
@@ -895,7 +910,10 @@ class PlaybackService extends ChangeNotifier {
     final startPos = _pendingSeek?.inSeconds ?? 0;
     if (seek && _pendingSeek != null) player.seek(_pendingSeek!);
     _pendingSeek = null;
-    _saveProgress(atSeconds: startPos); // bumps recently-played + records spot
+    // bumps recently-played + records spot + (re)writes the 24h content
+    // snapshot so this article can still be resumed/reopened later even if
+    // it's a Live one that's since scrolled out of the in-memory feed pool.
+    _saveProgress(atSeconds: startPos, includeContent: true);
     loading = false;
     notifyListeners();
     unawaited(player.play());

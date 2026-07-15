@@ -9,6 +9,8 @@ import '../l10n/strings.dart';
 import '../services/alerts_service.dart';
 import '../services/auth_service.dart';
 import '../services/settings_provider.dart';
+import '../services/share_stub.dart'
+    if (dart.library.html) '../services/share_web.dart' as share_;
 
 /// The menu / account hub as a standalone route (kept for deep-links / native).
 /// On the home shell it's rendered as the fixed reveal-drawer panel via
@@ -80,6 +82,15 @@ class MenuBody extends StatelessWidget {
           Divider(height: 1, color: p.line),
           _navRow(p, Icons.settings_outlined, tr(lang, 'settings'), null,
               () => context.push('/settings')),
+          if (share_.canShare) ...[
+            Divider(height: 1, color: p.line),
+            _navRow(p, Icons.share_outlined, tr(lang, 'share_app'), null,
+                () => share_.shareContent(
+                      title: 'GatiVāni',
+                      text: tr(lang, 'share_app_message'),
+                      url: 'https://gativani.sohum.cloud',
+                    )),
+          ],
         ])),
         const SizedBox(height: 24),
 

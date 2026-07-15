@@ -81,6 +81,9 @@ const Map<String, Map<String, String>> _kStrings = {
     'search_empty': 'No matching articles',
     'results': 'results',
     'settings': 'Settings',
+    'share_app': 'Share GatiVāni',
+    'share_app_message':
+        'Listen to Telugu news, hands-free — try GatiVāni:',
     'account': 'Account',
     'guest': 'Guest',
     'guest_sub': 'Not signed in',
@@ -230,6 +233,9 @@ const Map<String, Map<String, String>> _kStrings = {
     'search_empty': 'సరిపోలే వార్తలు లేవు',
     'results': 'ఫలితాలు',
     'settings': 'సెట్టింగ్‌లు',
+    'share_app': 'గతివాణిని పంచుకోండి',
+    'share_app_message':
+        'తెలుగు వార్తలు వినండి, చేతులు ఖాళీగా — గతివాణిని ప్రయత్నించండి:',
     'account': 'ఖాతా',
     'guest': 'అతిథి',
     'guest_sub': 'సైన్ ఇన్ కాలేదు',

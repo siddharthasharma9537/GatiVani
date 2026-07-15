@@ -22,7 +22,6 @@ import '../services/alerts_service.dart';
 import '../services/document_service.dart';
 import '../services/downloads_store.dart';
 import '../services/edition_store.dart';
-import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/playlists_store.dart';
 import '../services/reactions_store.dart';
@@ -59,7 +58,8 @@ class _ForYouScreenState extends State<ForYouScreen> {
     try {
       final r = await http.get(
         Uri.parse('${ApiConfig.restUrl}/recent_plays'
-            '?select=article_id,title,category,position_seconds,duration_seconds,completed,played_at'
+            '?select=article_id,title,category,position_seconds,duration_seconds,'
+            'completed,played_at,content_expires_at'
             '&completed=eq.false&position_seconds=gt.0'
             '&order=played_at.desc&limit=5'),
         headers: ApiConfig.authHeaders,
@@ -69,27 +69,11 @@ class _ForYouScreenState extends State<ForYouScreen> {
     } catch (_) {}
   }
 
+  // resolvePlayedArticle checks the 24h content snapshot first (what makes a
+  // Live article resumable at all once it's scrolled out of the in-memory
+  // feed pool), then that pool itself, then the permanent Paper table.
   Future<void> _resumePlay(Map<String, dynamic> m) async {
-    final id = m['article_id'] as String?;
-    if (id == null) return;
-    // Live articles have no row in Supabase to fetch by id later, so check
-    // this session's in-memory feed pool before falling back to the DB
-    // (Paper articles) — without this, resuming a Live article silently did
-    // nothing (fetchArticleById always returned null for it).
-    final live = liveArticleById(id);
-    final a = live != null
-        ? NewspaperArticle(
-            id: live.id,
-            title: live.title,
-            content: live.body,
-            preview: live.summary,
-            category: live.source,
-            estimatedDurationSeconds:
-                NewspaperArticle.estimateDuration(live.body),
-            readingStyle: 'news_anchor',
-            language: live.language,
-          )
-        : await DocumentService().fetchArticleById(id);
+    final a = await resolvePlayedArticle(m);
     if (a == null) {
       if (mounted) {
         gatiSnack(context, 'This article is no longer available to resume.');
@@ -98,6 +82,22 @@ class _ForYouScreenState extends State<ForYouScreen> {
     }
     final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
     await PlaybackService.i.playOne(a, resumeAt: Duration(seconds: pos));
+  }
+
+  // "Available for ~Xh more" — see the identical helper + rationale in
+  // history_screen.dart.
+  String? _expiryLabel(Map<String, dynamic> m) {
+    final id = m['article_id'] as String?;
+    if (id == null || PlaylistsStore.i.isInAnyPlaylist(id)) return null;
+    final expiresAt =
+        DateTime.tryParse(m['content_expires_at'] as String? ?? '');
+    if (expiresAt == null) return null;
+    final remaining = expiresAt.difference(DateTime.now().toUtc());
+    if (remaining.isNegative) return null;
+    final hours = remaining.inHours;
+    return hours < 1
+        ? 'available for less than 1h'
+        : 'available for ~${hours}h more';
   }
 
   @override
@@ -334,6 +334,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
     final dur = (m['duration_seconds'] as num?)?.toInt() ?? 0;
     final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
     final frac = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
+    final expiry = _expiryLabel(m);
     return InkWell(
       onTap: () => _resumePlay(m),
       child: Padding(
@@ -349,6 +350,12 @@ class _ForYouScreenState extends State<ForYouScreen> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           fontSize: 14, height: 1.35, color: p.ink)),
+                  if (expiry != null) ...[
+                    const SizedBox(height: 2),
+                    Text(expiry,
+                        style: const TextStyle(
+                            fontSize: 11, color: Gati.accent)),
+                  ],
                   if (dur > 0) ...[
                     const SizedBox(height: 5),
                     ClipRRect(

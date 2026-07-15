@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
@@ -7,6 +8,7 @@ import '../config/api_config.dart';
 import '../models/article.dart';
 import '../models/newspaper_article.dart';
 import 'gemini_key_store.dart';
+import 'news_feed_service.dart';
 
 class DocumentService {
   final String _endpoint = ApiConfig.documentsProcessUrl;
@@ -419,4 +421,105 @@ class EditionJobStatus {
   });
   bool get isDone => status == 'completed' || status == 'failed';
   double get progress => totalPages == 0 ? 0 : donePages / totalPages;
+}
+
+/// Small bag of fields common to both shapes callers need a played article
+/// resolved into (NewspaperArticle for playback, WebArticle for the reader).
+class _ResolvedContent {
+  _ResolvedContent(this.id, this.title, this.body, this.preview,
+      this.category, this.language);
+  final String id, title, body, preview, category, language;
+}
+
+/// Resolve a `recent_plays` row back to its full article content, in order:
+/// (1) the row's own 24h content snapshot, if not expired — this is what
+/// makes a Live article resumable at all once it's scrolled out of the
+/// in-memory feed pool; (2) that in-memory pool itself, as a same-session
+/// fallback; (3) the permanent Paper articles table. Null if genuinely
+/// unavailable. An expired-but-still-populated snapshot is nulled out
+/// best-effort when found (lazy cleanup — nothing does this proactively).
+Future<_ResolvedContent?> _resolvePlayedContent(Map<String, dynamic> m) async {
+  final id = m['article_id'] as String?;
+  if (id == null) return null;
+  final content = m['content'] as String?;
+  final expiresAt =
+      DateTime.tryParse(m['content_expires_at'] as String? ?? '');
+  if (content != null && content.isNotEmpty) {
+    if (expiresAt != null && expiresAt.isAfter(DateTime.now().toUtc())) {
+      return _ResolvedContent(
+        id,
+        m['title'] as String? ?? '',
+        content,
+        m['preview'] as String? ?? '',
+        m['category'] as String? ?? 'News',
+        m['language'] as String? ?? 'te',
+      );
+    }
+    unawaited(_expireContentSnapshot(id));
+  }
+  final live = liveArticleById(id);
+  if (live != null) {
+    return _ResolvedContent(
+        live.id, live.title, live.body, live.summary, live.source,
+        live.language);
+  }
+  final a = await DocumentService().fetchArticleById(id);
+  if (a == null) return null;
+  return _ResolvedContent(
+      a.id, a.title, a.content, a.preview, a.category, a.language);
+}
+
+Future<void> _expireContentSnapshot(String articleId) async {
+  try {
+    await http.patch(
+      Uri.parse('${ApiConfig.restUrl}/recent_plays?article_id=eq.$articleId'),
+      headers: {
+        ...ApiConfig.authHeaders,
+        'Content-Type': 'application/json',
+      },
+      body: json.encode({
+        'content': null,
+        'preview': null,
+        'language': null,
+        'content_expires_at': null,
+      }),
+    );
+  } catch (_) {
+    // Best-effort — a leftover expired snapshot is harmless clutter, not a
+    // correctness problem (it's never read once past its own expiry check).
+  }
+}
+
+/// For resume/direct-play call sites (History's resume icon, For You's
+/// Continue-listening row).
+Future<NewspaperArticle?> resolvePlayedArticle(Map<String, dynamic> m) async {
+  final c = await _resolvePlayedContent(m);
+  if (c == null) return null;
+  return NewspaperArticle(
+    id: c.id,
+    title: c.title,
+    content: c.body,
+    preview: c.preview,
+    category: c.category,
+    estimatedDurationSeconds: NewspaperArticle.estimateDuration(c.body),
+    readingStyle: 'news_anchor',
+    language: c.language,
+  );
+}
+
+/// For History's row tap, which opens the Reader (same split-tap convention
+/// as everywhere else in the app).
+Future<WebArticle?> resolvePlayedWebArticle(Map<String, dynamic> m) async {
+  final c = await _resolvePlayedContent(m);
+  if (c == null) return null;
+  return WebArticle(
+    id: c.id,
+    title: c.title,
+    link: '',
+    source: c.category,
+    pubDate: '',
+    summary: c.preview,
+    body: c.body,
+    language: c.language,
+  );
 }

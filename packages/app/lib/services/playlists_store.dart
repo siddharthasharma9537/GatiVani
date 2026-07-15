@@ -34,6 +34,13 @@ class PlaylistsStore extends ChangeNotifier {
     return null;
   }
 
+  /// Whether an article is saved to any playlist — playlists store a full
+  /// article snapshot, so this means it's kept indefinitely regardless of
+  /// the 24h temporary content cache on recent_plays (see
+  /// PlaybackService._saveProgress / DocumentService.resolvePlayedArticle).
+  bool isInAnyPlaylist(String articleId) =>
+      _playlists.any((p) => p.contains(articleId));
+
   Future<void> ensureLoaded() async {
     if (_loaded) return;
     _loaded = true;
