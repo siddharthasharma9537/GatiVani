@@ -290,6 +290,89 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Chunk mode: return ONE synthesized chunk instead of waiting for the
+    // whole article, so playback can start immediately. Chunking is
+    // deterministic (same text + GEMINI_CHUNK_LIMIT always splits the same
+    // way), so a chunk index is directly addressable — no job/session state
+    // needed. Cached per (articleId, target, chunkIndex) in article_chunks,
+    // same idea as the full-file cache above.
+    const chunkIndex = typeof body.chunkIndex === "number" &&
+        Number.isInteger(body.chunkIndex) && body.chunkIndex >= 0
+      ? body.chunkIndex as number
+      : null;
+    if (chunkIndex !== null) {
+      const parts = chunkText(text, GEMINI_CHUNK_LIMIT);
+      if (chunkIndex >= parts.length) {
+        return json({
+          error: "chunk_out_of_range",
+          message: `Only ${parts.length} chunk(s) available.`,
+        }, 400);
+      }
+
+      if (supabase) {
+        const { data: cached } = await supabase
+          .from("article_chunks")
+          .select("audio_url, duration_seconds")
+          .eq("article_id", articleId).eq("target", target)
+          .eq("chunk_index", chunkIndex).maybeSingle();
+        if (cached?.audio_url) {
+          console.log(`[synthesize] chunk cache hit ${chunkIndex} for ${articleId}`);
+          return json({
+            ok: true,
+            audioUrl: cached.audio_url,
+            durationSeconds: cached.duration_seconds,
+            chunkIndex,
+            totalChunks: parts.length,
+            cached: true,
+          });
+        }
+      }
+
+      const geminiKey = req.headers.get("x-user-gemini-key") ?? "";
+      if (!geminiKey) {
+        return json({
+          error: "gemini_key_required",
+          message: "Add your Gemini API key to narrate this.",
+        }, 400);
+      }
+
+      const wavBytes = await geminiOneCall(parts[chunkIndex], geminiVoice(speaker), geminiKey);
+      const durationSec = Math.round((wavBytes.length - 44) / (GEMINI_SAMPLE_RATE * 2));
+      console.log(`[synthesize] chunk ${chunkIndex}/${parts.length - 1} for ${articleId || "(no id)"}: ~${durationSec}s`);
+
+      let audioUrl = "";
+      if (supabase && articleId) {
+        const base = fileSuffix.replace(/\.wav$/, ""); // "" or ".brief"
+        const path = `articles/${articleId}${base}.chunk${chunkIndex}.wav`;
+        const { error: upErr } = await supabase.storage
+          .from("audio")
+          .upload(path, wavBytes, { contentType: "audio/wav", upsert: true });
+        if (upErr) {
+          console.warn("[synthesize] chunk upload failed:", upErr.message);
+        } else {
+          audioUrl = supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
+          const { error: cacheErr } = await supabase.from("article_chunks").upsert({
+            article_id: articleId,
+            target,
+            chunk_index: chunkIndex,
+            audio_url: audioUrl,
+            duration_seconds: durationSec,
+          }, { onConflict: "article_id,target,chunk_index" });
+          if (cacheErr) console.warn("[synthesize] chunk cache write failed:", cacheErr.message);
+        }
+      }
+      if (!audioUrl) audioUrl = `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
+
+      return json({
+        ok: true,
+        audioUrl,
+        durationSeconds: durationSec,
+        chunkIndex,
+        totalChunks: parts.length,
+        cached: false,
+      });
+    }
+
     // TTS is Gemini 2.5 Flash ONLY, and always runs on the CALLER's own key —
     // there is no shared fallback anymore for any narration, Live or Paper
     // (the app now requires sign-in + BYOK before any playback). Sarvam TTS
