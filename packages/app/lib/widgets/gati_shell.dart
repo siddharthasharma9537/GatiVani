@@ -411,8 +411,7 @@ class _VaniFabState extends State<_VaniFab> {
       context.push('/history');
       return;
     }
-    if (ql.contains('for you') || ql.contains('my feed') ||
-        q.contains('మీ కోసం') || q.contains('నా వార్తలు')) {
+    if (ql.contains('library') || q.contains('లైబ్రరీ')) {
       context.go('/foryou');
       return;
     }
