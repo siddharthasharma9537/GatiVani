@@ -50,8 +50,10 @@ String _escapeHtml(String s) => s
 
 /// Download the article as a plain-text file — fallback for browsers
 /// without Web Share support: no rendering ambiguity, guaranteed correct.
-void downloadArticleText(String title, String body) {
-  final content = '$title\n\n$body';
+/// [source] (the publisher/site) is mandatory — a shared or downloaded
+/// article always carries attribution, never just bare text.
+void downloadArticleText(String title, String source, String body) {
+  final content = '$title\n$source\n\n$body';
   final blob = web.Blob(
     [content.toJS].toJS,
     web.BlobPropertyBag(type: 'text/plain;charset=utf-8'),
@@ -72,8 +74,9 @@ void downloadArticleText(String title, String body) {
 /// canvas, so printing the app's own window directly would produce a
 /// blank/garbled page — instead this opens a plain, real-DOM document in a
 /// new tab with just the article's title + body and prints THAT, so the
-/// output is clean, paginated, selectable text.
-void printArticle(String title, String body) {
+/// output is clean, paginated, selectable text. [source] (the publisher/
+/// site) is mandatory — a printed article always carries attribution.
+void printArticle(String title, String source, String body) {
   final win = web.window.open('', '_blank');
   if (win == null) return;
   final doc = win.document;
@@ -91,12 +94,14 @@ void printArticle(String title, String body) {
 <style>
   body { font-family: Georgia, 'Noto Sans Telugu', serif; max-width: 680px;
          margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #1a1a1a; }
-  h1 { font-size: 24px; margin-bottom: 24px; }
+  h1 { font-size: 24px; margin-bottom: 4px; }
+  .byline { font-size: 13px; color: #666; margin-bottom: 24px; }
   p { margin: 0 0 16px; }
 </style>
 </head>
 <body>
 <h1>${_escapeHtml(title)}</h1>
+<p class="byline">${_escapeHtml(source)}</p>
 $paragraphs
 </body>
 </html>

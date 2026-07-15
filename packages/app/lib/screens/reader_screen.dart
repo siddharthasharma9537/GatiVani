@@ -93,7 +93,11 @@ class ReaderScreen extends StatelessWidget {
                       // here; it's populated by whatever's installed.
                       export_.shareContent(
                         title: a.title,
-                        text: a.summary.isNotEmpty ? a.summary : a.body,
+                        // Source is mandatory in what's shared, not just an
+                        // optional flourish — attribution shouldn't get lost
+                        // once the text leaves the app.
+                        text: '${a.summary.isNotEmpty ? a.summary : a.body}'
+                            '\n\n— ${a.source}, via GatiVāni',
                         url: a.link,
                       );
                     } else {
@@ -349,7 +353,7 @@ void _showExportSheet(BuildContext context, WebArticle a) {
               _t(lang, 'Print / Save as PDF', 'ప్రింట్ / PDFగా సేవ్ చేయండి')),
           onTap: () {
             Navigator.pop(ctx);
-            export_.printArticle(a.title, a.body);
+            export_.printArticle(a.title, a.source, a.body);
           },
         ),
         ListTile(
@@ -358,7 +362,7 @@ void _showExportSheet(BuildContext context, WebArticle a) {
               Text(_t(lang, 'Download as text', 'టెక్స్ట్‌గా డౌన్‌లోడ్')),
           onTap: () {
             Navigator.pop(ctx);
-            export_.downloadArticleText(a.title, a.body);
+            export_.downloadArticleText(a.title, a.source, a.body);
           },
         ),
       ]),

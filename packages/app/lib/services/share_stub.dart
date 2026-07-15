@@ -7,5 +7,5 @@ bool get canShare => false;
 bool get canExportArticle => false;
 
 void shareContent({required String title, String? text, String? url}) {}
-void downloadArticleText(String title, String body) {}
-void printArticle(String title, String body) {}
+void downloadArticleText(String title, String source, String body) {}
+void printArticle(String title, String source, String body) {}
