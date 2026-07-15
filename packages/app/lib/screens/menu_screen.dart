@@ -5,11 +5,9 @@ import '../design/tokens.dart';
 import '../config/districts.dart';
 import '../design/components/gati_district_sheet.dart';
 import '../design/components/gati_wordmark.dart';
-import '../design/components/gemini_key_sheet.dart';
 import '../l10n/strings.dart';
 import '../services/alerts_service.dart';
 import '../services/auth_service.dart';
-import '../services/gemini_key_store.dart';
 import '../services/settings_provider.dart';
 
 /// The menu / account hub as a standalone route (kept for deep-links / native).
@@ -38,8 +36,10 @@ class MenuScreen extends StatelessWidget {
   }
 }
 
-/// The menu content (account, language, theme, playback, about) without any
-/// scaffold — shared by the [MenuScreen] route and the home reveal drawer.
+/// The menu content (account + navigation) without any scaffold — shared by
+/// the [MenuScreen] route and the home reveal drawer. Language, theme,
+/// playback speed and the Gemini key live in the dedicated Settings screen
+/// (reached via the row below) instead of inline here.
 class MenuBody extends StatelessWidget {
   const MenuBody({super.key, this.padding});
   final EdgeInsetsGeometry? padding;
@@ -72,74 +72,14 @@ class MenuBody extends StatelessWidget {
           Divider(height: 1, color: p.line),
           _alertsRow(context, p, lang),
           Divider(height: 1, color: p.line),
-          _navRow(p, Icons.download_done_rounded, tr(lang, 'downloads'), null,
-              () => context.push('/downloads')),
-          Divider(height: 1, color: p.line),
-          _navRow(p, Icons.queue_music_rounded, tr(lang, 'playlists'), null,
-              () => context.push('/playlists')),
-          Divider(height: 1, color: p.line),
           _navRow(p, Icons.history_rounded, tr(lang, 'history'), null,
               () => context.push('/history')),
           Divider(height: 1, color: p.line),
           _navRow(p, Icons.headphones_rounded, tr(lang, 'tab_shows'), null,
               () => context.go('/shows')),
           Divider(height: 1, color: p.line),
-          _navRow(
-              p,
-              Icons.key_outlined,
-              'Gemini API key',
-              GeminiKeyStore.hasKey ? 'Key saved' : 'Required for Paper',
-              () => showGeminiKeySheet(context)),
-        ])),
-        const SizedBox(height: 20),
-
-        // ── Language ───────────────────────────────────────────────────────
-        _sectionLabel(p, tr(lang, 'language')),
-        _card(p, Column(children: [
-          _choiceRow(p, 'English', s.lang == 'en', () => s.setLanguage('en')),
-          Divider(height: 1, color: p.line),
-          _choiceRow(p, 'తెలుగు', s.lang == 'te', () => s.setLanguage('te')),
-        ])),
-        const SizedBox(height: 20),
-
-        // ── News Language (content, not UI chrome) ──────────────────────────
-        _sectionLabel(p, 'News Language'),
-        _card(p, Column(children: [
-          _choiceRow(p, 'తెలుగు', s.newsLanguage == 'te',
-              () => s.setNewsLanguage('te'),
-              subtitle: 'Telugu'),
-          Divider(height: 1, color: p.line),
-          _choiceRow(p, 'हिन्दी', s.newsLanguage == 'hi',
-              () => s.setNewsLanguage('hi'),
-              subtitle: 'Hindi'),
-        ])),
-        const SizedBox(height: 20),
-
-        // ── Theme ──────────────────────────────────────────────────────────
-        _sectionLabel(p, tr(lang, 'theme')),
-        _card(p, Column(children: [
-          _choiceRow(p, tr(lang, 'theme_system'),
-              s.themeMode == ThemeMode.system,
-              () => s.setThemeMode(ThemeMode.system),
-              subtitle: tr(lang, 'theme_auto_sub')),
-          Divider(height: 1, color: p.line),
-          _choiceRow(p, tr(lang, 'theme_light'), s.themeMode == ThemeMode.light,
-              () => s.setThemeMode(ThemeMode.light)),
-          Divider(height: 1, color: p.line),
-          _choiceRow(p, tr(lang, 'theme_dark'), s.themeMode == ThemeMode.dark,
-              () => s.setThemeMode(ThemeMode.dark)),
-        ])),
-        const SizedBox(height: 20),
-
-        // ── Playback ───────────────────────────────────────────────────────
-        _sectionLabel(p, tr(lang, 'playback')),
-        _card(p, Column(children: [
-          for (final sp in const [0.75, 1.0, 1.25, 1.5, 2.0])
-            Column(children: [
-              if (sp != 0.75) Divider(height: 1, color: p.line),
-              _choiceRow(p, '${sp}×', s.playbackSpeed == sp,
-                  () => s.setPlaybackSpeed(sp)),
-            ]),
+          _navRow(p, Icons.settings_outlined, tr(lang, 'settings'), null,
+              () => context.push('/settings')),
         ])),
         const SizedBox(height: 24),
 
@@ -377,33 +317,5 @@ class MenuBody extends StatelessWidget {
             borderRadius: BorderRadius.circular(14)),
         clipBehavior: Clip.antiAlias,
         child: Material(color: Colors.transparent, child: child),
-      );
-
-  Widget _choiceRow(GatiPalette p, String label, bool selected,
-          VoidCallback onTap,
-          {String? subtitle}) =>
-      InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: TextStyle(fontSize: 14.5, color: p.ink)),
-                  if (subtitle != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(subtitle,
-                          style: TextStyle(fontSize: 12, color: p.muted)),
-                    ),
-                ],
-              ),
-            ),
-            if (selected)
-              const Icon(Icons.check_rounded, color: kAccent, size: 20),
-          ]),
-        ),
       );
 }

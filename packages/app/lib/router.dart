@@ -11,6 +11,7 @@ import 'screens/playlist_detail_screen.dart';
 import 'screens/playlists_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/section_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/shows_screen.dart';
 import 'screens/today_screen.dart';
 import 'services/news_feed_service.dart';
@@ -135,6 +136,7 @@ final GoRouter appRouter = GoRouter(
       ),
     ),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
+    GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
     GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
     GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
     GoRoute(path: '/alerts', builder: (_, __) => const AlertsScreen()),

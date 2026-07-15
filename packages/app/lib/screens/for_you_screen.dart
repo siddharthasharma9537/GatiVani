@@ -17,18 +17,21 @@ import '../design/components/gati_states.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
+import '../models/playlist.dart';
 import '../services/alerts_service.dart';
 import '../services/document_service.dart';
 import '../services/downloads_store.dart';
 import '../services/edition_store.dart';
 import '../services/playback_service.dart';
+import '../services/playlists_store.dart';
 import '../services/reactions_store.dart';
 import '../services/settings_provider.dart';
 
 /// For You tab (§8): everything personal in one place — fresh alerts for
 /// watched topics, resume-where-you-left-off, the district's stories from
-/// today's edition, and recent downloads. Each section is a taste of its
-/// full screen and links there; sections with nothing to say don't render.
+/// today's edition, playlists, and recent downloads. Each section is a taste
+/// of its full screen and links there; sections with nothing to say don't
+/// render.
 class ForYouScreen extends StatefulWidget {
   const ForYouScreen({super.key});
 
@@ -44,6 +47,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
     super.initState();
     DownloadsStore.i.ensureLoaded();
     ReactionsStore.i.ensureLoaded();
+    PlaylistsStore.i.ensureLoaded();
     AlertsService.i.refreshIfStale(context.read<SettingsProvider>());
     _loadResume();
   }
@@ -90,8 +94,12 @@ class _ForYouScreenState extends State<ForYouScreen> {
           const SizedBox(height: Gati.s4),
           Expanded(
             child: ListenableBuilder(
-              listenable: Listenable.merge(
-                  [AlertsService.i, DownloadsStore.i, ReactionsStore.i]),
+              listenable: Listenable.merge([
+                AlertsService.i,
+                DownloadsStore.i,
+                ReactionsStore.i,
+                PlaylistsStore.i,
+              ]),
               builder: (context, _) => _body(p, s, lang),
             ),
           ),
@@ -107,6 +115,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
         : EditionStore.i.forSection('District').take(4).toList();
     final downloads = DownloadsStore.i.items.take(3).toList();
     final liked = ReactionsStore.i.liked.take(4).toList();
+    final playlists = PlaylistsStore.i.all.take(3).toList();
 
     final children = <Widget>[];
 
@@ -150,6 +159,15 @@ class _ForYouScreenState extends State<ForYouScreen> {
       children.add(const SizedBox(height: Gati.s5));
     }
 
+    // ── Playlists ────────────────────────────────────────────────────────────
+    if (playlists.isNotEmpty) {
+      children.add(_sectionHeader(p, lang, 'playlists', '/playlists'));
+      for (final pl in playlists) {
+        children.add(_playlistRow(p, lang, pl));
+      }
+      children.add(const SizedBox(height: Gati.s5));
+    }
+
     // ── Downloads ───────────────────────────────────────────────────────────
     if (downloads.isNotEmpty) {
       children.add(_sectionHeader(p, lang, 'downloads', '/downloads'));
@@ -172,6 +190,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
     final nothingPersonal = s.alertTopics.isEmpty &&
         _resume.isEmpty &&
         s.district == null &&
+        playlists.isEmpty &&
         downloads.isEmpty &&
         liked.isEmpty;
     if (nothingPersonal) {
@@ -324,6 +343,38 @@ class _ForYouScreenState extends State<ForYouScreen> {
           ),
           const SizedBox(width: Gati.s3),
           const Icon(Icons.play_arrow_rounded, color: Gati.accent, size: 22),
+        ]),
+      ),
+    );
+  }
+
+  Widget _playlistRow(GatiPalette p, String lang, Playlist pl) {
+    final count = pl.articles.length;
+    return InkWell(
+      onTap: () => context.push('/playlists/${pl.id}'),
+      child: Padding(
+        padding:
+            const EdgeInsets.symmetric(horizontal: Gati.s5, vertical: 8),
+        child: Row(children: [
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(pl.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 14, height: 1.35, color: p.ink)),
+                  const SizedBox(height: 2),
+                  Text('$count ${count == 1 ? 'story' : 'stories'}',
+                      style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          color: Gati.accent)),
+                ]),
+          ),
+          const SizedBox(width: Gati.s3),
+          Icon(Icons.chevron_right, size: 20, color: p.muted),
         ]),
       ),
     );

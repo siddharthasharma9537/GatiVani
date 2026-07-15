@@ -1,37 +1,17 @@
-import 'package:flutter/foundation.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../design/app_theme.dart';
+import '../design/tokens.dart';
+import '../design/components/gati_wordmark.dart';
+import '../l10n/strings.dart';
 import '../services/gemini_key_store.dart';
 import '../services/settings_provider.dart';
 
-// ── Voice catalogue (mirrors audio_queue_player_screen) ──────────────────────
-
-class _Voice {
-  final String id;
-  final String label;
-  final String gender;
-  const _Voice(this.id, this.label, this.gender);
-}
-
-const _sarvamVoices = [
-  _Voice('priya',   'Priya',   'Female'),
-  _Voice('neha',    'Neha',    'Female'),
-  _Voice('kavya',   'Kavya',   'Female'),
-  _Voice('shreya',  'Shreya',  'Female'),
-  _Voice('suhani',  'Suhani',  'Female'),
-  _Voice('kavitha', 'Kavitha', 'Female'),
-  _Voice('shubh',   'Shubh',   'Male'),
-  _Voice('aditya',  'Aditya',  'Male'),
-  _Voice('rahul',   'Rahul',   'Male'),
-  _Voice('anand',   'Anand',   'Male'),
-  _Voice('gokul',   'Gokul',   'Male'),
-  _Voice('varun',   'Varun',   'Male'),
-];
-
-// ── Screen ────────────────────────────────────────────────────────────────────
-
+/// Dedicated Settings screen (menu → Settings): language, theme, playback
+/// speed and the Gemini BYOK key all live here instead of inline in the
+/// Menu drawer, which stays pure navigation.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -40,163 +20,189 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late Future<({int fileCount, int bytes})> _statsFuture;
-  late final TextEditingController _geminiKeyCtrl =
+  late final _geminiCtrl =
       TextEditingController(text: GeminiKeyStore.key ?? '');
-  bool _geminiKeyHidden = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _refreshStats();
-  }
+  bool _geminiHidden = true;
+  bool _validating = false;
+  String? _geminiError;
 
   @override
   void dispose() {
-    _geminiKeyCtrl.dispose();
+    _geminiCtrl.dispose();
     super.dispose();
   }
 
-  void _toast(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(GVRadius.md)),
-      ),
-    );
+  /// Confirms the key actually works before saving — straight from the
+  /// browser to Google (models.list is free: no generation, just an auth
+  /// check), so the key never touches our server even for validation.
+  Future<String?> _validateGeminiKey(String key) async {
+    try {
+      final r = await http
+          .get(Uri.parse(
+              'https://generativelanguage.googleapis.com/v1beta/models?key=$key'))
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode == 200) return null;
+      final body = json.decode(r.body) as Map<String, dynamic>;
+      return (body['error'] as Map<String, dynamic>?)?['message'] as String? ??
+          'That key doesn\'t work (HTTP ${r.statusCode}).';
+    } catch (_) {
+      return 'Could not reach Google to check the key. Check your connection.';
+    }
   }
 
   Future<void> _saveGeminiKey() async {
-    await GeminiKeyStore.setKey(_geminiKeyCtrl.text);
+    final key = _geminiCtrl.text.trim();
+    if (key.isEmpty) {
+      await GeminiKeyStore.setKey(null);
+      if (mounted) setState(() {});
+      return;
+    }
+    setState(() {
+      _validating = true;
+      _geminiError = null;
+    });
+    final err = await _validateGeminiKey(key);
     if (!mounted) return;
-    setState(() {});
-    _toast(GeminiKeyStore.hasKey ? 'Gemini key saved.' : 'Gemini key cleared.');
+    if (err != null) {
+      setState(() {
+        _validating = false;
+        _geminiError = err;
+      });
+      return;
+    }
+    await GeminiKeyStore.setKey(key);
+    if (mounted) setState(() => _validating = false);
   }
 
   Future<void> _clearGeminiKey() async {
-    _geminiKeyCtrl.clear();
+    _geminiCtrl.clear();
+    _geminiError = null;
     await GeminiKeyStore.setKey(null);
-    if (!mounted) return;
-    setState(() {});
-    _toast('Gemini key cleared.');
-  }
-
-  void _refreshStats() {
-    _statsFuture = context.read<SettingsProvider>().downloadStats();
-  }
-
-  String _fmtBytes(int b) {
-    if (b < 1024) return '${b} B';
-    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} KB';
-    return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+    if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<SettingsProvider>();
-
+    final s = context.watch<SettingsProvider>();
+    final lang = s.lang;
+    final p = GatiPalette.of(context);
     return Scaffold(
-      backgroundColor: GVColors.bgSecondary(context),
+      backgroundColor: p.paper,
       appBar: AppBar(
-        backgroundColor: GVColors.bgPrimary(context),
+        backgroundColor: p.paper,
+        surfaceTintColor: p.paper,
         elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          color: GVColors.textPrimary(context),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text('Settings', style: GVTypography.heading(context)),
+        foregroundColor: p.ink,
+        title: Text(tr(lang, 'settings'),
+            style: TextStyle(
+                fontSize: 17, fontWeight: FontWeight.w500, color: p.ink)),
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        children: [
-          // ── Appearance ────────────────────────────────────────────────────
-          _SectionHeader(label: 'Appearance'),
-          _SettingsCard(
-            children: [
-              _SegmentedRow(
-                icon: Icons.brightness_medium_outlined,
-                label: 'Theme',
-                options: const ['System', 'Light', 'Dark'],
-                selectedIndex: settings.themeMode.index,
-                onSelected: (i) => settings.setThemeMode(ThemeMode.values[i]),
-              ),
-            ],
-          ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            // ── Language ─────────────────────────────────────────────────────
+            _sectionLabel(p, tr(lang, 'language')),
+            _card(p, Column(children: [
+              _choiceRow(
+                  p, 'English', s.lang == 'en', () => s.setLanguage('en')),
+              Divider(height: 1, color: p.line),
+              _choiceRow(
+                  p, 'తెలుగు', s.lang == 'te', () => s.setLanguage('te')),
+            ])),
+            const SizedBox(height: 20),
 
-          const SizedBox(height: 8),
+            // ── News Language (content, not UI chrome) ──────────────────────
+            _sectionLabel(p, 'News Language'),
+            _card(p, Column(children: [
+              _choiceRow(p, 'తెలుగు', s.newsLanguage == 'te',
+                  () => s.setNewsLanguage('te'),
+                  subtitle: 'Telugu'),
+              Divider(height: 1, color: p.line),
+              _choiceRow(p, 'हिन्दी', s.newsLanguage == 'hi',
+                  () => s.setNewsLanguage('hi'),
+                  subtitle: 'Hindi'),
+            ])),
+            const SizedBox(height: 20),
 
-          // ── Audio ─────────────────────────────────────────────────────────
-          _SectionHeader(label: 'Audio'),
-          _SettingsCard(
-            children: [
-              // Default voice
-              _TileHeader(
-                icon: Icons.record_voice_over_outlined,
-                label: 'Default voice',
-                subtitle: 'Used for new playback sessions & downloads',
-              ),
-              const SizedBox(height: 12),
-              _VoicePicker(
-                selected: settings.defaultVoice,
-                onSelect: settings.setDefaultVoice,
-              ),
-              Divider(height: 24, thickness: 0.5, color: GVColors.borderTertiary(context)),
-              // Playback speed
-              _SpeedRow(
-                speed: settings.playbackSpeed,
-                onChanged: settings.setPlaybackSpeed,
-              ),
-            ],
-          ),
+            // ── Theme ────────────────────────────────────────────────────────
+            _sectionLabel(p, tr(lang, 'theme')),
+            _card(p, Column(children: [
+              _choiceRow(p, tr(lang, 'theme_system'),
+                  s.themeMode == ThemeMode.system,
+                  () => s.setThemeMode(ThemeMode.system),
+                  subtitle: tr(lang, 'theme_auto_sub')),
+              Divider(height: 1, color: p.line),
+              _choiceRow(p, tr(lang, 'theme_light'),
+                  s.themeMode == ThemeMode.light,
+                  () => s.setThemeMode(ThemeMode.light)),
+              Divider(height: 1, color: p.line),
+              _choiceRow(p, tr(lang, 'theme_dark'), s.themeMode == ThemeMode.dark,
+                  () => s.setThemeMode(ThemeMode.dark)),
+            ])),
+            const SizedBox(height: 20),
 
-          const SizedBox(height: 8),
+            // ── Playback ─────────────────────────────────────────────────────
+            _sectionLabel(p, tr(lang, 'playback')),
+            _card(p, Column(children: [
+              for (final sp in const [0.75, 1.0, 1.25, 1.5, 2.0])
+                Column(children: [
+                  if (sp != 0.75) Divider(height: 1, color: p.line),
+                  _choiceRow(p, '${sp}×', s.playbackSpeed == sp,
+                      () => s.setPlaybackSpeed(sp)),
+                ]),
+            ])),
+            const SizedBox(height: 20),
 
-          // ── Gemini API key (BYOK) ────────────────────────────────────────
-          _SectionHeader(label: 'Gemini API key'),
-          _SettingsCard(
-            children: [
-              _TileHeader(
-                icon: Icons.key_outlined,
-                label: 'Your own Gemini key',
-                subtitle: 'Narrating your uploaded Paper editions runs on '
-                    'your own free key, not ours.',
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _geminiKeyCtrl,
-                obscureText: _geminiKeyHidden,
-                style: GVTypography.body(context),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Paste your Gemini API key',
-                  hintStyle: GVTypography.small(context),
-                  filled: true,
-                  fillColor: GVColors.bgSecondary(context),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(GVRadius.sm),
-                    borderSide: BorderSide.none,
-                  ),
-                  suffixIcon: IconButton(
-                    icon: Icon(_geminiKeyHidden
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined),
-                    iconSize: 18,
-                    color: GVColors.textSecondary(context),
-                    onPressed: () =>
-                        setState(() => _geminiKeyHidden = !_geminiKeyHidden),
+            // ── Gemini API key (BYOK) ───────────────────────────────────────
+            _sectionLabel(p, 'Gemini API key'),
+            _card(p, Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Narrating an article — Live or Paper — runs on your own "
+                  "free Gemini key, saved to your account so you won't need "
+                  "to re-enter it on other signed-in devices.",
+                  style: TextStyle(fontSize: 12.5, color: p.muted, height: 1.4),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _geminiCtrl,
+                  obscureText: _geminiHidden,
+                  style: TextStyle(color: p.ink),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'Paste your Gemini API key',
+                    hintStyle: TextStyle(color: p.muted, fontSize: 13),
+                    filled: true,
+                    fillColor: p.chip,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(Gati.rCard),
+                      borderSide: BorderSide.none,
+                    ),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                          _geminiHidden
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                          size: 18,
+                          color: p.muted),
+                      onPressed: () =>
+                          setState(() => _geminiHidden = !_geminiHidden),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
+                if (_geminiError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_geminiError!,
+                      style: TextStyle(fontSize: 12.5, color: Gati.kumkuma)),
+                ],
+                const SizedBox(height: 10),
+                Row(children: [
                   TextButton(
                     onPressed: () => launchUrl(
                         Uri.parse('https://aistudio.google.com/apikey'),
@@ -206,470 +212,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const Spacer(),
                   if (GeminiKeyStore.hasKey)
                     TextButton(
-                      onPressed: _clearGeminiKey,
+                      onPressed: _validating ? null : _clearGeminiKey,
                       child: Text('Clear',
-                          style: TextStyle(color: GVColors.danger(context))),
+                          style: TextStyle(color: Gati.kumkuma)),
                     ),
                   const SizedBox(width: 4),
                   FilledButton(
-                    onPressed: _saveGeminiKey,
-                    child: const Text('Save'),
+                    style: FilledButton.styleFrom(
+                        backgroundColor: kAccent, foregroundColor: kPaper),
+                    onPressed: _validating ? null : _saveGeminiKey,
+                    child: _validating
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: kPaper))
+                        : const Text('Save'),
                   ),
+                ]),
+              ],
+            ))),
+            const SizedBox(height: 24),
+
+            // ── About ────────────────────────────────────────────────────────
+            Center(
+              child: Column(children: [
+                GatiWordmark(size: 18, color: p.ink, lang: lang, animated: false),
+                const SizedBox(height: 2),
+                Text(tr(lang, 'about_tagline'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: p.muted)),
+              ]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionLabel(GatiPalette p, String text) => Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 8),
+        child: Text(text,
+            style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+                color: p.muted,
+                letterSpacing: 0.3)),
+      );
+
+  Widget _card(GatiPalette p, Widget child) => Container(
+        decoration: BoxDecoration(
+            color: p.surface,
+            border: Border.all(color: p.line),
+            borderRadius: BorderRadius.circular(14)),
+        clipBehavior: Clip.antiAlias,
+        child: Material(color: Colors.transparent, child: child),
+      );
+
+  Widget _choiceRow(GatiPalette p, String label, bool selected,
+          VoidCallback onTap,
+          {String? subtitle}) =>
+      InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: TextStyle(fontSize: 14.5, color: p.ink)),
+                  if (subtitle != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(subtitle,
+                          style: TextStyle(fontSize: 12, color: p.muted)),
+                    ),
                 ],
               ),
-            ],
-          ),
-
-          const SizedBox(height: 8),
-
-          // ── Downloads ────────────────────────────────────────────────────
-          if (!kIsWeb) ...[
-            _SectionHeader(label: 'Downloads'),
-            _SettingsCard(
-              children: [
-                FutureBuilder<({int fileCount, int bytes})>(
-                  future: _statsFuture,
-                  builder: (ctx, snap) {
-                    final count = snap.data?.fileCount ?? 0;
-                    final bytes = snap.data?.bytes ?? 0;
-                    final label = snap.connectionState == ConnectionState.done
-                        ? count == 0
-                            ? 'No downloaded articles'
-                            : '$count article${count == 1 ? '' : 's'} · ${_fmtBytes(bytes)}'
-                        : 'Calculating…';
-                    return _InfoRow(
-                      icon: Icons.download_rounded,
-                      label: 'Saved audio',
-                      value: label,
-                    );
-                  },
-                ),
-                Divider(height: 20, thickness: 0.5, color: GVColors.borderTertiary(context)),
-                _ActionRow(
-                  icon: Icons.delete_outline_rounded,
-                  label: 'Clear all downloads',
-                  color: GVColors.danger(context),
-                  onTap: () => _confirmClear(context, settings),
-                ),
-              ],
             ),
-            const SizedBox(height: 8),
-          ],
-
-          // ── About ────────────────────────────────────────────────────────
-          _SectionHeader(label: 'About'),
-          _SettingsCard(
-            children: [
-              _InfoRow(
-                icon: Icons.info_outline_rounded,
-                label: 'Version',
-                value: '1.0.0',
-              ),
-              Divider(height: 20, thickness: 0.5, color: GVColors.borderTertiary(context)),
-              _InfoRow(
-                icon: Icons.language_outlined,
-                label: 'TTS engine',
-                value: 'Gemini 2.5 Flash · Telugu',
-              ),
-              Divider(height: 20, thickness: 0.5, color: GVColors.borderTertiary(context)),
-              _InfoRow(
-                icon: Icons.document_scanner_outlined,
-                label: 'OCR engine',
-                value: 'Sarvam Document Intelligence',
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 32),
-        ],
-      ),
-    );
-  }
-
-  void _confirmClear(BuildContext context, SettingsProvider settings) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: GVColors.bgPrimary(context),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(GVRadius.xl)),
-        title: Text('Clear downloads?', style: GVTypography.heading(context)),
-        content: Text(
-          'All saved audio files will be deleted. Articles can be re-downloaded at any time.',
-          style: GVTypography.bodySecondary(context),
+            if (selected)
+              const Icon(Icons.check_rounded, color: kAccent, size: 20),
+          ]),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel',
-                style: TextStyle(color: GVColors.textSecondary(context))),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final messenger = ScaffoldMessenger.of(context);
-              await settings.clearDownloads();
-              setState(_refreshStats);
-              messenger.showSnackBar(
-                SnackBar(
-                  content: const Text('Downloads cleared.'),
-                  behavior: SnackBarBehavior.floating,
-                  margin: const EdgeInsets.all(16),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(GVRadius.md)),
-                ),
-              );
-            },
-            child: Text('Clear',
-                style: TextStyle(color: GVColors.danger(context))),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Section header ────────────────────────────────────────────────────────────
-
-class _SectionHeader extends StatelessWidget {
-  final String label;
-  const _SectionHeader({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 6),
-      child: Text(
-        label.toUpperCase(),
-        style: GVTypography.label(context).copyWith(
-          letterSpacing: 0.8,
-          fontWeight: FontWeight.w600,
-          color: GVColors.textTertiary(context),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Settings card ─────────────────────────────────────────────────────────────
-
-class _SettingsCard extends StatelessWidget {
-  final List<Widget> children;
-  const _SettingsCard({required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: GVColors.bgPrimary(context),
-        borderRadius: BorderRadius.circular(GVRadius.lg),
-        border: Border.all(
-            color: GVColors.borderTertiary(context), width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children,
-      ),
-    );
-  }
-}
-
-// ── Row widgets ───────────────────────────────────────────────────────────────
-
-class _TileHeader extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String subtitle;
-  const _TileHeader(
-      {required this.icon, required this.label, required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: GVColors.textSecondary(context)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: GVTypography.body(context)),
-              Text(subtitle, style: GVTypography.small(context)),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  const _InfoRow(
-      {required this.icon, required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: GVColors.textSecondary(context)),
-        const SizedBox(width: 10),
-        Text(label, style: GVTypography.body(context)),
-        const Spacer(),
-        Text(value, style: GVTypography.small(context)),
-      ],
-    );
-  }
-}
-
-class _ActionRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-  const _ActionRow(
-      {required this.icon,
-      required this.label,
-      required this.color,
-      required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(GVRadius.sm),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 10),
-          Text(label, style: GVTypography.body(context).copyWith(color: color)),
-        ],
-      ),
-    );
-  }
-}
-
-class _SegmentedRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final List<String> options;
-  final int selectedIndex;
-  final ValueChanged<int> onSelected;
-  const _SegmentedRow(
-      {required this.icon,
-      required this.label,
-      required this.options,
-      required this.selectedIndex,
-      required this.onSelected});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: GVColors.textSecondary(context)),
-        const SizedBox(width: 10),
-        Text(label, style: GVTypography.body(context)),
-        const Spacer(),
-        ...List.generate(options.length, (i) {
-          final sel = i == selectedIndex;
-          return GestureDetector(
-            onTap: () => onSelected(i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 130),
-              margin: const EdgeInsets.only(left: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: sel
-                    ? GVColors.accent(context)
-                    : GVColors.bgSecondary(context),
-                borderRadius: BorderRadius.circular(GVRadius.sm),
-                border: Border.all(
-                  color: sel
-                      ? GVColors.accent(context)
-                      : GVColors.borderSecondary(context),
-                ),
-              ),
-              child: Text(
-                options[i],
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight:
-                      sel ? FontWeight.w600 : FontWeight.normal,
-                  color: sel
-                      ? Colors.white
-                      : GVColors.textSecondary(context),
-                ),
-              ),
-            ),
-          );
-        }),
-      ],
-    );
-  }
-}
-
-class _SpeedRow extends StatelessWidget {
-  final double speed;
-  final ValueChanged<double> onChanged;
-
-  static const _speeds = [0.75, 1.0, 1.25, 1.5, 2.0];
-  static const _labels = ['0.75×', '1×', '1.25×', '1.5×', '2×'];
-
-  const _SpeedRow({required this.speed, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.speed_outlined,
-                size: 18, color: GVColors.textSecondary(context)),
-            const SizedBox(width: 10),
-            Text('Playback speed', style: GVTypography.body(context)),
-            const Spacer(),
-            Text(
-              speed == 1.0 ? 'Normal' : '${speed}×',
-              style: GVTypography.small(context),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(_speeds.length, (i) {
-            final sel = _speeds[i] == speed;
-            return GestureDetector(
-              onTap: () => onChanged(_speeds[i]),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 130),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: sel
-                      ? GVColors.accent(context)
-                      : GVColors.bgSecondary(context),
-                  borderRadius: BorderRadius.circular(GVRadius.sm),
-                  border: Border.all(
-                    color: sel
-                        ? GVColors.accent(context)
-                        : GVColors.borderSecondary(context),
-                  ),
-                ),
-                child: Text(
-                  _labels[i],
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
-                    color: sel ? Colors.white : GVColors.textSecondary(context),
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ],
-    );
-  }
-}
-
-// ── Voice picker ──────────────────────────────────────────────────────────────
-
-class _VoicePicker extends StatelessWidget {
-  final String selected;
-  final ValueChanged<String> onSelect;
-  const _VoicePicker({required this.selected, required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) {
-    final female = _sarvamVoices.where((v) => v.gender == 'Female').toList();
-    final male = _sarvamVoices.where((v) => v.gender == 'Male').toList();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _VoiceGroup(label: 'Female', voices: female, selected: selected, onSelect: onSelect),
-        const SizedBox(height: 12),
-        _VoiceGroup(label: 'Male', voices: male, selected: selected, onSelect: onSelect),
-      ],
-    );
-  }
-}
-
-class _VoiceGroup extends StatelessWidget {
-  final String label;
-  final List<_Voice> voices;
-  final String selected;
-  final ValueChanged<String> onSelect;
-  const _VoiceGroup(
-      {required this.label,
-      required this.voices,
-      required this.selected,
-      required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: GVTypography.label(context)
-              .copyWith(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: voices.map((v) {
-            final sel = v.id == selected;
-            return GestureDetector(
-              onTap: () => onSelect(v.id),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 130),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: sel
-                      ? GVColors.accent(context)
-                      : GVColors.bgSecondary(context),
-                  border: Border.all(
-                    color: sel
-                        ? GVColors.accent(context)
-                        : GVColors.borderSecondary(context),
-                    width: sel ? 1.5 : 1,
-                  ),
-                  borderRadius: BorderRadius.circular(GVRadius.md),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (sel) ...[
-                      const Icon(Icons.check_rounded,
-                          size: 12, color: Colors.white),
-                      const SizedBox(width: 4),
-                    ],
-                    Text(
-                      v.label,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight:
-                            sel ? FontWeight.w600 : FontWeight.normal,
-                        color: sel
-                            ? Colors.white
-                            : GVColors.textPrimary(context),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
+      );
 }

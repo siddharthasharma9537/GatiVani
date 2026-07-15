@@ -8,7 +8,6 @@ import '../design/components/gati_states.dart';
 import '../design/components/gati_tab_bar.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
-import '../screens/history_screen.dart';
 import '../screens/menu_screen.dart';
 import '../models/newspaper_article.dart';
 import '../services/alerts_service.dart';
@@ -36,11 +35,12 @@ class GatiShellScope extends InheritedWidget {
 }
 
 /// App chrome around the tab branches (§8): the persistent mini-player dock
-/// and tab bar at the bottom, a Claude-iOS-style menu drawer on the LEFT,
-/// and its mirror on the RIGHT — "Recent", the listening history. The whole
-/// front page slides aside with a slight scale, rounded corners and shadow.
-/// Open with the header menu button / edge swipes; swiping the page body
-/// (away from the edges) slides between the tabs themselves.
+/// and tab bar at the bottom, and a Claude-iOS-style menu drawer on the LEFT
+/// (Recent/History lives inside it as a normal row, not a separate drawer).
+/// The whole front page slides aside with a slight horizontal recede,
+/// rounded corners and shadow. Open with the header menu button / edge
+/// swipe; swiping the page body (away from the edge) slides between the
+/// tabs themselves.
 class GatiShell extends StatefulWidget {
   const GatiShell({super.key, required this.shell});
   final StatefulNavigationShell shell;
@@ -51,8 +51,6 @@ class GatiShell extends StatefulWidget {
 
 class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   late final AnimationController _menu = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 300));
-  late final AnimationController _recent = AnimationController(
       vsync: this, duration: const Duration(milliseconds: 300));
   // Quick directional slide-in when the active tab changes.
   late final AnimationController _tabAnim = AnimationController(
@@ -70,7 +68,6 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   @override
   void dispose() {
     _menu.dispose();
-    _recent.dispose();
     _tabAnim.dispose();
     _bar.dispose();
     super.dispose();
@@ -91,18 +88,11 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   }
 
   void _openMenu() {
-    _recent.animateTo(0, curve: Curves.easeOutCubic);
     _menu.animateTo(1, curve: Curves.easeOutCubic);
-  }
-
-  void _openRecent() {
-    _menu.animateTo(0, curve: Curves.easeOutCubic);
-    _recent.animateTo(1, curve: Curves.easeOutCubic);
   }
 
   void _closeAll() {
     _menu.animateTo(0, curve: Curves.easeOutCubic);
-    _recent.animateTo(0, curve: Curves.easeOutCubic);
   }
 
   void _goTab(int i) {
@@ -112,24 +102,17 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
   }
 
   // ONE horizontal-drag handler for the whole front layer, routed by where
-  // the drag STARTED: left edge → menu, right edge → Recent, anywhere else →
-  // tab slide. (Separate edge-zone + body recognizers used to fight in the
+  // the drag STARTED: left edge (or menu already open) → menu, anywhere else
+  // → tab slide. (Separate edge-zone + body recognizers used to fight in the
   // gesture arena — the drawer moved a few px, then the other recognizer
   // won and it stuck.)
-  String? _dragMode; // 'menu' | 'recent' | 'tab'
+  String? _dragMode; // 'menu' | 'tab'
   double _dragTotal = 0;
 
   void _hDragStart(DragStartDetails d) {
-    final w = context.size?.width ?? 400;
     final x = d.globalPosition.dx;
-    if (_menu.value > 0.5) {
+    if (_menu.value > 0.5 || x < 44) {
       _dragMode = 'menu';
-    } else if (_recent.value > 0.5) {
-      _dragMode = 'recent';
-    } else if (x < 44) {
-      _dragMode = 'menu';
-    } else if (x > w - 44) {
-      _dragMode = 'recent';
     } else {
       _dragMode = 'tab';
     }
@@ -141,8 +124,6 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
     switch (_dragMode) {
       case 'menu':
         _menu.value = (_menu.value + dx / _openX).clamp(0.0, 1.0);
-      case 'recent':
-        _recent.value = (_recent.value - dx / _openX).clamp(0.0, 1.0);
       case 'tab':
         _dragTotal += dx;
     }
@@ -158,14 +139,6 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
           _closeAll();
         } else {
           _menu.value > 0.45 ? _openMenu() : _closeAll();
-        }
-      case 'recent':
-        if (v < -350) {
-          _openRecent();
-        } else if (v > 350) {
-          _closeAll();
-        } else {
-          _recent.value > 0.45 ? _openRecent() : _closeAll();
         }
       case 'tab':
         if (v < -350 || _dragTotal < -90) {
@@ -198,7 +171,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
       return Material(
         color: recessed,
         child: Stack(children: [
-          // Back layers: menu pinned LEFT, Recent pinned RIGHT.
+          // Back layer: the menu drawer, pinned LEFT.
           Positioned(
             top: 0,
             bottom: 0,
@@ -207,27 +180,9 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
             child: _panel(p, recessed, tr(lang, 'menu'),
                 const MenuBody(padding: EdgeInsets.fromLTRB(16, 4, 16, 24))),
           ),
-          Positioned(
-            top: 0,
-            bottom: 0,
-            right: 0,
-            width: _openX,
-            child: AnimatedBuilder(
-              animation: _recent,
-              builder: (context, child) =>
-                  _recent.value > 0.01 ? child! : const SizedBox.shrink(),
-              child: _panel(
-                  p,
-                  recessed,
-                  tr(lang, 'recent'),
-                  const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 4),
-                      child: HistoryBody())),
-            ),
-          ),
-          // Front layer: tabs + docks, sliding aside to reveal a panel.
+          // Front layer: tabs + docks, sliding aside to reveal the menu.
           AnimatedBuilder(
-            animation: Listenable.merge([_menu, _recent]),
+            animation: _menu,
             child: GatiShellScope(
               openMenu: _openMenu,
               child: GestureDetector(
@@ -287,16 +242,14 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
               ),
             ),
             builder: (context, child) {
-              final t = _menu.value;
-              final r = _recent.value;
-              final e = t > r ? t : r; // combined "how far out" factor
+              final e = _menu.value; // how far out the page has slid
               final radius = 22.0 * e;
               return Transform.translate(
-                offset: Offset(t * _openX - r * _openX, 0),
+                offset: Offset(e * _openX, 0),
                 child: Transform.scale(
-                  scale: 1 - 0.055 * e,
-                  alignment:
-                      t >= r ? Alignment.centerLeft : Alignment.centerRight,
+                  scaleX: 1 - 0.055 * e,
+                  scaleY: 1,
+                  alignment: Alignment.centerLeft,
                   child: Container(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(radius),
@@ -307,7 +260,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                                       alpha: (p.dark ? 0.55 : 0.32) * e),
                                   blurRadius: 44,
                                   spreadRadius: 2,
-                                  offset: Offset(t >= r ? 10 : -10, 16)),
+                                  offset: Offset(10, 16)),
                             ]
                           : const [],
                     ),
