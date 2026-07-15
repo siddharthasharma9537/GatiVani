@@ -302,6 +302,20 @@ class ReaderStore {
   List<WebArticle> all = [];
 }
 
+/// Best-effort lookup for a Live article still held in this session's
+/// in-memory feed pool, by id. Live articles are never written to Supabase
+/// (unlike Paper editions), so once one scrolls out of `ReaderStore.i.all` —
+/// e.g. the Live feed has refreshed since — it can no longer be recovered by
+/// id at all; History/Continue-listening resume only works for it within
+/// the same session (or until the feed refreshes) for that reason.
+WebArticle? liveArticleById(String id) {
+  if (ReaderStore.i.current?.id == id) return ReaderStore.i.current;
+  for (final a in ReaderStore.i.all) {
+    if (a.id == id) return a;
+  }
+  return null;
+}
+
 const _months = <String, int>{
   'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
   'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,

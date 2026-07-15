@@ -9,7 +9,9 @@ import '../config/api_config.dart';
 import '../design/components/gati_states.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
+import '../models/newspaper_article.dart';
 import '../services/document_service.dart';
+import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/settings_provider.dart';
 import '../widgets/gati_puck.dart';
@@ -92,12 +94,68 @@ class _HistoryBodyState extends State<HistoryBody> {
     }
   }
 
-  // Resume: refetch the article by id and play from the saved spot.
+  NewspaperArticle _toArticle(WebArticle a) => NewspaperArticle(
+        id: a.id,
+        title: a.title,
+        content: a.body,
+        preview: a.summary,
+        category: a.source,
+        estimatedDurationSeconds: NewspaperArticle.estimateDuration(a.body),
+        readingStyle: 'news_anchor',
+        language: a.language,
+      );
+
+  // Resolve the played article by id: Live articles have no row in Supabase
+  // to fetch later, so check this session's in-memory feed pool first;
+  // Paper articles fall back to the DB. Null if genuinely unavailable
+  // (feed refreshed since, article removed, etc).
+  Future<NewspaperArticle?> _resolveArticle(String id) async {
+    final live = liveArticleById(id);
+    if (live != null) return _toArticle(live);
+    return DocumentService().fetchArticleById(id);
+  }
+
+  // Row tap: open the full story text, same as everywhere else in the app
+  // (Live/Paper/Playlist all split tap this way — text opens the reader,
+  // a separate ▶/resume icon plays directly).
+  Future<void> _openReader(Map<String, dynamic> m) async {
+    final id = m['article_id'] as String?;
+    if (id == null) return;
+    final live = liveArticleById(id);
+    if (live != null) {
+      ReaderStore.i.current = live;
+      if (mounted) context.push('/reader');
+      return;
+    }
+    final a = await DocumentService().fetchArticleById(id);
+    if (a == null) {
+      if (mounted) gatiSnack(context, 'This article is no longer available.');
+      return;
+    }
+    ReaderStore.i.current = WebArticle(
+      id: a.id,
+      title: a.title,
+      link: '',
+      source: a.category,
+      pubDate: '',
+      summary: a.preview,
+      body: a.content,
+    );
+    if (mounted) context.push('/reader');
+  }
+
+  // Resume button: play directly in the mini-player from the saved spot,
+  // bypassing the reader.
   Future<void> _resume(Map<String, dynamic> m) async {
     final id = m['article_id'] as String?;
     if (id == null) return;
-    final a = await DocumentService().fetchArticleById(id);
-    if (a == null) return;
+    final a = await _resolveArticle(id);
+    if (a == null) {
+      if (mounted) {
+        gatiSnack(context, 'This article is no longer available to resume.');
+      }
+      return;
+    }
     final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
     final done = m['completed'] == true;
     await PlaybackService.i.playOne(a,
@@ -131,8 +189,12 @@ class _HistoryBodyState extends State<HistoryBody> {
     final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
     final done = m['completed'] == true;
     final frac = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
+    // Split tap, same convention as Live/Paper/Playlist rows elsewhere: the
+    // text opens the reader (with a Resume/Replay/Listen button that reads
+    // this same saved progress), the trailing icon resumes/replays directly
+    // in the mini-player without leaving History.
     return InkWell(
-      onTap: () => _resume(m),
+      onTap: () => _openReader(m),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: Gati.s3),
         child: Row(children: [
@@ -168,8 +230,15 @@ class _HistoryBodyState extends State<HistoryBody> {
             ),
           ),
           const SizedBox(width: Gati.s3),
-          Icon(done ? Icons.replay_rounded : Icons.play_arrow_rounded,
-              color: Gati.accent, size: 22),
+          InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => _resume(m),
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Icon(done ? Icons.replay_rounded : Icons.play_arrow_rounded,
+                  color: Gati.accent, size: 22),
+            ),
+          ),
         ]),
       ),
     );

@@ -22,6 +22,7 @@ import '../services/alerts_service.dart';
 import '../services/document_service.dart';
 import '../services/downloads_store.dart';
 import '../services/edition_store.dart';
+import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';
 import '../services/playlists_store.dart';
 import '../services/reactions_store.dart';
@@ -71,8 +72,30 @@ class _ForYouScreenState extends State<ForYouScreen> {
   Future<void> _resumePlay(Map<String, dynamic> m) async {
     final id = m['article_id'] as String?;
     if (id == null) return;
-    final a = await DocumentService().fetchArticleById(id);
-    if (a == null) return;
+    // Live articles have no row in Supabase to fetch by id later, so check
+    // this session's in-memory feed pool before falling back to the DB
+    // (Paper articles) — without this, resuming a Live article silently did
+    // nothing (fetchArticleById always returned null for it).
+    final live = liveArticleById(id);
+    final a = live != null
+        ? NewspaperArticle(
+            id: live.id,
+            title: live.title,
+            content: live.body,
+            preview: live.summary,
+            category: live.source,
+            estimatedDurationSeconds:
+                NewspaperArticle.estimateDuration(live.body),
+            readingStyle: 'news_anchor',
+            language: live.language,
+          )
+        : await DocumentService().fetchArticleById(id);
+    if (a == null) {
+      if (mounted) {
+        gatiSnack(context, 'This article is no longer available to resume.');
+      }
+      return;
+    }
     final pos = (m['position_seconds'] as num?)?.toInt() ?? 0;
     await PlaybackService.i.playOne(a, resumeAt: Duration(seconds: pos));
   }

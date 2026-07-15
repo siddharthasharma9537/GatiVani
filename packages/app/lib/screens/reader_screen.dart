@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../config/api_config.dart';
 import '../design/tokens.dart';
 import '../models/newspaper_article.dart';
 import '../services/news_feed_service.dart';
@@ -16,7 +19,7 @@ import '../widgets/gati_puck.dart';
 class ReaderScreen extends StatelessWidget {
   const ReaderScreen({super.key});
 
-  void _listen(WebArticle a) {
+  void _listen(WebArticle a, {Duration? resumeAt}) {
     // Reuse the newspaper player: build an article from the web story so synth,
     // caching, mini-player and the lyrics view all work unchanged.
     final art = NewspaperArticle(
@@ -29,7 +32,7 @@ class ReaderScreen extends StatelessWidget {
       readingStyle: 'news_anchor',
       language: a.language,
     );
-    PlaybackService.i.playOne(art);
+    PlaybackService.i.playOne(art, resumeAt: resumeAt);
   }
 
   Future<void> _openOriginal(String link) async {
@@ -85,7 +88,9 @@ class ReaderScreen extends StatelessWidget {
                         .copyWith(color: p.ink)),
                 const SizedBox(height: Gati.s4),
                 _ListenButton(
-                    onListen: () => _listen(a), isArticle: a.link.isEmpty),
+                    article: a,
+                    onListen: (resumeAt) => _listen(a, resumeAt: resumeAt),
+                    isArticle: a.link.isEmpty),
                 const SizedBox(height: Gati.s5),
                 Text(a.body,
                     style: GatiType.bodyRead(GatiType.scriptOf(a.body))
@@ -118,12 +123,50 @@ class ReaderScreen extends StatelessWidget {
   }
 }
 
-/// Listen pill — reflects the shared player's state for THIS reader session:
-/// idle → "Listen", synthesizing → spinner, playing → "Playing…".
-class _ListenButton extends StatelessWidget {
-  const _ListenButton({required this.onListen, this.isArticle = false});
-  final VoidCallback onListen;
+/// Listen pill — reflects the shared player's state for THIS reader session
+/// (idle → "Listen", playing → "Playing…") AND, once loaded, this article's
+/// saved progress from a past listen: partway through → "Resume" (from that
+/// spot); fully finished → "Replay" (from the top).
+class _ListenButton extends StatefulWidget {
+  const _ListenButton(
+      {required this.article, required this.onListen, this.isArticle = false});
+  final WebArticle article;
+  final void Function(Duration? resumeAt) onListen;
   final bool isArticle;
+
+  @override
+  State<_ListenButton> createState() => _ListenButtonState();
+}
+
+class _ListenButtonState extends State<_ListenButton> {
+  int? _posSec;
+  bool _completed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProgress();
+  }
+
+  Future<void> _loadProgress() async {
+    try {
+      final r = await http.get(
+        Uri.parse('${ApiConfig.restUrl}/recent_plays'
+            '?article_id=eq.${widget.article.id}'
+            '&select=position_seconds,completed&limit=1'),
+        headers: ApiConfig.authHeaders,
+      );
+      final rows = json.decode(r.body) as List;
+      if (rows.isEmpty || !mounted) return;
+      final m = rows.first as Map<String, dynamic>;
+      setState(() {
+        _posSec = (m['position_seconds'] as num?)?.toInt();
+        _completed = m['completed'] == true;
+      });
+    } catch (_) {
+      // Best-effort — falls back to the plain "Listen" state.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -133,25 +176,39 @@ class _ListenButton extends StatelessWidget {
         final ps = PlaybackService.i;
         final playing = ps.isPlaying;
         final lang = context.read<SettingsProvider>().lang;
+        final hasProgress = !_completed && (_posSec ?? 0) > 0;
         return GestureDetector(
-          onTap: playing ? () => ps.player.pause() : onListen,
+          onTap: playing
+              ? () => ps.player.pause()
+              : () => widget.onListen(
+                  hasProgress ? Duration(seconds: _posSec!) : null),
           child: Container(
             padding: const EdgeInsets.symmetric(
                 horizontal: Gati.s5, vertical: Gati.s3),
             decoration: BoxDecoration(
                 color: kAccent, borderRadius: BorderRadius.circular(Gati.rPill)),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(playing ? Icons.pause : Icons.play_arrow,
-                  color: kPaper, size: 22),
+              Icon(
+                  playing
+                      ? Icons.pause
+                      : (_completed
+                          ? Icons.replay_rounded
+                          : Icons.play_arrow),
+                  color: kPaper,
+                  size: 22),
               const SizedBox(width: Gati.s2),
               Text(
                   playing
                       ? _t(lang, 'Playing…', 'వినిపిస్తోంది…')
-                      : isArticle
-                          ? _t(lang, 'Listen to the article',
-                              'వ్యాసాన్ని వినండి')
-                          : _t(lang, 'Listen to this story',
-                              'ఈ కథనాన్ని వినండి'),
+                      : _completed
+                          ? _t(lang, 'Replay', 'మళ్లీ వినండి')
+                          : hasProgress
+                              ? _t(lang, 'Resume', 'కొనసాగించండి')
+                              : widget.isArticle
+                                  ? _t(lang, 'Listen to the article',
+                                      'వ్యాసాన్ని వినండి')
+                                  : _t(lang, 'Listen to this story',
+                                      'ఈ కథనాన్ని వినండి'),
                   style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w500,
