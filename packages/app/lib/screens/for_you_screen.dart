@@ -60,7 +60,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
         Uri.parse('${ApiConfig.restUrl}/recent_plays'
             '?select=article_id,title,category,position_seconds,duration_seconds,completed,played_at'
             '&completed=eq.false&position_seconds=gt.0'
-            '&order=played_at.desc&limit=4'),
+            '&order=played_at.desc&limit=5'),
         headers: ApiConfig.authHeaders,
       );
       final rows = (json.decode(r.body) as List).cast<Map<String, dynamic>>();
@@ -115,7 +115,7 @@ class _ForYouScreenState extends State<ForYouScreen> {
         : EditionStore.i.forSection('District').take(4).toList();
     final downloads = DownloadsStore.i.items.take(3).toList();
     final liked = ReactionsStore.i.liked.take(4).toList();
-    final playlists = PlaylistsStore.i.all.take(3).toList();
+    final playlists = PlaylistsStore.i.all.take(8).toList();
 
     final children = <Widget>[];
 
@@ -137,10 +137,17 @@ class _ForYouScreenState extends State<ForYouScreen> {
 
     // ── Continue listening ──────────────────────────────────────────────────
     if (_resume.isNotEmpty) {
-      children.add(GatiSectionLabel(tr(lang, 'continue_listening')));
+      children.add(_sectionHeader(p, lang, 'continue_listening', '/history'));
       for (final m in _resume) {
         children.add(_resumeRow(p, lang, m));
       }
+      children.add(const SizedBox(height: Gati.s5));
+    }
+
+    // ── Playlists — small tiles, horizontally scrolling ─────────────────────
+    if (playlists.isNotEmpty) {
+      children.add(_sectionHeader(p, lang, 'playlists', '/playlists'));
+      children.add(_playlistTiles(p, playlists));
       children.add(const SizedBox(height: Gati.s5));
     }
 
@@ -155,15 +162,6 @@ class _ForYouScreenState extends State<ForYouScreen> {
           '${d == null ? s.district! : (lang == 'te' ? d.te : d.en)}'));
       for (final a in district) {
         children.add(_articleRow(p, lang, a));
-      }
-      children.add(const SizedBox(height: Gati.s5));
-    }
-
-    // ── Playlists ────────────────────────────────────────────────────────────
-    if (playlists.isNotEmpty) {
-      children.add(_sectionHeader(p, lang, 'playlists', '/playlists'));
-      for (final pl in playlists) {
-        children.add(_playlistRow(p, lang, pl));
       }
       children.add(const SizedBox(height: Gati.s5));
     }
@@ -348,34 +346,49 @@ class _ForYouScreenState extends State<ForYouScreen> {
     );
   }
 
-  Widget _playlistRow(GatiPalette p, String lang, Playlist pl) {
+  // Small tiles, side-scrolling — playlists are a browse-and-pick surface,
+  // not a read-in-order list, so a horizontal row fits better than rows.
+  Widget _playlistTiles(GatiPalette p, List<Playlist> playlists) {
+    return SizedBox(
+      height: 92,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: Gati.s5),
+        itemCount: playlists.length,
+        separatorBuilder: (_, __) => const SizedBox(width: Gati.s3),
+        itemBuilder: (context, i) => _playlistTile(p, playlists[i]),
+      ),
+    );
+  }
+
+  Widget _playlistTile(GatiPalette p, Playlist pl) {
     final count = pl.articles.length;
     return InkWell(
       onTap: () => context.push('/playlists/${pl.id}'),
-      child: Padding(
-        padding:
-            const EdgeInsets.symmetric(horizontal: Gati.s5, vertical: 8),
-        child: Row(children: [
-          Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(pl.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 14, height: 1.35, color: p.ink)),
-                  const SizedBox(height: 2),
-                  Text('$count ${count == 1 ? 'story' : 'stories'}',
-                      style: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w500,
-                          color: Gati.accent)),
-                ]),
-          ),
-          const SizedBox(width: Gati.s3),
-          Icon(Icons.chevron_right, size: 20, color: p.muted),
-        ]),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: 132,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: p.surface,
+            border: Border.all(color: p.line),
+            borderRadius: BorderRadius.circular(14)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.queue_music_rounded,
+                color: Gati.accent, size: 20),
+            const Spacer(),
+            Text(pl.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w500, height: 1.25, color: p.ink)),
+            const SizedBox(height: 2),
+            Text('$count ${count == 1 ? 'story' : 'stories'}',
+                style: TextStyle(fontSize: 11, color: p.muted)),
+          ],
+        ),
       ),
     );
   }
