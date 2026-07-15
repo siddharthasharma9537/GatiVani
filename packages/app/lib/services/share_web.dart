@@ -107,7 +107,7 @@ $paragraphs
 </html>
 ''';
   doc.open();
-  doc.write(html);
+  doc.write(html.toJS);
   doc.close();
   // Give the new document a moment to paint before invoking print.
   Future.delayed(const Duration(milliseconds: 150), () {
