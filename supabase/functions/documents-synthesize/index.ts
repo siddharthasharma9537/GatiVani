@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 // Sarvam STT forced-alignment (./alignment.ts) is disabled for cost — see the
 // commented-out alignAndStore call in the handler.
+// (touch: force a redeploy to verify CI's SUPABASE_ACCESS_TOKEN is now wired up)
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
