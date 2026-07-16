@@ -42,6 +42,12 @@ jobs:
         run: |
           for fn in supabase/functions/*/; do
             name=$(basename "$fn")
+            # Leading-underscore dirs (e.g. _shared) are shared code, not
+            # deployable functions — the Supabase CLI rejects the name outright.
+            if [[ "$name" == _* ]]; then
+              echo "Skipping $name (shared code, not a function)…"
+              continue
+            fi
             echo "Deploying $name…"
             supabase functions deploy "$name" --project-ref "$PROJECT_REF" --use-api
           done
