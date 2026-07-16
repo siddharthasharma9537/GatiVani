@@ -1,0 +1,21 @@
+-- article_chunks caches synthesized audio per (article_id, target, chunk_index)
+-- so that once ANY user narrates an article, every later listener (any user,
+-- any session) gets the cached clip instantly with zero TTS calls of their
+-- own — this is the main lever for making a per-user free-tier Gemini quota
+-- (currently 10 requests/day) actually stretch across real usage.
+--
+-- That sharing was silently broken for every Live article: this table's
+-- article_id had "references public.articles(id)", but Live articles (from
+-- feeds-articles, ephemeral, no permanent DB row) never have a matching row
+-- in articles — so every INSERT here for a Live article violated the FK and
+-- was dropped (caught and logged as a warning, never surfacing to the
+-- caller), meaning Live narration NEVER cached and EVERY user re-synthesized
+-- the same popular stories on their own quota. Paper editions were unaffected
+-- since they do have a matching articles row.
+--
+-- Drop the FK: article_chunks needs to serve both article kinds, and there's
+-- no single "all content" table to reference. The ON DELETE CASCADE cleanup
+-- this gave Paper editions was never load-bearing (nothing in the app
+-- deletes rows from articles), so nothing is lost by removing it.
+alter table public.article_chunks
+  drop constraint if exists article_chunks_article_id_fkey;
