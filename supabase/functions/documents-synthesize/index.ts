@@ -39,44 +39,58 @@ function geminiVoice(speaker: string): string {
 // Sarvam Bulbul:v3 hard limit is 500 chars; stay safely under it.
 
 const SARVAM_CHUNK_LIMIT = 450;
-// Per-chunk size for Gemini TTS in the LEGACY full-synthesis path
-// (synthesizeWithGemini below), which fires all of an article's chunks in
-// parallel via Promise.all and stitches them — fewer, larger chunks means
-// fewer concurrent Gemini calls competing for rate limit. Gemini handles
-// ~1.5k chars per call in ~75s and truncates well past that.
+// Per-chunk size for Gemini TTS. Real-world measurement (chunk upload
+// timestamps across several live plays) shows a single call's latency does
+// NOT scale predictably with chunk length in the few-hundred-to-1.5k-char
+// range — identically-sized ~350-char chunks back to back have taken
+// anywhere from 15s to over a minute, most likely dominated by Gemini API
+// queueing/rate-limit behavior on the caller's own key rather than by text
+// length. That means shrinking chunk size doesn't reliably buy speed, but it
+// DOES multiply how many Gemini calls one article needs — worse for a
+// rate-limited key, not better. So: keep GEMINI_CHUNK_LIMIT sized for
+// call-count efficiency (used by both the legacy parallel full-synthesis
+// path AND as the size of every chunk-mode chunk after the first), not for
+// fitting inside any particular playback window.
 const GEMINI_CHUNK_LIMIT = 1450;
-// Per-chunk size in CHUNK MODE (chunk-by-chunk playback, one HTTP round trip
-// per chunk). This one is NOT about total-article throughput — it has to fit
-// inside the client's prefetch lookahead: the client only starts fetching
-// chunk N+1 once chunk N has _prefetchLookahead (~20-25s) of playback left,
-// so chunk N+1 has roughly that long to finish synthesizing before it's
-// actually needed. At Gemini's ~20 chars/sec, that caps a safely-prefetchable
-// chunk at ~350-450 chars — using GEMINI_CHUNK_LIMIT (1450, ~75s) here would
-// blow way past the lookahead on EVERY chunk after the first, guaranteeing a
-// stall at each boundary regardless of how fast chunk 0 was.
-const CHUNK_MODE_LIMIT = 350;
+// Chunk-mode's chunk 0 is the one thing on the critical path (the client
+// blocks on it before playback starts) — keeping it small is still worth it
+// for a fast first sound, even though later chunks (fetched in the
+// background while something is already playing) are sized for fewer total
+// calls instead. A short chunk 0 doesn't meaningfully add to the call count
+// since it's still just +1 call for the whole article.
+const FIRST_CHUNK_LIMIT = 350;
 
-function chunkText(text: string, limit: number = SARVAM_CHUNK_LIMIT): string[] {
-  if (text.length <= limit) return [text];
+// [limit] bounds every chunk; [firstLimit], when smaller, bounds only chunk 0
+// — the split is still a pure function of (text, limit, firstLimit), so every
+// call (regardless of which chunkIndex is being requested) recomputes the
+// same boundaries and chunk N stays addressable on its own.
+function chunkText(
+  text: string,
+  limit: number = SARVAM_CHUNK_LIMIT,
+  firstLimit?: number,
+): string[] {
+  const cap0 = firstLimit && firstLimit < limit ? firstLimit : limit;
+  if (text.length <= cap0) return [text];
   const chunks: string[] = [];
   const sentences = text.split(/(?<=[।॥|.!?\n])\s*/u).filter(s => s.trim());
   let current = "";
+  let cur = cap0; // active cap: cap0 until the first chunk is pushed, then limit
   for (const sentence of sentences) {
-    if (sentence.length > limit) {
-      if (current.trim()) { chunks.push(current.trim()); current = ""; }
+    if (sentence.length > cur) {
+      if (current.trim()) { chunks.push(current.trim()); current = ""; cur = limit; }
       const words = sentence.split(/\s+/);
       let part = "";
       for (const word of words) {
-        if ((part + " " + word).length > limit) {
-          if (part.trim()) chunks.push(part.trim());
+        if ((part + " " + word).length > cur) {
+          if (part.trim()) { chunks.push(part.trim()); cur = limit; }
           part = word;
         } else {
           part = part ? part + " " + word : word;
         }
       }
       if (part.trim()) current = part.trim();
-    } else if ((current + " " + sentence).length > limit) {
-      if (current.trim()) chunks.push(current.trim());
+    } else if ((current + " " + sentence).length > cur) {
+      if (current.trim()) { chunks.push(current.trim()); cur = limit; }
       current = sentence;
     } else {
       current = current ? current + " " + sentence : sentence;
@@ -303,16 +317,16 @@ Deno.serve(async (req) => {
 
     // ── Chunk mode: return ONE synthesized chunk instead of waiting for the
     // whole article, so playback can start immediately. Chunking is
-    // deterministic (same text + CHUNK_MODE_LIMIT always splits the same
-    // way), so a chunk index is directly addressable — no job/session state
-    // needed. Cached per (articleId, target, chunkIndex) in article_chunks,
-    // same idea as the full-file cache above.
+    // deterministic (same text + limits always splits the same way), so a
+    // chunk index is directly addressable — no job/session state needed.
+    // Cached per (articleId, target, chunkIndex) in article_chunks, same idea
+    // as the full-file cache above.
     const chunkIndex = typeof body.chunkIndex === "number" &&
         Number.isInteger(body.chunkIndex) && body.chunkIndex >= 0
       ? body.chunkIndex as number
       : null;
     if (chunkIndex !== null) {
-      const parts = chunkText(text, CHUNK_MODE_LIMIT);
+      const parts = chunkText(text, GEMINI_CHUNK_LIMIT, FIRST_CHUNK_LIMIT);
       if (chunkIndex >= parts.length) {
         return json({
           error: "chunk_out_of_range",
