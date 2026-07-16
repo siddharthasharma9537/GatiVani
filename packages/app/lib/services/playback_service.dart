@@ -97,13 +97,15 @@ class PlaybackService extends ChangeNotifier {
   // so a burst of position-stream ticks near the end of a track doesn't fire
   // duplicate requests.
   String? _prefetchedArticleId;
-  // How close to the end of the current track to start synthesizing the next
-  // one. Close enough that closing the app / bailing out mid-article doesn't
-  // burn the user's Gemini quota on a track they never reach; early enough
-  // that synthesis (typically single-digit seconds to well under a minute for
-  // one article, given server-side chunk parallelism) usually finishes before
-  // it's actually needed.
-  static const _prefetchLookahead = Duration(seconds: 20);
+  // How close to the end of the current track/chunk to start synthesizing the
+  // next one. Close enough that closing the app / bailing out mid-article
+  // doesn't burn the user's Gemini quota on content never reached; early
+  // enough that a single chunk-mode chunk (sized server-side to fit this
+  // window — see CHUNK_MODE_LIMIT in documents-synthesize) usually finishes
+  // synthesizing before it's actually needed. 25s (not 20) for margin against
+  // real-world network/API jitter, while staying inside the "20-30s ahead"
+  // quota budget this was scoped to.
+  static const _prefetchLookahead = Duration(seconds: 25);
   // Progressive chunk playback for the CURRENT article: instead of waiting
   // for the whole article to synthesize, chunk 0 plays as soon as it's
   // ready and later chunks synthesize in the background, paced by the same
