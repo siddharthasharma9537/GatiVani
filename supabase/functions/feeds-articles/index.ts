@@ -89,7 +89,12 @@ function decodeEntities(s: string): string {
 }
 
 function stripHtml(html: string): string {
-  const noCdata = html.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+  const noCdata = html
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    // Some feeds ship literal CRLF line breaks in the body text itself (not
+    // <p>/<br> tags), which the \n{3,} blank-line collapse below never sees
+    // because it only matches bare \n runs — normalize before anything else.
+    .replace(/\r\n?/g, "\n");
   const text = noCdata
     // Drop embed CONTAINERS whole — their inner text is foreign-language tweet
     // bodies, captions, iframe fallbacks etc. that would otherwise leak into the
@@ -112,6 +117,23 @@ function stripHtml(html: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]*\n[ \t]*/g, "\n")
     .trim();
+}
+
+// Some feeds repeat the headline as the article body's own first line —
+// harmless visually (easy to skim past) but narrated aloud it plays as the
+// story announcing its own title twice in a row. Strip it when the first
+// paragraph is (near-)identical to the title.
+function stripLeadingDupeTitle(body: string, title: string): string {
+  const normalize = (s: string) =>
+    s.trim().replace(/[.!?…]+$/g, "").replace(/\s+/g, " ").toLowerCase();
+  const nTitle = normalize(title);
+  if (!nTitle) return body;
+  const firstBreak = body.indexOf("\n");
+  const firstPara = (firstBreak === -1 ? body : body.slice(0, firstBreak));
+  if (normalize(firstPara) === nTitle) {
+    return firstBreak === -1 ? "" : body.slice(firstBreak).trimStart();
+  }
+  return body;
 }
 
 function tag(block: string, name: string): string {
@@ -156,7 +178,10 @@ async function parseFeed(
     const link = decodeEntities(tag(block, "link")).trim();
     if (!title || !link) continue;
     const encoded = tag(block, "content:encoded");
-    const body = stripHtml(encoded).slice(0, BODY_CAP);
+    const body = stripLeadingDupeTitle(
+      stripHtml(encoded).slice(0, BODY_CAP),
+      title,
+    );
     if (body.length < 200) continue; // skip stubs with no real body
     const summary = stripHtml(tag(block, "description")).slice(0, 320);
     out.push({
