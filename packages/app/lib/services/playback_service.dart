@@ -461,11 +461,19 @@ class PlaybackService extends ChangeNotifier {
       _pendingChunkIndex = null;
       _pendingChunkUrl = null;
       _pendingChunkDuration = null;
+      // Load the new source BEFORE committing "we've advanced" bookkeeping.
+      // setUrl can throw (or, worse, silently fail to swap the source) on a
+      // flaky mobile connection — committing _priorChunksElapsed /
+      // _loadedChunkIndex beforehand left the article-level position/seek
+      // bar claiming the article had moved into the next chunk while the
+      // player was still sitting on — and could fall back to replaying —
+      // the old one, which is exactly the "seek bar reads far ahead of what's
+      // actually playing" symptom. Retry once, same idea as _resumePlayback.
+      await _loadChunkUrl(url, epoch);
+      if (epoch != _playEpoch) return;
       _priorChunksElapsed += _chunkDurations[_loadedChunkIndex];
       _chunkDurations.add(dur!);
       _loadedChunkIndex = nextIndex;
-      await player.setUrl(url);
-      if (epoch != _playEpoch) return;
       loading = false;
       notifyListeners();
       await _resumePlayback(epoch);
@@ -475,6 +483,20 @@ class PlaybackService extends ChangeNotifier {
       error = e.toString();
       loading = false;
       notifyListeners();
+    }
+  }
+
+  /// setUrl can fail transiently (e.g. a dropped request on flaky mobile
+  /// data) rather than only when the URL is genuinely bad — retry once
+  /// before letting the failure propagate to the caller's catch block.
+  Future<void> _loadChunkUrl(String url, int epoch) async {
+    try {
+      await player.setUrl(url);
+    } catch (_) {
+      if (epoch != _playEpoch) return;
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (epoch != _playEpoch) return;
+      await player.setUrl(url);
     }
   }
 
