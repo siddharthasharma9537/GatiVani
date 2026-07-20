@@ -17,7 +17,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
-import { extractArticlesStructured } from "../_shared/structure.ts";
+import { callGeminiJson, extractArticlesStructured } from "../_shared/structure.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -287,7 +287,7 @@ async function processPage(
     fireContinuation(jobId, page + 1, geminiKey);
   } else {
     // All pages done — stitch cross-page article continuations, then clean up.
-    await finalizeContinuations(supabase, job.newspaper_id);
+    await finalizeContinuations(supabase, job.newspaper_id, geminiKey);
     await supabase.storage.from("uploads").remove([sourcePath])
       .then(() => {}, () => {});
     console.log(`[edition] job ${jobId} completed; source ${sourcePath} deleted`);
@@ -308,25 +308,65 @@ const CONT_TO = /(?:మిగతా|సశేషం|తరువాయి)\s*\(?
 // "continued FROM" header at the start of the destination article.
 const CONT_FROM = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
 
-// Continuation-page headlines are often a shortened PREFIX of the original
-// (trimmed to save space), not identical text — comparing a fixed 10-char
-// slice for exact equality missed most real cases, since a genuinely
-// truncated headline diverges from the original well before character 10
-// in the general case, or the reverse (matches on 10 chars two DIFFERENT
-// headlines happen to share). Instead check whether the shorter of the two
-// (normalized) titles is a genuine prefix of the longer one, with a length
-// floor so short titles can't false-positive on a shared opening word.
-function titlePrefixMatch(t1: string, t2: string): boolean {
+// Continuation-page headlines are often shortened from the original (trimmed
+// to save space) — sometimes a prefix, sometimes a fragment lifted from
+// elsewhere in the original headline, not always starting at character 0.
+// Comparing a fixed 10-char slice for exact equality missed most real
+// cases. Check whether the shorter (normalized) title appears ANYWHERE in
+// the longer one, with a length floor so short titles can't false-positive
+// on a shared common word.
+function titleOverlapMatch(t1: string, t2: string): boolean {
   const n1 = (t1 ?? "").trim().replace(/\s+/g, " ");
   const n2 = (t2 ?? "").trim().replace(/\s+/g, " ");
   if (!n1 || !n2) return false;
   const [shorter, longer] = n1.length <= n2.length ? [n1, n2] : [n2, n1];
-  if (shorter.length < 8) return false;
-  return longer.startsWith(shorter);
+  if (shorter.length < 10) return false;
+  return longer.includes(shorter);
+}
+
+// Fallback for when neither the CONT_FROM header nor titleOverlapMatch
+// confidently resolves a match — the continuation headline may be a genuine
+// paraphrase (same story, different wording) rather than a truncation,
+// which no string comparison can catch. Only called for articles that
+// already have a real "continued on page N" marker and at least one
+// same-page candidate the deterministic checks left unresolved, so this
+// stays rare and targeted rather than a call per article.
+async function semanticContinuationMatch(
+  sourceTitle: string,
+  sourceBody: string,
+  candidates: Array<{ title: string; body: string }>,
+  geminiKey: string,
+): Promise<number | null> {
+  if (!geminiKey || !candidates.length) return null;
+  const prompt =
+    `A Telugu newspaper article says it continues on another page. Below is ` +
+    `that article's headline + opening text, and a numbered list of candidate ` +
+    `articles found on the target page. Decide which candidate (if any) is ` +
+    `genuinely the CONTINUATION of the same story — same event, same ` +
+    `people/place, picking up where the first part left off. Headlines are ` +
+    `often reworded or shortened on the continuation page, so judge by ` +
+    `CONTENT, not matching words.\n\n` +
+    `Return ONLY JSON: {"match": <candidate index, or -1 if none confidently match>}\n\n` +
+    `SOURCE:\nheadline: "${sourceTitle.slice(0, 80)}"\nopening: "${sourceBody.slice(0, 150)}"\n\n` +
+    `CANDIDATES:\n${
+      candidates
+        .map((c, i) =>
+          `[${i}] headline: "${c.title.slice(0, 80)}"\n    opening: "${c.body.slice(0, 150)}"`
+        )
+        .join("\n")
+    }`;
+  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
+  if (status !== 200) return null;
+  const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as { match?: number };
+  return typeof data.match === "number" && data.match >= 0 && data.match < candidates.length
+    ? data.match
+    : null;
 }
 
 // deno-lint-ignore no-explicit-any
-async function finalizeContinuations(supabase: any, newspaperId: string): Promise<void> {
+async function finalizeContinuations(
+  supabase: any, newspaperId: string, geminiKey: string,
+): Promise<void> {
   if (!newspaperId) return;
   const { data: arts } = await supabase.from("articles")
     .select("id,title,full_content,content_preview,page_number")
@@ -377,10 +417,31 @@ async function finalizeContinuations(supabase: any, newspaperId: string): Promis
       const head = (c.full_content as string).slice(0, 90);
       let score = 0;
       if (CONT_FROM.test(head)) score += 2;
-      if (titlePrefixMatch(a.title as string, c.title as string)) {
+      if (titleOverlapMatch(a.title as string, c.title as string)) {
         score += 2;
       }
       if (score > bestScore) { bestScore = score; best = c; }
+    }
+
+    // Deterministic checks found nothing confident, but there's a real
+    // "continued on page N" marker and at least one same-page candidate —
+    // the continuation headline may be a paraphrase rather than a
+    // truncation/overlap. Ask Gemini to judge by content instead of text.
+    if (bestScore < 2 && cands.length) {
+      const idx = await semanticContinuationMatch(
+        a.title as string,
+        body,
+        cands.map((c: typeof a) => ({
+          title: (c.title as string) ?? "",
+          body: (c.full_content as string) ?? "",
+        })),
+        geminiKey,
+      ).catch(() => null);
+      if (idx !== null) {
+        best = cands[idx];
+        bestScore = 2;
+        console.log(`[edition] semantic continuation match p→${targetPage}: "${(a.title as string).slice(0, 24)}"`);
+      }
     }
 
     // Strip the dangling "continued to" marker from this article regardless.

@@ -299,7 +299,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function callGeminiJson(
+export async function callGeminiJson(
   model: string,
   parts: unknown[],
   geminiKey: string,
@@ -521,8 +521,14 @@ Also decide, for the CORRECTED order, which fragments start a NEW paragraph vs.
 continue the previous fragment's sentence/thought (common when a sentence was
 split across two OCR blocks — e.g. a column or line break landed mid-sentence).
 
+Also check topic consistency: does every fragment actually belong to THIS
+story, or does one look like it drifted in from a different, unrelated
+article (a sign the earlier assignment step grouped it with the wrong
+story) — different subject, different people/place, reads like an
+unconnected news item rather than a continuation of this one.
+
 Return ONLY JSON:
-{"articles":[{"i":0,"order":[2,0,1],"gap":false,"paragraph_breaks":[0,2]}]}
+{"articles":[{"i":0,"order":[2,0,1],"gap":false,"paragraph_breaks":[0,2],"misplaced":[1]}]}
 RULES:
 - "order" = that article's fragment indices in correct reading order. It MUST be a
   permutation of the existing indices — never invent, drop, or edit text. Omit it
@@ -533,14 +539,19 @@ RULES:
   it. Any position NOT listed continues the previous fragment's sentence with no
   paragraph break. Include this whenever you can judge it with confidence; omit
   the whole field for an article only if genuinely unsure.
+- "misplaced" = positions (0-indexed, in the CORRECTED order) of fragments that
+  don't topically belong in this article. Only include a position when you're
+  genuinely confident it's unrelated — being out of order or hard to follow is
+  NOT the same as being misplaced. Omit or leave empty when everything fits.
 
 ${lines.join("\n")}`;
   const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
   if (status !== 200) return;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
-    articles?: Array<
-      { i: number; order?: number[]; gap?: boolean; paragraph_breaks?: number[] }
-    >;
+    articles?: Array<{
+      i: number; order?: number[]; gap?: boolean;
+      paragraph_breaks?: number[]; misplaced?: number[];
+    }>;
   };
   for (const r of data.articles ?? []) {
     const d = drafts[r.i];
@@ -553,6 +564,11 @@ ${lines.join("\n")}`;
           (x) => typeof x === "number" && x >= 0 && x < d.blocks.length,
         ),
       );
+    }
+    if (Array.isArray(r.misplaced) && r.misplaced.some(
+      (x) => typeof x === "number" && x >= 0 && x < d.blocks.length,
+    )) {
+      d.review.push("topic_mismatch");
     }
   }
 }
