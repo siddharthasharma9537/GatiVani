@@ -78,7 +78,7 @@ class PlaybackService extends ChangeNotifier {
           (pos.inSeconds - _lastSaveSec).abs() >= 10) {
         _saveProgress();
       }
-      _maybePrefetchNext(pos);
+      _maybePrefetchNext();
       _maybeFetchNextChunk(pos);
     });
   }
@@ -259,11 +259,19 @@ class PlaybackService extends ChangeNotifier {
   /// synthesis for the next queued track in the background — so it's likely
   /// already cached by the time the user reaches it, without having spent that
   /// cost on tracks they never get to (closing the app, skipping around).
-  void _maybePrefetchNext(Duration pos) {
+  void _maybePrefetchNext() {
     if (!player.playing) return;
-    final dur = player.duration;
-    if (dur == null || dur == Duration.zero) return;
-    if (dur - pos > _prefetchLookahead) return;
+    // Use the article-level duration/position (sums across all chunks), not
+    // player.duration/player.position which only cover the currently loaded
+    // chunk. Using chunk-level values here meant a short chunk 0 (e.g. ~19s)
+    // was already inside the lookahead window the instant playback started,
+    // firing a full background synthesis for the NEXT queued article within
+    // seconds of starting the CURRENT one — burning Gemini's 3 RPM budget
+    // against the current article's own in-flight chunk fetches and starving
+    // them, not just wasting quota on a track the user might skip.
+    final dur = duration;
+    if (dur == Duration.zero) return;
+    if (dur - position > _prefetchLookahead) return;
     final ni = _peekNextIndex();
     if (ni == null) return;
     final next = queue[ni];
