@@ -116,7 +116,16 @@ class PlaybackService extends ChangeNotifier {
   int _loadedChunkIndex = 0;
   final List<Duration> _chunkDurations = [];
   Duration _priorChunksElapsed = Duration.zero;
-  bool _chunkFetchInFlight = false;
+  // The background prefetch's own in-flight request, keyed by which chunk
+  // it's for — so _advanceChunk can AWAIT this instead of firing a second,
+  // redundant fetch for the same chunk when playback catches up before the
+  // prefetch resolves. Two concurrent requests for one chunk each burn a
+  // full call against a rate-limited key for no benefit (same target,
+  // same cache row) — that duplication was silently doubling Gemini usage
+  // on exactly the transitions that were already running late.
+  Future<({String audioUrl, Duration duration, int totalChunks})?>?
+      _inFlightChunkFuture;
+  int? _inFlightChunkIndex;
   int? _pendingChunkIndex;
   String? _pendingChunkUrl;
   Duration? _pendingChunkDuration;
@@ -308,7 +317,12 @@ class PlaybackService extends ChangeNotifier {
     _loadedChunkIndex = 0;
     _chunkDurations.clear();
     _priorChunksElapsed = Duration.zero;
-    _chunkFetchInFlight = false;
+    // Any Future already in flight for the previous article just gets
+    // orphaned here (Futures can't be cancelled) — its .then() callback
+    // still runs eventually, but the epoch check inside it discards the
+    // result since _playEpoch will have moved on.
+    _inFlightChunkFuture = null;
+    _inFlightChunkIndex = null;
     _pendingChunkIndex = null;
     _pendingChunkUrl = null;
     _pendingChunkDuration = null;
@@ -373,7 +387,8 @@ class PlaybackService extends ChangeNotifier {
     final total = _totalChunks;
     if (total == null || _loadedChunkIndex + 1 >= total) return;
     if (!player.playing) return;
-    if (_chunkFetchInFlight || _pendingChunkIndex == _loadedChunkIndex + 1) {
+    final nextIndex = _loadedChunkIndex + 1;
+    if (_pendingChunkIndex == nextIndex || _inFlightChunkIndex == nextIndex) {
       return;
     }
     final dur = player.duration;
@@ -381,11 +396,15 @@ class PlaybackService extends ChangeNotifier {
     if (dur - pos > _prefetchLookahead) return;
     final a = current;
     if (a == null) return;
-    final nextIndex = _loadedChunkIndex + 1;
     final epoch = _playEpoch;
-    _chunkFetchInFlight = true;
-    unawaited(_fetchChunk(a, nextIndex).then((res) {
-      _chunkFetchInFlight = false;
+    final future = _fetchChunk(a, nextIndex);
+    _inFlightChunkIndex = nextIndex;
+    _inFlightChunkFuture = future;
+    unawaited(future.then((res) {
+      if (identical(_inFlightChunkFuture, future)) {
+        _inFlightChunkIndex = null;
+        _inFlightChunkFuture = null;
+      }
       if (epoch != _playEpoch || res == null) return; // stale, or retry next tick
       _pendingChunkIndex = nextIndex;
       _pendingChunkUrl = res.audioUrl;
@@ -394,9 +413,10 @@ class PlaybackService extends ChangeNotifier {
   }
 
   /// Move from the chunk that just finished to the next one — either the
-  /// already-prefetched clip (the common case) or, if playback caught up
-  /// before it finished fetching, synthesize it now with a brief stall (same
-  /// idea as today's cold-start wait, just scoped to one chunk).
+  /// already-prefetched clip (the common case), the background prefetch's
+  /// own request if it's still running (waited on rather than duplicated),
+  /// or — if nothing was prefetched at all — synthesize it now with a brief
+  /// stall (same idea as today's cold-start wait, just scoped to one chunk).
   Future<void> _advanceChunk() async {
     final epoch = _playEpoch;
     try {
@@ -406,6 +426,19 @@ class PlaybackService extends ChangeNotifier {
       if (_pendingChunkIndex == nextIndex) {
         url = _pendingChunkUrl;
         dur = _pendingChunkDuration;
+      } else if (_inFlightChunkIndex == nextIndex &&
+          _inFlightChunkFuture != null) {
+        loading = true;
+        notifyListeners();
+        final res = await _inFlightChunkFuture!;
+        if (epoch != _playEpoch) return;
+        if (res != null) {
+          url = res.audioUrl;
+          dur = res.duration;
+        }
+        // res == null: the prefetch failed silently (it doesn't throw) —
+        // fall through to a fresh, error-surfacing attempt below rather
+        // than leaving the player stuck with no signal.
       }
       if (url == null) {
         final a = current;
