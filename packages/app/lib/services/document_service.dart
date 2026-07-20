@@ -221,9 +221,12 @@ class DocumentService {
 
   /// A single article by its DB id — lets surfaces like "Recently played" play
   /// an item without depending on the currently-loaded edition list.
+  /// Gated to processing_status=ready — same bar as fetchEditionArticles, so a
+  /// flagged article can't be reached indirectly (e.g. via History) even
+  /// though it was never offered in a listing.
   Future<NewspaperArticle?> fetchArticleById(String id) async {
     final r = await http.get(
-      Uri.parse('${ApiConfig.restUrl}/articles?id=eq.$id'
+      Uri.parse('${ApiConfig.restUrl}/articles?id=eq.$id&processing_status=eq.ready'
           '&select=id,title,content_preview,full_content,section,page_number,audio_url,summary_audio_url&limit=1'),
       headers: ApiConfig.authHeaders,
     );
@@ -244,10 +247,17 @@ class DocumentService {
 
   /// Articles of a processed edition, in page order, mapped to the same JSON
   /// shape that processNewspaper feeds into NewspaperArticle.fromJson.
+  /// Only processing_status=ready — the extraction pipeline flags articles it
+  /// isn't confident about (missing headline, low OCR coverage, fused
+  /// articles, mid-sentence cutoffs) as "review" instead, and until now that
+  /// signal was computed but never actually used: flagged articles reached
+  /// users identically to clean ones. This is the gate that makes the flag
+  /// mean something.
   Future<List<NewspaperArticle>> fetchEditionArticles(
       String newspaperId) async {
     final r = await http.get(
       Uri.parse('${ApiConfig.restUrl}/articles?newspaper_id=eq.$newspaperId'
+          '&processing_status=eq.ready'
           '&select=id,title,content_preview,full_content,section,page_number,audio_url,summary_audio_url'
           '&order=page_number,created_at'),
       headers: ApiConfig.authHeaders,
