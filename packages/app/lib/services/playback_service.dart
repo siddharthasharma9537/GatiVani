@@ -427,13 +427,37 @@ class PlaybackService extends ChangeNotifier {
       if (epoch != _playEpoch) return;
       loading = false;
       notifyListeners();
-      unawaited(player.play());
+      await _resumePlayback(epoch);
       _updateMedia();
     } catch (e) {
       if (epoch != _playEpoch) return;
       error = e.toString();
       loading = false;
       notifyListeners();
+    }
+  }
+
+  /// Some browsers — notably iOS Safari, especially a PWA opened via "Add to
+  /// Home Screen" — can silently fail to actually resume playback after the
+  /// player has sat idle through a long wait (e.g. a slow chunk synthesis),
+  /// rather than throwing where the caller would notice: the new source
+  /// loads but audio never advances, and whatever was last buffered can
+  /// keep sounding like it's replaying. A bare `unawaited(player.play())`
+  /// swallowed that silently; this awaits it and retries once.
+  Future<void> _resumePlayback(int epoch) async {
+    try {
+      await player.play();
+    } catch (_) {
+      if (epoch != _playEpoch) return;
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (epoch != _playEpoch) return;
+      try {
+        await player.play();
+      } catch (e) {
+        if (epoch != _playEpoch) return;
+        error = e.toString();
+        notifyListeners();
+      }
     }
   }
 
