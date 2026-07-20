@@ -408,17 +408,26 @@ function isContinuation(prev: string, next: string): boolean {
   return TELUGU_START.test(next.trim());
 }
 
-function stitch(parts: string[]): string[] {
+// [breaks], when set, is Layer 2's semantic judgment of which fragment
+// (by original index in `parts`) starts a new paragraph — authoritative
+// when present, since it comes from actually reading the fragments for
+// meaning. Falls back to the regex heuristic (weak: effectively "does the
+// previous fragment end with punctuation", since TELUGU_START matches
+// almost any Telugu text) only when Layer 2 didn't judge this article —
+// single-block articles, or a failed/skipped coherence call.
+function stitch(parts: string[], breaks?: Set<number>): string[] {
   const out: string[] = [];
-  for (const raw of parts) {
+  parts.forEach((raw, i) => {
     const t = raw.trim();
-    if (!t) continue;
-    if (out.length && isContinuation(out[out.length - 1], t)) {
+    if (!t) return;
+    const shouldMerge = out.length > 0 &&
+      (breaks ? !breaks.has(i) : isContinuation(out[out.length - 1], t));
+    if (shouldMerge) {
       out[out.length - 1] = out[out.length - 1].replace(/\s+$/, "") + " " + t;
     } else {
       out.push(t);
     }
-  }
+  });
   return out;
 }
 
@@ -468,6 +477,11 @@ interface Draft {
   category: string;
   blocks: Array<{ id: number; text: string }>;
   review: string[];
+  // Positions (in `blocks`' final order) where Layer 2 judged a new paragraph
+  // starts; everything else continues the previous fragment's sentence. Unset
+  // when Layer 2 didn't run/answer for this article — stitch() then falls
+  // back to the regex heuristic.
+  breaks?: Set<number>;
 }
 
 function frag(text: string, head = 60, tail = 30): string {
@@ -502,23 +516,44 @@ async function coherencePass(drafts: Draft[], geminiKey: string): Promise<void> 
 Newspapers split stories across columns, so fragments can be out of reading order.
 For each article decide if the fragments read as ONE coherent story in the right
 order, judging by MEANING (does each fragment continue the previous idea?).
-Return ONLY JSON: {"articles":[{"i":0,"order":[2,0,1],"gap":false}]}
+
+Also decide, for the CORRECTED order, which fragments start a NEW paragraph vs.
+continue the previous fragment's sentence/thought (common when a sentence was
+split across two OCR blocks — e.g. a column or line break landed mid-sentence).
+
+Return ONLY JSON:
+{"articles":[{"i":0,"order":[2,0,1],"gap":false,"paragraph_breaks":[0,2]}]}
 RULES:
 - "order" = that article's fragment indices in correct reading order. It MUST be a
   permutation of the existing indices — never invent, drop, or edit text. Omit it
   if already correct.
 - "gap": true ONLY if a piece is clearly missing (a narrative jump no reorder fixes).
+- "paragraph_breaks" = positions (0-indexed, in the CORRECTED order) where a new
+  paragraph starts. Position 0 is always a break implicitly — no need to include
+  it. Any position NOT listed continues the previous fragment's sentence with no
+  paragraph break. Include this whenever you can judge it with confidence; omit
+  the whole field for an article only if genuinely unsure.
 
 ${lines.join("\n")}`;
   const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
   if (status !== 200) return;
-  const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as
-    { articles?: Array<{ i: number; order?: number[]; gap?: boolean }> };
+  const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
+    articles?: Array<
+      { i: number; order?: number[]; gap?: boolean; paragraph_breaks?: number[] }
+    >;
+  };
   for (const r of data.articles ?? []) {
     const d = drafts[r.i];
     if (!d) continue;
     if (applyOrder(d, r.order)) d.review.push("reordered");
     if (r.gap) d.review.push("gap_suspected");
+    if (Array.isArray(r.paragraph_breaks)) {
+      d.breaks = new Set(
+        r.paragraph_breaks.filter(
+          (x) => typeof x === "number" && x >= 0 && x < d.blocks.length,
+        ),
+      );
+    }
   }
 }
 
@@ -566,7 +601,11 @@ ${lines.join("\n")}`;
   for (const r of data.articles ?? []) {
     const d = drafts[r.i];
     if (!d) continue;
-    applyOrder(d, r.order);
+    // Reordering (or the insert below) reshapes `blocks`, which invalidates
+    // any position-based `breaks` Layer 2 set — they'd now point at the
+    // wrong fragments. Drop them; stitch() falls back to the regex
+    // heuristic for this article rather than apply stale positions.
+    if (applyOrder(d, r.order)) d.breaks = undefined;
     const inserts = (r.inserts ?? []).filter(
       (x) => typeof x?.text === "string" && x.text.trim().length >= 4);
     if (!inserts.length) continue;
@@ -583,6 +622,7 @@ ${lines.join("\n")}`;
       for (const t of after.get(j) ?? []) out.push({ id: -1, text: t });
     });
     d.blocks = out;
+    d.breaks = undefined;
     d.review = d.review.filter((f) => f !== "gap_suspected");
     d.review.push("vision_recovered");
   }
@@ -641,7 +681,7 @@ export async function extractArticlesStructured(
 
   const articles: StructuredArticle[] = [];
   for (const d of drafts) {
-    const paragraphs = stitch(d.blocks.map((b) => b.text));
+    const paragraphs = stitch(d.blocks.map((b) => b.text), d.breaks);
     if (paragraphs.length) paragraphs[0] = stripLeadingDateline(paragraphs[0]);
     const article: StructuredArticle = {
       title: d.title || d.subs[0] || "",

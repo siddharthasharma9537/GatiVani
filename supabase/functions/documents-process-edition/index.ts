@@ -308,6 +308,23 @@ const CONT_TO = /(?:మిగతా|సశేషం|తరువాయి)\s*\(?
 // "continued FROM" header at the start of the destination article.
 const CONT_FROM = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
 
+// Continuation-page headlines are often a shortened PREFIX of the original
+// (trimmed to save space), not identical text — comparing a fixed 10-char
+// slice for exact equality missed most real cases, since a genuinely
+// truncated headline diverges from the original well before character 10
+// in the general case, or the reverse (matches on 10 chars two DIFFERENT
+// headlines happen to share). Instead check whether the shorter of the two
+// (normalized) titles is a genuine prefix of the longer one, with a length
+// floor so short titles can't false-positive on a shared opening word.
+function titlePrefixMatch(t1: string, t2: string): boolean {
+  const n1 = (t1 ?? "").trim().replace(/\s+/g, " ");
+  const n2 = (t2 ?? "").trim().replace(/\s+/g, " ");
+  if (!n1 || !n2) return false;
+  const [shorter, longer] = n1.length <= n2.length ? [n1, n2] : [n2, n1];
+  if (shorter.length < 8) return false;
+  return longer.startsWith(shorter);
+}
+
 // deno-lint-ignore no-explicit-any
 async function finalizeContinuations(supabase: any, newspaperId: string): Promise<void> {
   if (!newspaperId) return;
@@ -360,8 +377,7 @@ async function finalizeContinuations(supabase: any, newspaperId: string): Promis
       const head = (c.full_content as string).slice(0, 90);
       let score = 0;
       if (CONT_FROM.test(head)) score += 2;
-      if (a.title && c.title &&
-          (a.title as string).slice(0, 10) === (c.title as string).slice(0, 10)) {
+      if (titlePrefixMatch(a.title as string, c.title as string)) {
         score += 2;
       }
       if (score > bestScore) { bestScore = score; best = c; }
