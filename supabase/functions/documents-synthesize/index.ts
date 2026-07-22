@@ -53,12 +53,18 @@ const SARVAM_CHUNK_LIMIT = 450;
 // fitting inside any particular playback window.
 const GEMINI_CHUNK_LIMIT = 1450;
 // Chunk-mode's chunk 0 is the one thing on the critical path (the client
-// blocks on it before playback starts) — keeping it small is still worth it
-// for a fast first sound, even though later chunks (fetched in the
-// background while something is already playing) are sized for fewer total
-// calls instead. A short chunk 0 doesn't meaningfully add to the call count
-// since it's still just +1 call for the whole article.
-const FIRST_CHUNK_LIMIT = 350;
+// blocks on it before playback starts), so it used to be kept small (350)
+// purely for a fast first sound. Real production data changed that
+// calculus: across several separate live plays, chunk 1 (GEMINI_CHUNK_LIMIT-
+// sized) consistently took 32-52s to arrive after chunk 0 started playing —
+// while chunk 0 at 350 chars only ran 20-33s, guaranteeing several seconds
+// to half a minute of dead air on almost every single article, every time.
+// Per the note above, that ~40s figure barely moved across chunk 1's actual
+// output length (36s-100s of audio) — reinforcing that the latency here is
+// overhead/queueing-dominated, not size-dominated. So a bigger chunk 0 buys
+// real playback runway (fewer/shorter stalls) for little added cold-start
+// cost, the same trade already made for every chunk after it.
+const FIRST_CHUNK_LIMIT = 700;
 
 // [limit] bounds every chunk; [firstLimit], when smaller, bounds only chunk 0
 // — the split is still a pure function of (text, limit, firstLimit), so every
