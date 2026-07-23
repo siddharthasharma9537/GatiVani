@@ -38,33 +38,7 @@ jobs:
         working-directory: packages/app
         # Informational: the suite currently references services that do not
         # exist in lib/ (firebase_service, gemini_service, news_service) and
-        # cannot compile — needs an overhaul. See AUDIT.md.
+        # cannot compile — a pre-rewrite holdover that needs a rewrite of its
+        # own against the current services.
         continue-on-error: true
         run: flutter test
-
-  node-core-check:
-    name: Syntax check (packages/core)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install
-        working-directory: packages/core
-        run: npm install --omit=dev --ignore-scripts
-      - name: Syntax check all sources
-        working-directory: packages/core
-        run: |
-          for f in $(find src -name '*.js'); do node --check "$f"; done
-
-  python-extraction-check:
-    name: Syntax check (gativani-extraction)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Compile check
-        run: python -m compileall gativani-extraction -q

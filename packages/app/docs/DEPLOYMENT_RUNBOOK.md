@@ -1,6 +1,6 @@
 # GatiVani Deployment Runbook
 
-Operational playbook for shipping a release end-to-end and rolling back when things go sideways. Use this alongside `DEPLOYMENT_GUIDE.md` (which covers initial setup).
+Operational playbook for shipping a release end-to-end and rolling back when things go sideways.
 
 **Audience**: on-call engineer cutting a release.
 **Frequency**: every tagged release + emergency hotfixes.

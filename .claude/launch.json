@@ -12,12 +12,6 @@
       "runtimeExecutable": "supabase",
       "runtimeArgs": ["start"],
       "port": 54321
-    },
-    {
-      "name": "core-legacy-express",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "packages/core"],
-      "port": 8788
     }
   ]
 }

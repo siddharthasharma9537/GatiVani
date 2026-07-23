@@ -8,7 +8,7 @@ import '../design/components/gati_states.dart';
 import '../design/components/gati_tab_bar.dart';
 import '../design/tokens.dart';
 import '../l10n/strings.dart';
-import '../screens/menu_screen.dart';
+import '../features/menu/menu_screen.dart';
 import '../models/newspaper_article.dart';
 import '../services/alerts_service.dart';
 import '../services/document_service.dart';

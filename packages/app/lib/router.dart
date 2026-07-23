@@ -1,24 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'screens/alerts_screen.dart';
-import 'screens/downloads_screen.dart';
-import 'screens/library_screen.dart';
-import 'screens/gemini_key_gate_screen.dart';
-import 'screens/history_screen.dart';
-import 'screens/live_feed_screen.dart';
-import 'screens/playlist_detail_screen.dart';
-import 'screens/playlists_screen.dart';
-import 'screens/reader_screen.dart';
-import 'screens/section_screen.dart';
-import 'screens/settings_screen.dart';
-import 'screens/shows_screen.dart';
-import 'screens/today_screen.dart';
+import 'features/library/alerts_screen.dart';
+import 'features/library/downloads_screen.dart';
+import 'features/library/library_screen.dart';
+import 'features/auth/gemini_key_gate_screen.dart';
+import 'features/library/history_screen.dart';
+import 'features/live/live_feed_screen.dart';
+import 'features/library/playlist_detail_screen.dart';
+import 'features/library/playlists_screen.dart';
+import 'features/reader/reader_screen.dart';
+import 'features/paper/section_screen.dart';
+import 'features/settings/settings_screen.dart';
+import 'features/shows/shows_screen.dart';
+import 'features/paper/paper_screen.dart';
 import 'services/news_feed_service.dart';
-import 'screens/lyrics_player_screen.dart';
-import 'screens/menu_screen.dart';
-import 'screens/auth_screen.dart';
-import 'screens/search_screen.dart';
+import 'features/player/player_screen.dart';
+import 'features/menu/menu_screen.dart';
+import 'features/auth/auth_screen.dart';
+import 'features/search/search_screen.dart';
 import 'services/edition_store.dart';
 import 'widgets/gati_shell.dart';
 
@@ -47,7 +47,7 @@ final GoRouter appRouter = GoRouter(
   refreshListenable: _authRefresh,
   // Browsing is free — no blanket login wall. Only account-tied actions
   // (playing audio, uploading a Paper edition — see PlaybackService and
-  // today_screen.dart) push /auth themselves, at the moment they're taken.
+  // paper_screen.dart) push /auth themselves, at the moment they're taken.
   // Here we just bounce an already-signed-in user OFF /auth if they land on
   // it (e.g. browser Back right after finishing sign-in).
   redirect: (context, state) {
@@ -72,7 +72,7 @@ final GoRouter appRouter = GoRouter(
           GoRoute(path: '/', builder: (_, __) => const LiveFeedScreen()),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/paper', builder: (_, __) => const TodayScreen()),
+          GoRoute(path: '/paper', builder: (_, __) => const PaperScreen()),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/shows', builder: (_, __) => const ShowsScreen()),
@@ -92,7 +92,7 @@ final GoRouter appRouter = GoRouter(
       path: '/player',
       pageBuilder: (context, state) => CustomTransitionPage<void>(
         key: state.pageKey,
-        child: const LyricsPlayerScreen(),
+        child: const PlayerScreen(),
         // Non-opaque so the screen beneath stays painted — the player's
         // pull-down-to-dismiss slides it away over live content, not black.
         opaque: false,
