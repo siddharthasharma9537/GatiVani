@@ -164,6 +164,19 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
+// The audio caches (article_chunks, articles.audio_url/summary_audio_url) are
+// keyed on a caller-supplied articleId with no other proof the caller's text
+// actually belongs to that article. Hashing the text and requiring it to
+// match on every cache read means a caller can't silently overwrite another
+// article's cached audio with arbitrary content — a mismatch is just treated
+// as a cache miss and re-synthesized from what THIS caller sent, so a
+// mismatched/poisoned entry self-corrects the next time someone with the
+// real text requests it, rather than being a permanent, silent takeover.
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // ── Reading-style prompt wrapper ──────────────────────────────────────────────
 
 function styledText(text: string, readingStyle?: string): string {
@@ -276,6 +289,7 @@ Deno.serve(async (req) => {
     }
     const text = body.text.trim();
     if (!text) return json({ error: "empty_text", message: "Text cannot be empty." }, 400);
+    const textHash = await sha256Hex(text);
 
     const langKey = (body.language || "te-IN").split("-")[0];
     const cfg = LANGUAGE_CONFIG[langKey] ?? LANGUAGE_CONFIG.te;
@@ -299,11 +313,17 @@ Deno.serve(async (req) => {
       ? createClient(SUPABASE_URL, SERVICE_KEY)
       : null;
 
+    const hashCol = target === "summary_audio_url" ? "summary_audio_text_hash" : "audio_text_hash";
     if (supabase) {
       const { data: row } = await supabase
-        .from("articles").select(target).eq("id", articleId).maybeSingle();
+        .from("articles").select(`${target}, ${hashCol}`).eq("id", articleId).maybeSingle();
       const cachedUrl = (row as Record<string, string> | null)?.[target];
-      if (cachedUrl) {
+      const cachedHash = (row as Record<string, string> | null)?.[hashCol];
+      // A hash mismatch means either this is the first write for this exact
+      // text, or a previous caller wrote different text under this articleId
+      // — either way, treat it as a miss and re-synthesize from THIS caller's
+      // text rather than trusting a cache entry that doesn't provably match.
+      if (cachedUrl && cachedHash === textHash) {
         console.log(`[synthesize] cache hit (${target}) for article ${articleId}`);
         return json({
           ok: true,
@@ -341,11 +361,15 @@ Deno.serve(async (req) => {
       }
 
       if (supabase) {
+        // text_hash must match too — a stored row for this (article, target,
+        // index) that was written from different text is not a hit for THIS
+        // request, so it falls through and gets overwritten with the real
+        // text below instead of serving whatever was cached under it.
         const { data: cached } = await supabase
           .from("article_chunks")
           .select("audio_url, duration_seconds")
           .eq("article_id", articleId).eq("target", target)
-          .eq("chunk_index", chunkIndex).maybeSingle();
+          .eq("chunk_index", chunkIndex).eq("text_hash", textHash).maybeSingle();
         if (cached?.audio_url) {
           console.log(`[synthesize] chunk cache hit ${chunkIndex} for ${articleId}`);
           return json({
@@ -388,6 +412,7 @@ Deno.serve(async (req) => {
             chunk_index: chunkIndex,
             audio_url: audioUrl,
             duration_seconds: durationSec,
+            text_hash: textHash,
           }, { onConflict: "article_id,target,chunk_index" });
           if (cacheErr) console.warn("[synthesize] chunk cache write failed:", cacheErr.message);
         }
@@ -439,7 +464,7 @@ Deno.serve(async (req) => {
         audioUrl = supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
         timingsUrl = audioUrl.replace(/\.wav$/, ".timings.json");
         const { error: updErr } = await supabase
-          .from("articles").update({ [target]: audioUrl }).eq("id", articleId);
+          .from("articles").update({ [target]: audioUrl, [hashCol]: textHash }).eq("id", articleId);
         if (updErr) console.warn(`[synthesize] ${target} update failed:`, updErr.message);
 
         // Forced alignment (Sarvam STT word timestamps) for lyric highlighting
