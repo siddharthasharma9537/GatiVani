@@ -82,7 +82,8 @@ class _HistoryBodyState extends State<HistoryBody> {
             '?select=article_id,title,category,position_seconds,duration_seconds,'
             'completed,played_at,content_expires_at'
             '&order=played_at.desc&limit=50'),
-        headers: ApiConfig.authHeaders,
+        // recent_plays is scoped per user (RLS checks auth.uid()).
+        headers: ApiConfig.userAuthHeaders,
       );
       final rows = (json.decode(r.body) as List).cast<Map<String, dynamic>>();
       if (mounted) {

@@ -901,9 +901,12 @@ class PlaybackService extends ChangeNotifier {
     _lastSaveSec = pos;
     http
         .post(
-            Uri.parse('${ApiConfig.restUrl}/recent_plays?on_conflict=article_id'),
+            Uri.parse(
+                '${ApiConfig.restUrl}/recent_plays?on_conflict=user_id,article_id'),
             headers: {
-              ...ApiConfig.authHeaders,
+              // recent_plays is scoped per user (RLS checks auth.uid()) — the
+              // anon-key authHeaders would write/read as nobody.
+              ...ApiConfig.userAuthHeaders,
               'Content-Type': 'application/json',
               'Prefer': 'resolution=merge-duplicates',
             },

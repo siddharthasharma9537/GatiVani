@@ -182,7 +182,8 @@ class _ListenButtonState extends State<_ListenButton> {
         Uri.parse('${ApiConfig.restUrl}/recent_plays'
             '?article_id=eq.${widget.article.id}'
             '&select=position_seconds,completed&limit=1'),
-        headers: ApiConfig.authHeaders,
+        // recent_plays is scoped per user (RLS checks auth.uid()).
+        headers: ApiConfig.userAuthHeaders,
       );
       final rows = json.decode(r.body) as List;
       if (rows.isEmpty || !mounted) return;

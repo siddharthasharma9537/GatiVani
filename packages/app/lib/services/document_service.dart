@@ -484,7 +484,8 @@ Future<void> _expireContentSnapshot(String articleId) async {
     await http.patch(
       Uri.parse('${ApiConfig.restUrl}/recent_plays?article_id=eq.$articleId'),
       headers: {
-        ...ApiConfig.authHeaders,
+        // recent_plays is scoped per user (RLS checks auth.uid()).
+        ...ApiConfig.userAuthHeaders,
         'Content-Type': 'application/json',
       },
       body: json.encode({

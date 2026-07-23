@@ -1,4 +1,5 @@
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Backend connection config for GatiVani.
 ///
@@ -51,6 +52,21 @@ class ApiConfig {
     'Authorization': 'Bearer $anonKey',
     'apikey': anonKey,
   };
+
+  /// Same shape as [authHeaders], but carries the signed-in user's own
+  /// session JWT in Authorization when there is one (falling back to the
+  /// anon key when signed out). [authHeaders] always sends the anon key
+  /// regardless of sign-in state, so any table whose RLS checks auth.uid()
+  /// (e.g. recent_plays, scoped per user) sees every caller as anonymous
+  /// through it — reads return nothing, writes can't attach real ownership.
+  /// Use this instead for anything RLS scopes to "the calling user".
+  static Map<String, String> get userAuthHeaders {
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    return {
+      'Authorization': 'Bearer ${token ?? anonKey}',
+      'apikey': anonKey,
+    };
+  }
 
   /// Dev-only header; backend ignores unless TRUST_CLIENT_TIER_HEADERS=true.
   /// Replace with JWT once auth is wired up.

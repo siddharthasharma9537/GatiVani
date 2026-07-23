@@ -62,7 +62,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             'completed,played_at,content_expires_at'
             '&completed=eq.false&position_seconds=gt.0'
             '&order=played_at.desc&limit=5'),
-        headers: ApiConfig.authHeaders,
+        // recent_plays is scoped per user (RLS checks auth.uid()).
+        headers: ApiConfig.userAuthHeaders,
       );
       final rows = (json.decode(r.body) as List).cast<Map<String, dynamic>>();
       if (mounted) setState(() => _resume = rows);
