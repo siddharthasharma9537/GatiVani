@@ -5,8 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
-import '../design/tokens.dart';
-import '../services/gemini_key_store.dart';
+import '../../design/tokens.dart';
+import '../../services/gemini_key_store.dart';
 
 /// The mandatory stop between "tap play" and "hear anything": every article —
 /// Live or Paper — is narrated on the LISTENER's own Gemini key, never a

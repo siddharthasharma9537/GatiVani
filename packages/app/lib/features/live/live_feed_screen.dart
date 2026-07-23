@@ -1,24 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../design/components/gati_filter_button.dart';
-import '../design/components/gati_masthead.dart';
-import '../design/components/gati_section_label.dart';
-import '../design/components/gati_snap_scroll.dart';
-import '../design/components/gati_play_button.dart';
-import '../config/districts.dart';
-import '../design/components/gati_article_sheet.dart';
-import '../design/tokens.dart';
-import '../design/section_colors.dart';
-import '../l10n/strings.dart';
-import '../models/newspaper_article.dart';
-import '../services/cricket_service.dart';
-import '../services/news_feed_service.dart';
-import '../services/playback_service.dart';
-import '../services/settings_provider.dart';
-import '../widgets/gati_shell.dart';
-import '../widgets/news_ticker.dart';
-import '../widgets/podcasts_grid.dart';
+import '../../design/components/gati_filter_button.dart';
+import '../../design/components/gati_masthead.dart';
+import '../../design/components/gati_section_label.dart';
+import '../../design/components/gati_snap_scroll.dart';
+import '../../design/components/gati_play_button.dart';
+import '../../config/districts.dart';
+import '../../design/components/gati_article_sheet.dart';
+import '../../design/tokens.dart';
+import '../../design/section_colors.dart';
+import '../../l10n/strings.dart';
+import '../../models/newspaper_article.dart';
+import '../../services/cricket_service.dart';
+import '../../services/news_feed_service.dart';
+import '../../services/playback_service.dart';
+import '../../services/settings_provider.dart';
+import '../../widgets/gati_shell.dart';
+import '../../widgets/news_ticker.dart';
+import '../../widgets/podcasts_grid.dart';
 
 /// v2 landing — a discovery surface that sits in FRONT of the newspaper.
 ///

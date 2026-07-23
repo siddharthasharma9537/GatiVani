@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../models/newspaper_article.dart';
-import '../services/playback_service.dart';
-import '../services/settings_provider.dart';
-import '../widgets/article_card.dart';
-import '../design/components/gati_article_sheet.dart';
-import '../services/news_feed_service.dart';
-import '../widgets/gati_puck.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../models/newspaper_article.dart';
+import '../../services/playback_service.dart';
+import '../../services/settings_provider.dart';
+import '../../widgets/article_card.dart';
+import '../../design/components/gati_article_sheet.dart';
+import '../../services/news_feed_service.dart';
+import '../../widgets/gati_puck.dart';
 
 /// A single section's article list, reached by tapping a section tile on the
 /// home grid. Same split tap as the home list: tap the text → full player,

@@ -6,26 +6,26 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../config/api_config.dart';
-import '../config/alert_topics.dart';
-import '../config/districts.dart';
-import '../design/components/gati_article_sheet.dart';
-import '../design/components/gati_district_sheet.dart';
-import '../design/components/gati_masthead.dart';
-import '../design/components/gati_section_label.dart';
-import '../design/components/gati_states.dart';
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../models/newspaper_article.dart';
-import '../models/playlist.dart';
-import '../services/alerts_service.dart';
-import '../services/document_service.dart';
-import '../services/downloads_store.dart';
-import '../services/edition_store.dart';
-import '../services/playback_service.dart';
-import '../services/playlists_store.dart';
-import '../services/reactions_store.dart';
-import '../services/settings_provider.dart';
+import '../../config/api_config.dart';
+import '../../config/alert_topics.dart';
+import '../../config/districts.dart';
+import '../../design/components/gati_article_sheet.dart';
+import '../../design/components/gati_district_sheet.dart';
+import '../../design/components/gati_masthead.dart';
+import '../../design/components/gati_section_label.dart';
+import '../../design/components/gati_states.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../models/newspaper_article.dart';
+import '../../models/playlist.dart';
+import '../../services/alerts_service.dart';
+import '../../services/document_service.dart';
+import '../../services/downloads_store.dart';
+import '../../services/edition_store.dart';
+import '../../services/playback_service.dart';
+import '../../services/playlists_store.dart';
+import '../../services/reactions_store.dart';
+import '../../services/settings_provider.dart';
 
 /// Library tab (§8): everything personal in one place — fresh alerts for
 /// watched topics, resume-where-you-left-off, the district's stories from

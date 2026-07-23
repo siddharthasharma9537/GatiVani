@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show OAuthProvider;
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../services/auth_service.dart';
-import '../services/settings_provider.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../services/auth_service.dart';
+import '../../services/settings_provider.dart';
 
 /// Login / signup — reached only when an account-tied action needs one
 /// (playing audio, uploading a Paper edition; see PlaybackService and
-/// today_screen.dart). Browsing itself never requires this screen, so it's
+/// paper_screen.dart). Browsing itself never requires this screen, so it's
 /// always safely poppable. OAuth (Google / Apple / Microsoft) is wired to
 /// Supabase's hosted authorize endpoint — tapping a provider redirects
 /// through Supabase, which completes the handshake and returns to the app.

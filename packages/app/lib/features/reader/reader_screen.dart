@@ -4,15 +4,15 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../config/api_config.dart';
-import '../design/tokens.dart';
-import '../models/newspaper_article.dart';
-import '../services/news_feed_service.dart';
-import '../services/playback_service.dart';
-import '../services/share_stub.dart'
-    if (dart.library.html) '../services/share_web.dart' as export_;
-import '../services/settings_provider.dart';
-import '../widgets/gati_puck.dart';
+import '../../config/api_config.dart';
+import '../../design/tokens.dart';
+import '../../models/newspaper_article.dart';
+import '../../services/news_feed_service.dart';
+import '../../services/playback_service.dart';
+import '../../services/share_stub.dart'
+    if (dart.library.html) '../../services/share_web.dart' as export_;
+import '../../services/settings_provider.dart';
+import '../../widgets/gati_puck.dart';
 
 /// In-app full-story reader for a web article (from feeds-articles). Renders the
 /// title + full Telugu body already carried in the feed, and a Listen button

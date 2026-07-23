@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../design/components/add_to_playlist_sheet.dart';
-import '../design/components/gati_states.dart';
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../models/playlist.dart';
-import '../services/playlists_store.dart';
-import '../services/settings_provider.dart';
-import '../widgets/gati_puck.dart';
+import '../../design/components/add_to_playlist_sheet.dart';
+import '../../design/components/gati_states.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../models/playlist.dart';
+import '../../services/playlists_store.dart';
+import '../../services/settings_provider.dart';
+import '../../widgets/gati_puck.dart';
 
 /// Menu → Playlists: named collections the user built via Save/Add to
 /// Playlist. Tap opens the playlist; the + creates a new (empty) one.

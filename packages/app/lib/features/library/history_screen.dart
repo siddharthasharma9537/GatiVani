@@ -5,16 +5,16 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
-import '../config/api_config.dart';
-import '../design/components/gati_states.dart';
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../services/document_service.dart';
-import '../services/news_feed_service.dart';
-import '../services/playback_service.dart';
-import '../services/playlists_store.dart';
-import '../services/settings_provider.dart';
-import '../widgets/gati_puck.dart';
+import '../../config/api_config.dart';
+import '../../design/components/gati_states.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../services/document_service.dart';
+import '../../services/news_feed_service.dart';
+import '../../services/playback_service.dart';
+import '../../services/playlists_store.dart';
+import '../../services/settings_provider.dart';
+import '../../widgets/gati_puck.dart';
 
 /// Listening history (menu → History): everything played, newest first,
 /// with progress — tap to resume where it left off.

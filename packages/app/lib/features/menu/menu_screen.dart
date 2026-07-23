@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../design/tokens.dart';
-import '../config/districts.dart';
-import '../design/components/gati_district_sheet.dart';
-import '../design/components/gati_wordmark.dart';
-import '../l10n/strings.dart';
-import '../services/alerts_service.dart';
-import '../services/auth_service.dart';
-import '../services/settings_provider.dart';
-import '../services/share_stub.dart'
-    if (dart.library.html) '../services/share_web.dart' as share_;
+import '../../design/tokens.dart';
+import '../../config/districts.dart';
+import '../../design/components/gati_district_sheet.dart';
+import '../../design/components/gati_wordmark.dart';
+import '../../l10n/strings.dart';
+import '../../services/alerts_service.dart';
+import '../../services/auth_service.dart';
+import '../../services/settings_provider.dart';
+import '../../services/share_stub.dart'
+    if (dart.library.html) '../../services/share_web.dart' as share_;
 
 /// The menu / account hub as a standalone route (kept for deep-links / native).
 /// On the home shell it's rendered as the fixed reveal-drawer panel via

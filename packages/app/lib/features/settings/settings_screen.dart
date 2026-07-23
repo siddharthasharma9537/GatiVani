@@ -3,11 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../design/tokens.dart';
-import '../design/components/gati_wordmark.dart';
-import '../l10n/strings.dart';
-import '../services/gemini_key_store.dart';
-import '../services/settings_provider.dart';
+import '../../design/tokens.dart';
+import '../../design/components/gati_wordmark.dart';
+import '../../l10n/strings.dart';
+import '../../services/gemini_key_store.dart';
+import '../../services/settings_provider.dart';
 
 /// Dedicated Settings screen (menu → Settings): language, theme, playback
 /// speed and the Gemini BYOK key all live here instead of inline in the

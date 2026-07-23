@@ -2,28 +2,28 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../l10n/strings.dart';
-import '../services/downloads_store.dart';
-import '../services/playback_service.dart';
-import '../services/reactions_store.dart';
-import '../services/settings_provider.dart';
-import '../services/edition_store.dart';
-import '../services/news_feed_service.dart';
-import '../design/components/add_to_playlist_sheet.dart';
-import '../design/components/gati_chip.dart';
-import '../design/components/gati_pill.dart';
-import '../design/components/gati_play_button.dart';
-import '../design/components/gati_row.dart';
-import '../design/components/gati_seek_bar.dart';
-import '../design/components/gati_states.dart';
-import '../design/components/gati_wordmark.dart';
-import '../design/tokens.dart';
-import '../design/section_colors.dart';
-import '../models/newspaper_article.dart';
-import '../widgets/assistant_sheet.dart';
+import '../../l10n/strings.dart';
+import '../../services/downloads_store.dart';
+import '../../services/playback_service.dart';
+import '../../services/reactions_store.dart';
+import '../../services/settings_provider.dart';
+import '../../services/edition_store.dart';
+import '../../services/news_feed_service.dart';
+import '../../design/components/add_to_playlist_sheet.dart';
+import '../../design/components/gati_chip.dart';
+import '../../design/components/gati_pill.dart';
+import '../../design/components/gati_play_button.dart';
+import '../../design/components/gati_row.dart';
+import '../../design/components/gati_seek_bar.dart';
+import '../../design/components/gati_states.dart';
+import '../../design/components/gati_wordmark.dart';
+import '../../design/tokens.dart';
+import '../../design/section_colors.dart';
+import '../../models/newspaper_article.dart';
+import '../../widgets/assistant_sheet.dart';
 
-/// Full-screen player: the article text scrolls like lyrics with the current
-/// WORD highlighted as the audio plays.
+/// Full-screen audio player (Now Playing): the article text scrolls with the
+/// current WORD highlighted as the audio plays.
 ///
 /// Timing model: Gemini/Sarvam TTS don't return word timestamps, and Sarvam's
 /// batch STT alignment came back empty — so true forced alignment isn't
@@ -31,13 +31,13 @@ import '../widgets/assistant_sheet.dart';
 /// weighted by its length (longer words take proportionally longer). Not
 /// frame-perfect, but a smooth, deterministic word-by-word sweep. Tap any line
 /// to seek.
-class LyricsPlayerScreen extends StatefulWidget {
-  const LyricsPlayerScreen({super.key});
+class PlayerScreen extends StatefulWidget {
+  const PlayerScreen({super.key});
   @override
-  State<LyricsPlayerScreen> createState() => _LyricsPlayerScreenState();
+  State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _LyricsPlayerScreenState extends State<LyricsPlayerScreen>
+class _PlayerScreenState extends State<PlayerScreen>
     with TickerProviderStateMixin {
   final _scroll = ScrollController();
   final _keys = <int, GlobalKey>{};

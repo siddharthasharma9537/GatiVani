@@ -3,13 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../config/alert_topics.dart';
-import '../design/components/gati_states.dart';
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../services/alerts_service.dart';
-import '../services/settings_provider.dart';
-import '../widgets/gati_puck.dart';
+import '../../config/alert_topics.dart';
+import '../../design/components/gati_states.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../services/alerts_service.dart';
+import '../../services/settings_provider.dart';
+import '../../widgets/gati_puck.dart';
 
 /// Menu → My Alerts: the user picks topics (exam results, govt job
 /// notifications…) and this screen lists release-shaped headlines for them,

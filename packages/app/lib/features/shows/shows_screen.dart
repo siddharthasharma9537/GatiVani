@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../design/components/gati_masthead.dart';
-import '../design/components/gati_section_label.dart';
-import '../design/components/gati_states.dart';
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../services/news_feed_service.dart';
-import '../services/settings_provider.dart';
-import '../widgets/podcasts_grid.dart';
+import '../../design/components/gati_masthead.dart';
+import '../../design/components/gati_section_label.dart';
+import '../../design/components/gati_states.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../services/news_feed_service.dart';
+import '../../services/settings_provider.dart';
+import '../../widgets/podcasts_grid.dart';
 
 /// Shows tab (§8.1): the podcast archive — Mann Ki Baat, AIR bulletins,
 /// shows — with Stories to follow.

@@ -6,38 +6,38 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../config/api_config.dart';
-import '../config/districts.dart';
-import '../l10n/strings.dart';
-import '../models/newspaper_article.dart';
-import '../services/document_service.dart';
-import '../services/edition_store.dart';
-import '../services/gemini_key_store.dart';
-import '../services/news_feed_service.dart';
-import '../services/playback_service.dart';
-import '../services/settings_provider.dart';
-import '../design/components/gati_article_sheet.dart';
-import '../design/components/gati_filter_button.dart';
-import '../design/components/gati_masthead.dart';
-import '../design/components/gati_snap_scroll.dart';
-import '../design/section_colors.dart';
-import '../design/tokens.dart';
-import '../widgets/article_card.dart';
-import '../widgets/edition_masthead.dart';
-import '../widgets/news_ticker.dart';
+import '../../config/api_config.dart';
+import '../../config/districts.dart';
+import '../../l10n/strings.dart';
+import '../../models/newspaper_article.dart';
+import '../../services/document_service.dart';
+import '../../services/edition_store.dart';
+import '../../services/gemini_key_store.dart';
+import '../../services/news_feed_service.dart';
+import '../../services/playback_service.dart';
+import '../../services/settings_provider.dart';
+import '../../design/components/gati_article_sheet.dart';
+import '../../design/components/gati_filter_button.dart';
+import '../../design/components/gati_masthead.dart';
+import '../../design/components/gati_snap_scroll.dart';
+import '../../design/section_colors.dart';
+import '../../design/tokens.dart';
+import '../../widgets/article_card.dart';
+import '../../widgets/edition_masthead.dart';
+import '../../widgets/news_ticker.dart';
 
-/// Reimagined home: today's edition front and center, live processing card,
+/// Paper tab: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
-class TodayScreen extends StatefulWidget {
-  const TodayScreen({super.key, this.onMenu});
+class PaperScreen extends StatefulWidget {
+  const PaperScreen({super.key, this.onMenu});
   // When hosted inside the reveal drawer, the header menu button toggles the
   // drawer instead of pushing a /menu route.
   final VoidCallback? onMenu;
   @override
-  State<TodayScreen> createState() => _TodayScreenState();
+  State<PaperScreen> createState() => _PaperScreenState();
 }
 
-class _TodayScreenState extends State<TodayScreen> {
+class _PaperScreenState extends State<PaperScreen> {
   final _svc = DocumentService();
   List<NewspaperArticle> _articles = [];
   String _editionTitle = '';

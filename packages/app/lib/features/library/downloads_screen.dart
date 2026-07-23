@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../design/components/gati_states.dart';
-import '../design/tokens.dart';
-import '../l10n/strings.dart';
-import '../services/downloads_store.dart';
-import '../services/playback_service.dart';
-import '../services/settings_provider.dart';
-import '../widgets/gati_puck.dart';
+import '../../design/components/gati_states.dart';
+import '../../design/tokens.dart';
+import '../../l10n/strings.dart';
+import '../../services/downloads_store.dart';
+import '../../services/playback_service.dart';
+import '../../services/settings_provider.dart';
+import '../../widgets/gati_puck.dart';
 
 /// Menu → Downloads: everything saved via ⋯ → Download, newest first.
 /// Tap plays (from the local file when it exists); the trash removes the
