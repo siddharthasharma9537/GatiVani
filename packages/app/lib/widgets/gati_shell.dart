@@ -231,7 +231,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                           GatiTabItem(Icons.headphones_rounded,
                               tr(lang, 'tab_shows')),
                           GatiTabItem(
-                              Icons.person_rounded, tr(lang, 'tab_foryou'),
+                              Icons.person_rounded, tr(lang, 'tab_library'),
                               badge: AlertsService.i.unread > 0),
                         ],
                       ),
@@ -412,7 +412,7 @@ class _VaniFabState extends State<_VaniFab> {
       return;
     }
     if (ql.contains('library') || q.contains('లైబ్రరీ')) {
-      context.go('/foryou');
+      context.go('/library');
       return;
     }
     if (ql.contains('live') || q.contains('లైవ్')) {

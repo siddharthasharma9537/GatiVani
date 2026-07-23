@@ -3,7 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/alerts_screen.dart';
 import 'screens/downloads_screen.dart';
-import 'screens/for_you_screen.dart';
+import 'screens/library_screen.dart';
 import 'screens/gemini_key_gate_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/live_feed_screen.dart';
@@ -78,12 +78,13 @@ final GoRouter appRouter = GoRouter(
           GoRoute(path: '/shows', builder: (_, __) => const ShowsScreen()),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/foryou', builder: (_, __) => const ForYouScreen()),
+          GoRoute(path: '/library', builder: (_, __) => const LibraryScreen()),
         ]),
       ],
     ),
-    // Old URL for the newspaper — keep bookmarks/history working.
+    // Old URLs — keep bookmarks/history working.
     GoRoute(path: '/newspaper', redirect: (_, __) => '/paper'),
+    GoRoute(path: '/foryou', redirect: (_, __) => '/library'),
     // The player rises up from the bottom (where the mini-player sits) so it
     // reads as expanding out of it — like YouTube Music — instead of the
     // default slide-in-from-the-right page transition.

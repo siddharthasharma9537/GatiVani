@@ -27,19 +27,19 @@ import '../services/playlists_store.dart';
 import '../services/reactions_store.dart';
 import '../services/settings_provider.dart';
 
-/// For You tab (§8): everything personal in one place — fresh alerts for
+/// Library tab (§8): everything personal in one place — fresh alerts for
 /// watched topics, resume-where-you-left-off, the district's stories from
 /// today's edition, playlists, and recent downloads. Each section is a taste
 /// of its full screen and links there; sections with nothing to say don't
 /// render.
-class ForYouScreen extends StatefulWidget {
-  const ForYouScreen({super.key});
+class LibraryScreen extends StatefulWidget {
+  const LibraryScreen({super.key});
 
   @override
-  State<ForYouScreen> createState() => _ForYouScreenState();
+  State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _ForYouScreenState extends State<ForYouScreen> {
+class _LibraryScreenState extends State<LibraryScreen> {
   List<Map<String, dynamic>> _resume = [];
 
   @override
