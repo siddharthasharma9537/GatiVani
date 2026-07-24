@@ -149,6 +149,16 @@ class _PlayerScreenState extends State<PlayerScreen>
   List<double> _wordStart = []; // fractional start [0..1) per global word
   int _wordCount = 0;
 
+  // _lyricsList's built widget, reused while activeLine/activeWord/dur are
+  // unchanged. The whole player rebuilds on every PlaybackService
+  // notifyListeners() — which fires on every position tick, several times a
+  // second — but the highlighted word only actually advances roughly once
+  // per word spoken. Without this, the full word-by-word TextSpan list was
+  // being reconstructed from scratch that often, most of the time for no
+  // visible change at all.
+  Widget? _cachedLyricsList;
+  String? _cachedLyricsKey;
+
   void _prepare(String body) {
     final sentences = body
         .replaceAll('\n', ' ')
@@ -570,10 +580,13 @@ class _PlayerScreenState extends State<PlayerScreen>
   // Read-along list (word-sync, tap-to-seek). Over-pulling the top closes lyrics.
   Widget _lyricsList(BuildContext context, PlaybackService p, int activeLine,
       int activeWord, int dur) {
+    final cacheKey = '$_forId:$activeLine:$activeWord:$dur';
+    final cached = _cachedLyricsList;
+    if (cached != null && cacheKey == _cachedLyricsKey) return cached;
     // Size by the CONTENT's script (Telugu articles under an English UI still
     // need the taller Telugu line-height), not the settings language.
     final script = GatiType.scriptOf(p.current?.title ?? '');
-    return NotificationListener<ScrollNotification>(
+    final built = NotificationListener<ScrollNotification>(
       onNotification: (n) {
         if (n.metrics.pixels < -90 && _lyrics.value == 1.0) _lyrics.reverse();
         return false;
@@ -636,6 +649,9 @@ class _PlayerScreenState extends State<PlayerScreen>
         ),
       ),
     );
+    _cachedLyricsKey = cacheKey;
+    _cachedLyricsList = built;
+    return built;
   }
 
   void _mix(BuildContext context, NewspaperArticle a) {
