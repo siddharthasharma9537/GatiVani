@@ -139,6 +139,19 @@ class PlaybackService extends ChangeNotifier {
   int _loadedChunkIndex = 0;
   final List<Duration> _chunkDurations = [];
   Duration _priorChunksElapsed = Duration.zero;
+  // Set right before a chunk swap's setUrl() and cleared right after
+  // _priorChunksElapsed/_loadedChunkIndex commit for it. just_audio's
+  // position resets to zero the moment the new source loads — BEFORE our own
+  // bookkeeping has caught up — and position's stream listener can observe
+  // that transient zero in between (article-level `position` would briefly
+  // read as 0 instead of "just finished the previous chunk"). That's a real,
+  // confirmed bug: it wrote position_seconds=0 to recent_plays mid-article
+  // (traced against a real play — the row's content_expires_at proved it
+  // wasn't a genuine restart, just this transient reflected into a periodic
+  // save) and, for the same reason, could show the seek bar/highlight
+  // snapping back to the start for a frame. Holding `position` at its
+  // last-known-correct value for this narrow window closes both.
+  Duration? _frozenPosition;
   // The background prefetch's own in-flight request, keyed by which chunk
   // it's for — so _advanceChunk can AWAIT this instead of firing a second,
   // redundant fetch for the same chunk when playback catches up before the
@@ -188,8 +201,12 @@ class PlaybackService extends ChangeNotifier {
   // loaded chunk (each chunk is its own setUrl()) — add back the elapsed
   // time of chunks already played through so the whole article reads as one
   // continuous track, matching how it behaved before chunking existed.
-  Duration get position =>
-      _totalChunks == null ? player.position : _priorChunksElapsed + player.position;
+  Duration get position {
+    if (_totalChunks == null) return player.position;
+    final frozen = _frozenPosition;
+    if (frozen != null) return frozen;
+    return _priorChunksElapsed + player.position;
+  }
   // Only report a duration once a real track is loaded (avoids a stale/zero
   // duration making the lyric highlight race).
   Duration get duration {
@@ -363,6 +380,9 @@ class PlaybackService extends ChangeNotifier {
     _pendingChunkIndex = null;
     _pendingChunkUrl = null;
     _pendingChunkDuration = null;
+    // Guaranteed cleared by try/finally in _advanceChunk/_seekChunked
+    // already — this is just a clean-slate safety net on track change.
+    _frozenPosition = null;
   }
 
   /// Fetch (or cache-hit) chunk [i] of article [a]. Chunking is deterministic
@@ -500,11 +520,21 @@ class PlaybackService extends ChangeNotifier {
       // position claiming the next chunk was playing while the player was
       // still on (and could replay) the old one whenever the swap failed,
       // which is exactly the "seek bar far ahead of the audio" symptom.
-      await _loadChunkUrl(url, dur!, epoch);
-      if (!live()) return;
-      _priorChunksElapsed += _chunkDurations[_loadedChunkIndex];
-      _chunkDurations.add(dur);
-      _loadedChunkIndex = nextIndex;
+      // Freeze the reported position across the swap: player.position
+      // resets to 0 the instant the new source loads, before the
+      // _priorChunksElapsed commit below catches up, and a positionStream
+      // tick landing in that gap would read (and could even persist) the
+      // article as being back at 0 — see _frozenPosition's own doc comment.
+      _frozenPosition = position;
+      try {
+        await _loadChunkUrl(url, dur!, epoch);
+        if (!live()) return;
+        _priorChunksElapsed += _chunkDurations[_loadedChunkIndex];
+        _chunkDurations.add(dur);
+        _loadedChunkIndex = nextIndex;
+      } finally {
+        _frozenPosition = null;
+      }
       loading = false;
       notifyListeners();
       // Respect a pause made during the stall: `playing` stays true through
@@ -842,13 +872,23 @@ class PlaybackService extends ChangeNotifier {
       final wasPlaying = player.playing;
       // Same verified-load as _advanceChunk, and same ordering rule: only
       // commit the position bookkeeping once the player really holds the
-      // target chunk.
-      await _loadChunkUrl(targetChunk.audioUrl, targetChunk.duration, epoch);
-      if (!live()) return;
-      _priorChunksElapsed = _chunkDurations
-          .sublist(0, idx)
-          .fold(Duration.zero, (x, y) => x + y);
-      _loadedChunkIndex = idx;
+      // target chunk. Freeze position at the seek TARGET (not the pre-seek
+      // spot — the user is deliberately leaving that) across the swap, same
+      // reasoning as _advanceChunk: player.position resets to 0 the instant
+      // the new chunk loads, before _priorChunksElapsed/the actual seek()
+      // below catch up, and a positionStream tick in that gap would
+      // otherwise report the article as sitting at 0.
+      _frozenPosition = target;
+      try {
+        await _loadChunkUrl(targetChunk.audioUrl, targetChunk.duration, epoch);
+        if (!live()) return;
+        _priorChunksElapsed = _chunkDurations
+            .sublist(0, idx)
+            .fold(Duration.zero, (x, y) => x + y);
+        _loadedChunkIndex = idx;
+      } finally {
+        _frozenPosition = null;
+      }
       loading = false;
       if (offset > Duration.zero) player.seek(offset);
       if (wasPlaying) unawaited(player.play());

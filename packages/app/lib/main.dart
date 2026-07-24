@@ -9,15 +9,12 @@ import "router.dart";
 import "services/auth_service.dart";
 import "services/gemini_key_store.dart";
 import "services/settings_provider.dart";
-import "ssl_override_stub.dart"
-    if (dart.library.io) "ssl_override_io.dart";
 import "url_strategy_stub.dart"
     if (dart.library.html) "url_strategy_web.dart";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   useCleanUrls(); // path URL strategy on web so the browser Back button works
-  installSslOverride();
   // Supabase auth (GoTrue). We disable the SDK's built-in URL detection
   // (detectSessionInUri) because on Flutter web it relies on app_links'
   // getInitialLink(), which often doesn't fire — leaving the OAuth `?code=…`

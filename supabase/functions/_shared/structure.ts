@@ -398,7 +398,19 @@ async function assignWithGemini(
 
 // ── [C] Assemble: deterministic grouping + fragment stitching ────────────────
 
-const SENTENCE_FINAL = /[.?!।॥…]['"’”)]?\s*$/;
+// Sarvam frequently drops the trailing '.'/'।' after these closed-class
+// finite verb forms (reported-speech/completion verbs that routinely end a
+// Telugu news brief, e.g. "...వెంకటేష్ పాల్గొన్నారు" / "...అని తెలిపారు"),
+// so require punctuation alone under-counts real sentence ends. Verified
+// against production data: 5/147 ends_mid_sentence flags were this exact
+// pattern (the rest were genuine — cross-page "...పేజీ 10లో" references or
+// real truncation), so this is intentionally a narrow, closed list rather
+// than a broad verb-suffix regex (which would over-match non-finite forms
+// like "-ించి" that really do continue the sentence).
+const VERB_FINAL_WORDS = "పాల్గొన్నారు|తెలిపారు|అన్నారు|పేర్కొన్నారు|వెల్లడించారు|" +
+  "తెలియజేశారు|నిర్వహించారు|హెచ్చరించారు|సూచించారు|కోరారు|అభ్యర్థించారు|" +
+  "తెలిపింది|పేర్కొంది|వెల్లడించింది";
+const SENTENCE_FINAL = new RegExp(`(?:[.?!।॥…]['"’”)]?|(?:${VERB_FINAL_WORDS}))\\s*$`);
 const OPENER = /^\s*[•▪●★☞✓?]|^\s*\d+[.)]\s/;
 const TELUGU_START = /^[ఀ-౿]/;
 

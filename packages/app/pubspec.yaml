@@ -13,7 +13,6 @@ dependencies:
 
   # Core State Management & Navigation
   provider: ^6.0.0
-  flutter_riverpod: ^2.4.0
   go_router: ^17.2.3
 
   # Audio Playback & Media
@@ -28,13 +27,6 @@ dependencies:
   supabase_flutter: ^2.8.0
   # Deep-link handling for the native OAuth callback (gativani://login-callback)
   app_links: ^7.2.0
-
-  # Firebase
-  firebase_core: ^4.8.0
-  cloud_firestore: ^6.4.0
-  firebase_storage: ^13.4.0
-  firebase_analytics: ^12.4.0
-  firebase_messaging: ^16.2.1
 
   # File & Image Handling
   image_picker: ^1.0.4
