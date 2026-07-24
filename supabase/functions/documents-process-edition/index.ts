@@ -317,8 +317,15 @@ async function processPage(
 // avoid fusing unrelated articles; otherwise it just strips the dangling marker
 // so it isn't read aloud.
 
-// "continued TO page N" — captures the page number.
-const CONT_TO = /(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*(\d{1,2})\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)[^)]*\)?/;
+// "continued TO page N" — captures the page number. Two forms in real
+// editions: the spelled-out "మిగతా/సశేషం/తరువాయి ... N వ పేజీలో", and a bare
+// ">N" or ">Nవ పేజీలో" shorthand (a small arrow glyph OCR renders as ">")
+// that carries no continuation keyword at all — e.g. "సంజీవ్ కుమార్ > 7" or
+// "'48 గంటల్లో > 2వ పేజీలో". Missing the second form meant every article
+// using it never even reached the merge logic below, since `body.match
+// (CONT_TO)` returned null and skipped the whole per-article loop.
+const CONT_TO =
+  /(?:(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*(?<page1>\d{1,2})\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)[^)]*\)?)|(?:>\s*(?<page2>\d{1,2})\s*(?:వ\s*పేజీలో)?)/;
 // "continued FROM" header at the start of the destination article.
 const CONT_FROM = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
 
@@ -397,7 +404,12 @@ async function finalizeContinuations(
     .filter((x) => (x.full_content?.length ?? 0) > 500);
   for (const a of arts as Array<{ id: string; title: string; full_content: string }>) {
     const body = a.full_content ?? "";
-    if (body.length >= 260 || body.length < 30) continue;
+    // Was capped at 260 — too narrow. Real front-page highlight/quote boxes
+    // measured in production run 400-500+ chars (a multi-sentence pull-quote,
+    // not just a one-line kicker), so they never even reached the substring
+    // probe below. 600 covers those while still excluding genuinely
+    // independent full-length articles.
+    if (body.length >= 600 || body.length < 30) continue;
     let match: { id: string; title: string; full_content: string } | undefined;
     for (const off of [0, 12, 24, 40, 60]) {
       const probe = body.slice(off, off + 18).trim();
@@ -420,7 +432,8 @@ async function finalizeContinuations(
     const body: string = a.full_content ?? "";
     const m = body.match(CONT_TO);
     if (!m) continue;
-    const targetPage = parseInt(m[1], 10);
+    const targetPage = parseInt(m.groups?.page1 ?? m.groups?.page2 ?? "", 10);
+    if (Number.isNaN(targetPage)) continue;
 
     // candidate continuations: articles on the target page
     const cands = arts.filter((x: typeof a) =>
