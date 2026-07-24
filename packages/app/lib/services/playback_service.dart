@@ -8,7 +8,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/api_config.dart';
 import '../models/newspaper_article.dart';
 import '../router.dart';
-import 'gemini_key_store.dart';
 import 'media_session_stub.dart'
     if (dart.library.html) 'media_session_web.dart';
 
@@ -253,7 +252,6 @@ class PlaybackService extends ChangeNotifier {
               headers: {
                 ...ApiConfig.authHeaders,
                 'Content-Type': 'application/json',
-                ...GeminiKeyStore.headers,
               },
               body: json.encode({
                 'text': a.spokenText,
@@ -310,7 +308,6 @@ class PlaybackService extends ChangeNotifier {
         : (next.audioUrl?.startsWith('http') ?? false);
     if (alreadyReady) return;
     if (Supabase.instance.client.auth.currentUser == null) return;
-    if (!GeminiKeyStore.hasKey) return;
     _prefetchedArticleId = next.id;
     unawaited(_prefetchSynthesis(next));
   }
@@ -322,7 +319,6 @@ class PlaybackService extends ChangeNotifier {
               headers: {
                 ...ApiConfig.authHeaders,
                 'Content-Type': 'application/json',
-                ...GeminiKeyStore.headers,
               },
               body: json.encode({
                 'text':
@@ -386,7 +382,6 @@ class PlaybackService extends ChangeNotifier {
               headers: {
                 ...ApiConfig.authHeaders,
                 'Content-Type': 'application/json',
-                ...GeminiKeyStore.headers,
               },
               body: json.encode({
                 'text': a.spokenText,
@@ -933,26 +928,29 @@ class PlaybackService extends ChangeNotifier {
   }
 
   /// Re-attempt the current track after a failure (e.g. a transient TTS error).
+  /// A chunk-mode failure typically happens mid-article (chunk 0 played fine,
+  /// chunk N's fetch threw) — restarting via a bare _playIndex would replay
+  /// chunk 0 in full before hitting the same failure again. Carrying the
+  /// current article-level position into _pendingSeek makes _playIndex reuse
+  /// its existing resume-walk (built for "Continue listening") to skip
+  /// straight back to re-fetching the chunk that actually failed.
   Future<void> retry() async {
     if (index < 0 || index >= queue.length) return;
     error = null;
+    final resumeAt = position;
+    if (resumeAt > Duration.zero) _pendingSeek = resumeAt;
     notifyListeners();
     await _playIndex(index);
   }
 
   Future<void> _playIndex(int idx) async {
     // Playing is the account-tied action (browsing itself stays free): sign
-    // in first, then BYOK. This is the single funnel every play path goes
-    // through (playOne/playAll/playAt/next/previous/addToQueue), so it's the
-    // one place that needs to check, before any state even changes. Each
-    // check pushes its own screen and aborts this attempt — tapping play
-    // again afterward continues normally once both pass.
+    // in required, narration runs on GatiVāni's own shared key (no BYOK).
+    // This is the single funnel every play path goes through
+    // (playOne/playAll/playAt/next/previous/addToQueue), so it's the one
+    // place that needs to check, before any state even changes.
     if (Supabase.instance.client.auth.currentUser == null) {
       appRouter.push('/auth');
-      return;
-    }
-    if (!GeminiKeyStore.hasKey) {
-      appRouter.push('/gemini-key');
       return;
     }
     final epoch = ++_playEpoch; // any earlier in-flight _playIndex is now stale
@@ -989,8 +987,7 @@ class PlaybackService extends ChangeNotifier {
                 headers: {
                   ...ApiConfig.authHeaders,
                   'Content-Type': 'application/json',
-                  ...GeminiKeyStore.headers,
-                },
+                  },
                 body: json.encode({
                   'text': a.summaryText ?? a.briefingText,
                   'language': '${a.language}-IN',

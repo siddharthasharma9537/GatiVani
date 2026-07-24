@@ -7,7 +7,6 @@ import 'package:http_parser/http_parser.dart';
 import '../config/api_config.dart';
 import '../models/article.dart';
 import '../models/newspaper_article.dart';
-import 'gemini_key_store.dart';
 import 'news_feed_service.dart';
 
 class DocumentService {
@@ -131,7 +130,6 @@ class DocumentService {
             headers: {
               ...ApiConfig.authHeaders,
               'Content-Type': 'application/json',
-              ...GeminiKeyStore.headers,
             },
             body: json.encode({'storagePath': path, 'filename': filename}))
         .timeout(const Duration(seconds: 120));
@@ -153,7 +151,7 @@ class DocumentService {
   Future<EditionJobStatus> pollEdition(String jobId) async {
     final r = await http.get(
       Uri.parse('${ApiConfig.restUrl}/processing_jobs?id=eq.$jobId'
-          '&select=status,done_pages,total_pages,article_count,failed_pages'),
+          '&select=status,done_pages,total_pages,article_count,failed_pages,error'),
       headers: ApiConfig.authHeaders,
     );
     final rows = json.decode(r.body) as List<dynamic>;
@@ -165,6 +163,7 @@ class DocumentService {
       totalPages: j['total_pages'] as int,
       articleCount: j['article_count'] as int,
       failedPages: (j['failed_pages'] as List<dynamic>).length,
+      error: j['error'] as String?,
     );
   }
 
@@ -422,12 +421,14 @@ class EditionJobStatus {
   final int totalPages;
   final int articleCount;
   final int failedPages;
+  final String? error;
   EditionJobStatus({
     required this.status,
     required this.donePages,
     required this.totalPages,
     required this.articleCount,
     required this.failedPages,
+    this.error,
   });
   bool get isDone => status == 'completed' || status == 'failed';
   double get progress => totalPages == 0 ? 0 : donePages / totalPages;

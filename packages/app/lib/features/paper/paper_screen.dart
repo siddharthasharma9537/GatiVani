@@ -12,7 +12,6 @@ import '../../l10n/strings.dart';
 import '../../models/newspaper_article.dart';
 import '../../services/document_service.dart';
 import '../../services/edition_store.dart';
-import '../../services/gemini_key_store.dart';
 import '../../services/news_feed_service.dart';
 import '../../services/playback_service.dart';
 import '../../services/settings_provider.dart';
@@ -90,15 +89,10 @@ class _PaperScreenState extends State<PaperScreen> {
 
   Future<void> _upload() async {
     // Uploading is the account-tied action (browsing is free): sign in
-    // first, then BYOK — processing/narrating an edition runs on the user's
-    // own Gemini key, not a shared one. Both checked before even picking a
-    // file.
+    // required, processing/narrating an edition runs on GatiVāni's own
+    // shared Gemini key. Checked before even picking a file.
     if (Supabase.instance.client.auth.currentUser == null) {
       context.push('/auth');
-      return;
-    }
-    if (!GeminiKeyStore.hasKey) {
-      context.push('/gemini-key');
       return;
     }
     final picked = await FilePicker.pickFiles(
@@ -530,6 +524,13 @@ class _PaperScreenState extends State<PaperScreen> {
       setState(() {
         _jobStatus = st;
         _articles = arts;
+        // A failed job never reaches the "edition" content view (no
+        // articles), so it would otherwise render as a silent blank state —
+        // surface it through the same error banner an upload-start failure
+        // already uses.
+        if (st.status == 'failed') {
+          _error = st.error ?? 'Couldn\'t process this edition — no articles were found.';
+        }
       });
       if (st.isDone) _poll?.cancel();
     } catch (_) {}

@@ -263,20 +263,34 @@ async function processPage(
     const { error: insErr } = await supabase.from("articles").insert(rows);
     if (insErr) throw new Error(`articles insert: ${insErr.message}`);
 
+    const totalArticles = (job.article_count ?? 0) + rows.length;
+    const isLastPage = page >= job.total_pages;
     await supabase.from("processing_jobs").update({
       done_pages: page,
-      article_count: (job.article_count ?? 0) + rows.length,
-      status: page >= job.total_pages ? "completed" : "processing",
+      article_count: totalArticles,
+      // Every page can individually "succeed" (OCR + insert with 0 rows, or a
+      // structuring fallback that still returns valid-but-empty JSON) while the
+      // edition as a whole produced nothing usable — status must reflect the
+      // final article count, not just "did the last page throw."
+      status: isLastPage ? (totalArticles > 0 ? "completed" : "failed") : "processing",
+      ...(isLastPage && totalArticles === 0
+        ? { error: "OCR completed on every page but no articles were extracted." }
+        : {}),
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
     console.log(`[edition] job ${jobId} page ${page}/${job.total_pages}: ${rows.length} articles`);
   } catch (e) {
     const msg = (e as Error).message;
     console.warn(`[edition] page ${page} failed: ${msg}`);
+    const totalArticles = job.article_count ?? 0;
+    const isLastPage = page >= job.total_pages;
     await supabase.from("processing_jobs").update({
       done_pages: page,
       failed_pages: [...(job.failed_pages ?? []), { page, error: msg.slice(0, 200) }],
-      status: page >= job.total_pages ? "completed" : "processing",
+      status: isLastPage ? (totalArticles > 0 ? "completed" : "failed") : "processing",
+      ...(isLastPage && totalArticles === 0
+        ? { error: `All pages failed; last error: ${msg.slice(0, 200)}` }
+        : {}),
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
   }
@@ -502,7 +516,7 @@ Deno.serve(async (req) => {
 
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!SUPABASE_URL || !SERVICE_KEY || !Deno.env.get("SARVAM_API_KEY")) {
+  if (!SUPABASE_URL || !SERVICE_KEY || !Deno.env.get("SARVAM_API_KEY") || !Deno.env.get("GEMINI_API_KEY")) {
     return json({ error: "config_missing" }, 500);
   }
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -548,16 +562,11 @@ async function runStart(
   source: { multipart?: boolean; storagePath?: string; filename?: string },
 ): Promise<Response> {
   try {
-    // BYOK: narrating/structuring a user's own uploaded edition runs on their
-    // own Gemini key, never the shared one — checked before the rate limit
-    // even gets touched, so a missing key doesn't burn a request slot.
-    const userGeminiKey = req.headers.get("x-user-gemini-key") ?? "";
-    if (!userGeminiKey) {
-      return json({
-        error: "gemini_key_required",
-        message: "Add your Gemini API key in Settings to process an edition.",
-      }, 400);
-    }
+    // Shared GatiVāni key — OCR/structuring runs on our own Gemini quota, not
+    // BYOK. Presence is already guaranteed by the config_missing check at the
+    // top of the handler; the rate limit below is what actually bounds cost
+    // now that this isn't gated behind each caller bringing their own key.
+    const userGeminiKey = Deno.env.get("GEMINI_API_KEY")!;
 
     const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
     const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();

@@ -7,8 +7,36 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-subscription-tier, x-user-gemini-key",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-subscription-tier",
 };
+
+// TTS runs on GatiVāni's own shared key now (verify_jwt=true already requires
+// a signed-in caller). Caching bounds cost to unique content, not readers —
+// but the synthesize endpoint still accepts arbitrary `text`, so nothing
+// stops a signed-in caller from burning quota on text that isn't a real
+// article. sub() + a per-user rate limit are the two backstops for that,
+// alongside the content-match check further down for real articleIds.
+function jwtSub(req: Request): string {
+  try {
+    const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload.sub ?? "";
+  } catch {
+    return "";
+  }
+}
+
+// deno-lint-ignore no-explicit-any
+async function checkUserRateLimit(supabase: any, userId: string): Promise<boolean> {
+  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+  const { count } = await supabase
+    .from("request_log").select("*", { count: "exact", head: true })
+    .eq("ip", `user:${userId}`).eq("endpoint", "documents-synthesize")
+    .gte("created_at", oneHourAgo);
+  if ((count ?? 0) >= 120) return false;
+  await supabase.from("request_log").insert({ ip: `user:${userId}`, endpoint: "documents-synthesize" });
+  return true;
+}
 
 // ── Language config ────────────────────────────────────────────────────────────
 
@@ -197,13 +225,16 @@ function styledText(text: string, readingStyle?: string): string {
 
 const GEMINI_SAMPLE_RATE = 24000;
 
-// One Gemini TTS call → a complete WAV for the given text.
+// One Gemini TTS call → a complete WAV for the given text. Retries once on
+// 429 (rate limit) after a short backoff — now that there's no Sarvam
+// fallback to fall through to, a 429 with no retry just kills the request.
+// Any other error still fails fast (no fallback to preserve budget for).
 async function geminiOneCall(
   text: string,
   voiceName: string,
   geminiKey: string,
 ): Promise<Uint8Array> {
-  const resp = await fetch(
+  const doFetch = () => fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${geminiKey}`,
     {
       method: "POST",
@@ -219,6 +250,12 @@ async function geminiOneCall(
       }),
     },
   );
+
+  let resp = await doFetch();
+  if (resp.status === 429) {
+    await new Promise((r) => setTimeout(r, 2000));
+    resp = await doFetch();
+  }
 
   if (!resp.ok) {
     const errText = await resp.text();
@@ -255,12 +292,17 @@ async function synthesizeWithGemini(
     `[gemini-tts] ${text.length} chars → ${parts.length} chunk(s), voice=${voiceName}, style=${readingStyle ?? "default"}`,
   );
 
-  // Try Gemini for every article. Chunks run fully in parallel so wall time ≈
-  // one chunk (~75s), not the sum — provided the API rate limit allows real
-  // concurrency. If a chunk rejects it fails the attempt fast, leaving time for
-  // the Sarvam fallback within the function wall clock.
+  // Chunks still run concurrently (wall time ≈ one chunk, not the sum), but
+  // their start times are staggered rather than fired in one simultaneous
+  // burst — a burst against one caller's own rate-limited key is the likely
+  // trigger for the 429s geminiOneCall now retries once. Staggering spreads
+  // that same set of calls out so fewer land in the same rate-limit window.
+  const STAGGER_MS = 500;
   const wavs = await Promise.all(
-    parts.map((p) => geminiOneCall(p, voiceName, geminiKey)),
+    parts.map(async (p, i) => {
+      if (i > 0) await new Promise((r) => setTimeout(r, i * STAGGER_MS));
+      return geminiOneCall(p, voiceName, geminiKey);
+    }),
   );
   const wavBytes = concatWavBuffers(wavs);
   const durationSec = Math.round((wavBytes.length - 44) / (GEMINI_SAMPLE_RATE * 2));
@@ -281,6 +323,10 @@ function json(body: unknown, status = 200) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+
+  if (!Deno.env.get("GEMINI_API_KEY")) {
+    return json({ error: "config_missing" }, 500);
+  }
 
   try {
     const body = await req.json().catch(() => null);
@@ -309,16 +355,22 @@ Deno.serve(async (req) => {
     const fileSuffix = target === "summary_audio_url" ? ".brief.wav" : ".wav";
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const supabase = (articleId && SUPABASE_URL && SERVICE_KEY)
+    // Needed for the rate limit / content check below even when articleId is
+    // absent (e.g. a Live article, which is never persisted in `articles`),
+    // not just for the cache path.
+    const supabase = (SUPABASE_URL && SERVICE_KEY)
       ? createClient(SUPABASE_URL, SERVICE_KEY)
       : null;
 
     const hashCol = target === "summary_audio_url" ? "summary_audio_text_hash" : "audio_text_hash";
-    if (supabase) {
+    let articleRow: Record<string, string> | null = null;
+    if (supabase && articleId) {
       const { data: row } = await supabase
-        .from("articles").select(`${target}, ${hashCol}`).eq("id", articleId).maybeSingle();
-      const cachedUrl = (row as Record<string, string> | null)?.[target];
-      const cachedHash = (row as Record<string, string> | null)?.[hashCol];
+        .from("articles").select(`${target}, ${hashCol}, title, full_content, content_preview`)
+        .eq("id", articleId).maybeSingle();
+      articleRow = row as Record<string, string> | null;
+      const cachedUrl = articleRow?.[target];
+      const cachedHash = articleRow?.[hashCol];
       // A hash mismatch means either this is the first write for this exact
       // text, or a previous caller wrote different text under this articleId
       // — either way, treat it as a miss and re-synthesize from THIS caller's
@@ -339,6 +391,35 @@ Deno.serve(async (req) => {
           cached: true,
         });
       }
+    }
+
+    // Content check: now that synthesis runs on a shared key, a signed-in
+    // caller could otherwise POST arbitrary junk text under a real articleId
+    // and burn shared quota on content nobody actually reads. When the row
+    // exists, the submitted text for the FULL narration must match what's
+    // actually stored — same construction as the client's own `spokenText`
+    // getter (title + separator + body). Briefs skip this (lede-extraction
+    // logic isn't worth replicating server-side) and rely on the rate limit
+    // + length cap instead. Live articles have no `articles` row at all, so
+    // there's nothing to check them against either — same fallback applies.
+    if (articleRow && target === "audio_url") {
+      const t = (articleRow.title ?? "").trim();
+      const bodySrc = (articleRow.full_content ?? "").trim() || (articleRow.content_preview ?? "").trim();
+      const sep = /[.?!।॥…]$/.test(t) ? "\n\n" : ".\n\n";
+      const expected = t ? `${t}${sep}${bodySrc}` : bodySrc;
+      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+      if (norm(expected) !== norm(text)) {
+        console.warn(`[synthesize] content mismatch for article ${articleId}`);
+        return json({
+          error: "content_mismatch",
+          message: "Submitted text doesn't match this article's stored content.",
+        }, 400);
+      }
+    } else if (!articleRow && text.length > 20000) {
+      // No DB row to validate against (Live article, or an unrecognized
+      // articleId) — a generous absolute length cap is the only backstop
+      // available, well above any real article/brief.
+      return json({ error: "text_too_long", message: "Text exceeds the maximum length." }, 400);
     }
 
     // ── Chunk mode: return ONE synthesized chunk instead of waiting for the
@@ -383,12 +464,12 @@ Deno.serve(async (req) => {
         }
       }
 
-      const geminiKey = req.headers.get("x-user-gemini-key") ?? "";
-      if (!geminiKey) {
-        return json({
-          error: "gemini_key_required",
-          message: "Add your Gemini API key to narrate this.",
-        }, 400);
+      const geminiKey = Deno.env.get("GEMINI_API_KEY")!;
+      if (supabase) {
+        const userId = jwtSub(req);
+        if (userId && !(await checkUserRateLimit(supabase, userId))) {
+          return json({ error: "rate_limited", message: "Narration limit reached — try again later." }, 429);
+        }
       }
 
       const wavBytes = await geminiOneCall(parts[chunkIndex], geminiVoice(speaker), geminiKey);
@@ -429,16 +510,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    // TTS is Gemini 2.5 Flash ONLY, and always runs on the CALLER's own key —
-    // there is no shared fallback anymore for any narration, Live or Paper
-    // (the app now requires sign-in + BYOK before any playback). Sarvam TTS
-    // remains disabled (cost) with no fallback either.
-    const geminiKey = req.headers.get("x-user-gemini-key") ?? "";
-    if (!geminiKey) {
-      return json({
-        error: "gemini_key_required",
-        message: "Add your Gemini API key to narrate this.",
-      }, 400);
+    // TTS is Gemini 2.5 Flash ONLY, on GatiVāni's own shared key — narration
+    // no longer requires each caller to bring their own (BYOK removed; the
+    // content check above + the per-user rate limit below are what bound
+    // cost now instead). Sarvam TTS remains disabled (cost) with no fallback.
+    const geminiKey = Deno.env.get("GEMINI_API_KEY")!;
+    if (supabase) {
+      const userId = jwtSub(req);
+      if (userId && !(await checkUserRateLimit(supabase, userId))) {
+        return json({ error: "rate_limited", message: "Narration limit reached — try again later." }, 429);
+      }
     }
 
     console.log(`[synthesize] provider=gemini-2.5 chars=${text.length} speaker=${speaker}`);
