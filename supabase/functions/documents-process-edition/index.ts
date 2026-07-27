@@ -19,6 +19,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
 import {
   callGeminiJson,
+  detailPdf,
   extractArticlesStructured,
   needsReview,
   TEXT_DERIVED_FLAGS,
@@ -158,7 +159,13 @@ function bytesToBase64(bytes: Uint8Array): string {
 async function detectPrintedDate(pageBytes: Uint8Array, geminiKey: string): Promise<string> {
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`;
-    const prompt = 'If a publication/issue date is printed on this newspaper page ' +
+    // The masthead date is small print at the top of a broadsheet, which is
+    // exactly what a flat full-page render loses. Send the banded version so
+    // the top strip arrives at band magnification.
+    const detail = await detailPdf(pageBytes).catch(() => pageBytes);
+    const prompt = 'The first PDF page is a whole newspaper page; the rest are ' +
+      'overlapping horizontal bands of that same page, top to bottom. ' +
+      'If a publication/issue date is printed on it ' +
       '(masthead or dateline), return it as YYYY-MM-DD. Otherwise return "". ' +
       'Return ONLY JSON: {"publicationDate":""}';
     const resp = await fetch(url, {
@@ -168,7 +175,7 @@ async function detectPrintedDate(pageBytes: Uint8Array, geminiKey: string): Prom
         contents: [{
           role: "user",
           parts: [
-            { inline_data: { mime_type: "application/pdf", data: bytesToBase64(pageBytes) } },
+            { inline_data: { mime_type: "application/pdf", data: bytesToBase64(detail) } },
             { text: prompt },
           ],
         }],

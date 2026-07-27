@@ -11,6 +11,82 @@
 //   [C] assemble — deterministic grouping + Telugu mid-sentence fragment stitching.
 //   [D] validate — deterministic checks; failures become review flags, not crashes.
 
+import { PDFDocument } from "npm:pdf-lib@1.17.1";
+
+// ── Page detail for vision calls ─────────────────────────────────────────────
+// Gemini bills a PDF page at a FLAT token cost regardless of its physical size
+// (258 on 2.5, 560 on 3.x) — roughly one 768x768 tile's worth of detail for an
+// entire broadsheet. A Namaste Telangana page is a 2501x3900 300-DPI scan, so
+// body text sits far below what the model can resolve, and even the display
+// headline (జెన్-జీత్ గయా) doesn't survive.
+//
+// Fix: build ONE PDF whose first page is the whole page (global layout) and
+// whose remaining pages are overlapping horizontal bands of that SAME page.
+// The source is embedded once and drawn N+1 times, so the scan's bytes appear
+// exactly once — measured on a real edition, 1637 KB in gives 1759 KB out at
+// 2, 3 or 4 bands alike. That is (N+1)x the vision tokens for ~0 extra payload.
+export const DETAIL_BANDS = 3;
+const BAND_OVERLAP = 0.06; // bands overlap so a headline sitting on a cut survives whole
+
+export async function detailPdf(
+  pageBytes: Uint8Array,
+  bands = DETAIL_BANDS,
+): Promise<Uint8Array> {
+  const src = await PDFDocument.load(pageBytes);
+  const srcPage = src.getPage(0);
+  const { width, height } = srcPage.getSize();
+
+  const doc = await PDFDocument.create();
+  const embedded = await doc.embedPage(srcPage);
+  doc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0, width, height });
+
+  const band = height / bands;
+  const pad = band * BAND_OVERLAP;
+  for (let i = 0; i < bands; i++) {
+    // PDF y-origin is bottom-left, so band 0 must be the TOP of the page.
+    const bottom = Math.max(0, height - (i + 1) * band - pad);
+    const top = Math.min(height, height - i * band + pad);
+    doc.addPage([width, top - bottom])
+      .drawPage(embedded, { x: 0, y: -bottom, width, height });
+  }
+  return await doc.save();
+}
+
+// Without this the model reads the payload as several DIFFERENT pages and
+// reports the same article once per band.
+const DETAIL_NOTE =
+  `The attached PDF is ONE newspaper page. Its first page is the whole page; ` +
+  `the remaining ${DETAIL_BANDS} pages are overlapping horizontal bands of that ` +
+  `SAME page, top to bottom, shown larger so small print is legible. They are ` +
+  `the same content at two magnifications — never treat a band as a separate ` +
+  `page, and never report anything twice because it appears in both.\n\n`;
+
+// Doc parts for a vision call, at band resolution when the source is a PDF.
+// Returns null when there is nothing usable to show the model.
+async function visionParts(
+  fileBuffer: Uint8Array,
+  mimeType: string,
+): Promise<{ parts: unknown[]; note: string } | null> {
+  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
+    fileBuffer.length < 15 * 1024 * 1024;
+  if (!visual) return null;
+  const flat = {
+    parts: [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }],
+    note: "",
+  };
+  if (mimeType !== "application/pdf") return flat;
+  try {
+    const detail = await detailPdf(fileBuffer);
+    return {
+      parts: [{ inline_data: { mime_type: "application/pdf", data: bytesToBase64(detail) } }],
+      note: DETAIL_NOTE,
+    };
+  } catch (e) {
+    console.warn("[structure] band tiling failed, sending flat page:", (e as Error).message);
+    return flat;
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Block {
@@ -348,19 +424,16 @@ async function assignWithGemini(
   geminiKey: string,
 ): Promise<Assignment> {
   const manifestText = ASSIGN_PROMPT + manifest(blocks);
-  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
-    fileBuffer.length < 15 * 1024 * 1024;
-  const docPart = visual
-    ? { inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }
-    : null;
+  const vp = await visionParts(fileBuffer, mimeType);
+  const docText = vp ? vp.note + manifestText : manifestText;
 
   // Quota-resilient ladder. Stage 2 (refineWithGemini) consumes flash quota with
   // the same document seconds earlier, so a 429 here is common — flash-lite has a
   // SEPARATE per-model quota bucket, and the text-only call is tiny.
   const configs: Array<{ model: string; parts: unknown[]; label: string }> = [];
-  if (docPart) {
-    configs.push({ model: "gemini-2.5-flash", parts: [docPart, { text: manifestText }], label: "flash+doc" });
-    configs.push({ model: "gemini-2.5-flash-lite", parts: [docPart, { text: manifestText }], label: "flash-lite+doc" });
+  if (vp) {
+    configs.push({ model: "gemini-2.5-flash", parts: [...vp.parts, { text: docText }], label: "flash+doc" });
+    configs.push({ model: "gemini-2.5-flash-lite", parts: [...vp.parts, { text: docText }], label: "flash-lite+doc" });
   }
   configs.push({ model: "gemini-2.5-flash", parts: [{ text: manifestText }], label: "flash text-only" });
   configs.push({ model: "gemini-2.5-flash-lite", parts: [{ text: manifestText }], label: "flash-lite text-only" });
@@ -590,11 +663,8 @@ RULES:
   in the middle of a news story is the clearest case: list all of them.
 
 ${lines.join("\n")}`;
-  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
-    fileBuffer.length < 15 * 1024 * 1024;
-  const parts = visual
-    ? [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }, { text: prompt }]
-    : [{ text: prompt }];
+  const vp = await visionParts(fileBuffer, mimeType);
+  const parts = vp ? [...vp.parts, { text: vp.note + prompt }] : [{ text: prompt }];
   const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", parts, geminiKey);
   if (status !== 200) return;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
@@ -655,9 +725,9 @@ async function visionPass(
   const targets = drafts
     .map((d, i) => ({ d, i }))
     .filter((t) => t.d.review.includes("gap_suspected"));
-  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
-    fileBuffer.length < 15 * 1024 * 1024;
-  if (!targets.length || !visual) return;
+  if (!targets.length) return;
+  const vp = await visionParts(fileBuffer, mimeType);
+  if (!vp) return;
 
   const lines: string[] = [];
   for (const { d, i } of targets) {
@@ -678,7 +748,7 @@ RULES:
 ${lines.join("\n")}`;
   const { status, text } = await callGeminiJson(
     "gemini-2.5-flash-lite",
-    [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }, { text: prompt }],
+    [...vp.parts, { text: vp.note + prompt }],
     geminiKey,
   );
   if (status !== 200) return;
