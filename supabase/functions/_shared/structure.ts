@@ -543,14 +543,21 @@ export const TEXT_DERIVED_FLAGS = [
   "caption_leak", "fused_articles", "headline_missing", "ends_mid_sentence",
 ] as const;
 
-// "reordered" records that the coherence pass REPAIRED fragment order — the
-// pipeline working as designed, not a defect. Gating on it withheld 25 of the
-// 44 held-back articles in the 2026-07-26 edition, so a successful repair
-// must not hide the article.
-const NON_BLOCKING_FLAGS = new Set(["reordered"]);
+// Flags that are worth recording but must not hide the article. Matched by
+// prefix, since some carry a value suffix (low_coverage:0.86).
+//   reordered    — the coherence pass REPAIRED fragment order. That is the
+//                  pipeline working as designed, not a defect; gating on it
+//                  withheld 25 of the 44 held-back articles in the 2026-07-26
+//                  edition.
+//   low_coverage — a PAGE-level statistic applied to every article on the page.
+//                  Above the severe floor it says the page shed some
+//                  characters, not that THIS article is bad. See the coverage
+//                  block in extractArticlesStructured; severe_coverage_loss is
+//                  deliberately absent from this list and still blocks.
+const NON_BLOCKING_FLAGS = ["reordered", "low_coverage"];
 
 export function needsReview(flags: string[]): boolean {
-  return flags.some((f) => !NON_BLOCKING_FLAGS.has(f));
+  return flags.some((f) => !NON_BLOCKING_FLAGS.some((n) => f.startsWith(n)));
 }
 
 export function validateArticle(a: { title: string; content: string }): string[] {
@@ -884,8 +891,18 @@ export async function extractArticlesStructured(
     .reduce((s, b) => s + b.text.length, 0);
   const keptChars = articles.reduce(
     (s, a) => s + a.content.length + a.title.length + a.subheadings.join("").length, 0);
+  // Coverage is a PAGE-level statistic, so withholding every article on the
+  // page because the page as a whole shed some characters punished articles
+  // that were individually fine — it blacked out pages 8 and 9 of the
+  // 2026-07-26 edition entirely (13 articles) at 0.79 and 0.86. Showing a page
+  // that lost a fraction of its characters beats showing nothing, and genuinely
+  // damaged articles are still caught by the per-article checks. So this is
+  // informational above the floor and blocking only below it, where the page
+  // really is too broken to serve.
   const coverage = ocrChars ? keptChars / ocrChars : 1;
-  if (coverage < 0.9) {
+  if (coverage < 0.6) {
+    for (const a of articles) a.review.push(`severe_coverage_loss:${coverage.toFixed(2)}`);
+  } else if (coverage < 0.9) {
     for (const a of articles) a.review.push(`low_coverage:${coverage.toFixed(2)}`);
   }
 
