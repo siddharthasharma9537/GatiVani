@@ -460,7 +460,27 @@ const DATELINE = /[ఀ-౿()\s]{2,30}[,:]\s*న్యూ[సన]్?\s?టుడ
 const SIGNATURE = /-\s*న్యూ[సన]్?\s?టుడే/g;
 const ATTRIBUTION_END = /-\s*[ఀ-౿][ఀ-౿\s,()]{2,40}$/;
 
-function validateArticle(a: StructuredArticle): string[] {
+// These flags are derived purely from the article's final text. Cross-page
+// continuation stitching rewrites bodies AFTER insert (merging in the
+// continuation half, stripping the "మిగతా Nవ పేజీలో" marker), so they have to
+// be recomputed at that point — see recomputeReviewStatus in
+// documents-process-edition. Every other flag describes the extraction process
+// and stays as originally recorded.
+export const TEXT_DERIVED_FLAGS = [
+  "caption_leak", "fused_articles", "headline_missing", "ends_mid_sentence",
+] as const;
+
+// "reordered" records that the coherence pass REPAIRED fragment order — the
+// pipeline working as designed, not a defect. Gating on it withheld 25 of the
+// 44 held-back articles in the 2026-07-26 edition, so a successful repair
+// must not hide the article.
+const NON_BLOCKING_FLAGS = new Set(["reordered"]);
+
+export function needsReview(flags: string[]): boolean {
+  return flags.some((f) => !NON_BLOCKING_FLAGS.has(f));
+}
+
+export function validateArticle(a: { title: string; content: string }): string[] {
   const flags: string[] = [];
   const body = a.content;
   if (AI_DESC.test(body)) flags.push("caption_leak");
@@ -512,19 +532,30 @@ function applyOrder(d: Draft, order: unknown): boolean {
 }
 
 // ── Layer 2: text coherence ──────────────────────────────────────────────────
-// One cheap text call per page. Reorders body fragments by MEANING (catches the
-// within-column semantic mis-orders that string heuristics miss) and flags
-// narrative gaps. Index-only: it permutes existing fragments, never edits text.
-async function coherencePass(drafts: Draft[], geminiKey: string): Promise<void> {
+// One cheap call per page. Reorders body fragments by MEANING (catches the
+// within-column semantic mis-orders that string heuristics miss), flags
+// narrative gaps, and splits out fragments that belong to a different story.
+// Index-only: it permutes existing fragments, never edits text.
+//
+// Now sees the page image and 160+60 chars per fragment. At 60+30 text-only it
+// was judging topical membership from ~90-character snippets with no view of
+// the layout, and missed a 1,965-char foreign column sitting inside a
+// front-page lead — it reordered that article and reported it coherent.
+async function coherencePass(
+  drafts: Draft[], fileBuffer: Uint8Array, mimeType: string, geminiKey: string,
+): Promise<void> {
   const lines: string[] = [];
   drafts.forEach((d, i) => {
     if (d.blocks.length < 2) return;
     lines.push(`# Article ${i}: ${d.title.slice(0, 40)}`);
-    d.blocks.forEach((b, j) => lines.push(`  [${j}] ${frag(b.text)}`));
+    d.blocks.forEach((b, j) => lines.push(`  [${j}] ${frag(b.text, 160, 60)}`));
   });
   if (!lines.length) return;
   const prompt =
-`Each article below is a list of OCR text fragments in their CURRENT order.
+`The page image is provided — use it to see which fragments physically belong to
+the same article, and in what order a reader would take them.
+
+Each article below is a list of OCR text fragments in their CURRENT order.
 Newspapers split stories across columns, so fragments can be out of reading order.
 For each article decide if the fragments read as ONE coherent story in the right
 order, judging by MEANING (does each fragment continue the previous idea?).
@@ -555,9 +586,16 @@ RULES:
   don't topically belong in this article. Only include a position when you're
   genuinely confident it's unrelated — being out of order or hard to follow is
   NOT the same as being misplaced. Omit or leave empty when everything fits.
+  A run of fragments that reads as a self-contained column or commentary piece
+  in the middle of a news story is the clearest case: list all of them.
 
 ${lines.join("\n")}`;
-  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
+  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
+    fileBuffer.length < 15 * 1024 * 1024;
+  const parts = visual
+    ? [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }, { text: prompt }]
+    : [{ text: prompt }];
+  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", parts, geminiKey);
   if (status !== 200) return;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
     articles?: Array<{
@@ -565,6 +603,7 @@ ${lines.join("\n")}`;
       paragraph_breaks?: number[]; misplaced?: number[];
     }>;
   };
+  const spawned: Draft[] = [];
   for (const r of data.articles ?? []) {
     const d = drafts[r.i];
     if (!d) continue;
@@ -577,12 +616,32 @@ ${lines.join("\n")}`;
         ),
       );
     }
-    if (Array.isArray(r.misplaced) && r.misplaced.some(
+    // Misplaced fragments used to only raise a review flag while STAYING in the
+    // article — so a whole foreign column could sit inside the lead story and
+    // still be narrated as part of it (real case: a 1,965-char opinion column
+    // wedged into a front-page lead between its own body and its page-7
+    // continuation). Detection without remediation is not a safeguard. Split
+    // them into their own draft instead; it lands headless, so validateArticle
+    // flags headline_missing and it is held for review rather than read aloud
+    // under someone else's headline.
+    const mis = (r.misplaced ?? []).filter(
       (x) => typeof x === "number" && x >= 0 && x < d.blocks.length,
-    )) {
+    );
+    if (mis.length && mis.length < d.blocks.length) {
+      const misSet = new Set(mis);
+      const moved = d.blocks.filter((_, j) => misSet.has(j));
+      d.blocks = d.blocks.filter((_, j) => !misSet.has(j));
+      // Positions shifted, so Layer 2's paragraph_breaks no longer line up.
+      d.breaks = undefined;
       d.review.push("topic_mismatch");
+      spawned.push({
+        title: "", subs: [], caps: [], category: d.category,
+        blocks: moved, review: ["split_from_fused"],
+      });
+      console.log(`[structure] split ${moved.length} misplaced fragment(s) out of article ${r.i}`);
     }
   }
+  drafts.push(...spawned);
 }
 
 // ── Layer 3: vision recovery ─────────────────────────────────────────────────
@@ -672,34 +731,54 @@ export async function extractArticlesStructured(
   // Build drafts (body kept as ordered fragments — stitching deferred until
   // after the coherence passes can reorder / patch them).
   const drafts: Draft[] = [];
+  let missingSeq = 0;
+  let bodyTotal = 0;
   for (const art of assignment.articles ?? []) {
     let title = "";
     const subs: string[] = [];
     const caps: string[] = [];
-    const bodyEntries: Array<[number, number, string]> = [];
+    // [seq, col, row, id, text] — see the sort below for why col/row are here.
+    const bodyEntries: Array<[number, number, number, number, string]> = [];
     for (const blk of art.blocks ?? []) {
       const b = byId.get(blk.id);
       if (!b) continue;
       if (blk.role === "headline") title = b.text;
       else if (blk.role === "subheading") subs.push(b.text);
       else if (blk.role === "caption") caps.push(b.text);
-      else if (blk.role === "body") bodyEntries.push([blk.seq ?? 1e6, blk.id, b.text]);
+      else if (blk.role === "body") {
+        if (blk.seq === undefined) missingSeq++;
+        bodyTotal++;
+        bodyEntries.push([blk.seq ?? 1e6, b.col, b.row, blk.id, b.text]);
+      }
       // role "table": excluded from spoken body
     }
-    bodyEntries.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    // "seq" is optional in the assignment contract, so when the model omits it
+    // every block collapses to 1e6 and the tiebreaker decides the whole reading
+    // order. That tiebreaker used to be block id. parseBlocks walks
+    // rows.forEach(cols.forEach(...)), so ids are column-major WITHIN a row
+    // band but restart at the next band — an article spanning several bands
+    // gets every column of band 0, then every column of band 1, which reads
+    // across the page instead of down it. That is the zigzag.
+    // Column-major (col, then row) is how a newspaper is actually read, so an
+    // unanswered seq now degrades to the right order instead of the worst one.
+    bodyEntries.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || x[3] - y[3]);
     const category = (CATEGORIES as readonly string[]).includes(art.category ?? "")
       ? art.category!
       : "";
     drafts.push({
       title, subs, caps, category, review: [],
-      blocks: bodyEntries.map((e) => ({ id: e[1], text: e[2] })),
+      blocks: bodyEntries.map((e) => ({ id: e[3], text: e[4] })),
     });
+  }
+  if (bodyTotal) {
+    console.log(`[structure] seq missing on ${missingSeq}/${bodyTotal} body blocks` +
+      `${missingSeq / bodyTotal > 0.2 ? " — ordering is leaning on the column-major fallback" : ""}`);
   }
 
   // Layer 2 (text coherence) → Layer 3 (vision, only for flagged gaps). Both
   // non-fatal: any failure leaves the structure-engine order untouched.
   if (geminiKey) {
-    try { await coherencePass(drafts, geminiKey); }
+    try { await coherencePass(drafts, fileBuffer, mimeType, geminiKey); }
     catch (e) { console.warn("[structure] L2 coherence failed:", (e as Error).message); }
     if (drafts.some((d) => d.review.includes("gap_suspected"))) {
       try { await visionPass(drafts, fileBuffer, mimeType, geminiKey); }

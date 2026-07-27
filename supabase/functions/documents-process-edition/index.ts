@@ -17,7 +17,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
-import { callGeminiJson, extractArticlesStructured } from "../_shared/structure.ts";
+import {
+  callGeminiJson,
+  extractArticlesStructured,
+  needsReview,
+  TEXT_DERIVED_FLAGS,
+  validateArticle,
+} from "../_shared/structure.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -247,8 +253,8 @@ async function processPage(
       section: a.category || "News",
       // Prefer the printed page number (cover/main pages shift the PDF index).
       page_number: result.printedPage ?? page,
-      processing_status: a.review.length ? "review" : "ready",
-      quality_score: a.review.length ? 0.7 : 0.95,
+      processing_status: needsReview(a.review) ? "review" : "ready",
+      quality_score: needsReview(a.review) ? 0.7 : 0.95,
       position_json: {
         article_index: i + 1,
         page: result.printedPage ?? page,
@@ -300,8 +306,11 @@ async function processPage(
   if (page < job.total_pages) {
     fireContinuation(jobId, page + 1, geminiKey);
   } else {
-    // All pages done — stitch cross-page article continuations, then clean up.
+    // All pages done — stitch cross-page article continuations, re-judge which
+    // articles are still worth withholding now that bodies are final, then
+    // clean up.
     await finalizeContinuations(supabase, job.newspaper_id, geminiKey);
+    await recomputeReviewStatus(supabase, job.newspaper_id);
     await supabase.storage.from("uploads").remove([sourcePath])
       .then(() => {}, () => {});
     console.log(`[edition] job ${jobId} completed; source ${sourcePath} deleted`);
@@ -384,13 +393,48 @@ async function semanticContinuationMatch(
     : null;
 }
 
+// City+date dateline opening a brief: "న్యూఢిల్లీ, జూలై 25:",
+// "హైదరాబాద్, జూలై 25(నమస్తే తెలంగాణ):". stripLeadingDateline in structure.ts
+// only knows publication bylines (ఈనాడు / న్యూస్‌టుడే / సాక్షి), so these
+// survived into the teaser probe below — and since every Delhi-datelined story
+// on a page shares this prefix, it alone was enough to "match" two unrelated
+// articles.
+const CITY_DATE_LEAD =
+  /^[\s•]*[ఀ-౿]{2,20}\s*,\s*[ఀ-౿]{2,12}\s*\d{1,2}\s*(?:\([^)]{0,40}\))?\s*:\s*/;
+
+// Share of the teaser's OWN text that must appear verbatim inside the full
+// story before the two are treated as the same item.
+const TEASER_CONTAINMENT = 0.6;
+
+// The previous test was: does ONE 18-codepoint window from the short article
+// appear anywhere in the long one. In Telugu 18 codepoints is 2-4 words, and
+// the window at offset 0 is the dateline — so an NTPC funding brief matched a
+// story about a minister resigning, purely because both were datelined
+// "న్యూఢిల్లీ, జూలై 25", and the brief was then deleted with its headline glued
+// onto the unrelated article. This instead measures how much of the teaser is
+// actually reproduced in the candidate: a genuine front-page blurb is largely
+// echoed by the full story, a coincidental dateline match is not.
+function teaserContainment(short: string, long: string): number {
+  const s = short.replace(CITY_DATE_LEAD, "").replace(/\s+/g, " ").trim();
+  const l = (long ?? "").replace(/\s+/g, " ");
+  const WIN = 40;
+  if (s.length < WIN * 2 || !l) return 0;
+  let total = 0;
+  let hit = 0;
+  for (let i = 0; i + WIN <= s.length; i += WIN) {
+    total++;
+    if (l.includes(s.slice(i, i + WIN))) hit++;
+  }
+  return total ? hit / total : 0;
+}
+
 // deno-lint-ignore no-explicit-any
 async function finalizeContinuations(
   supabase: any, newspaperId: string, geminiKey: string,
 ): Promise<void> {
   if (!newspaperId) return;
   const { data: arts } = await supabase.from("articles")
-    .select("id,title,full_content,content_preview,page_number")
+    .select("id,title,full_content,content_preview,page_number,position_json")
     .eq("newspaper_id", newspaperId)
     .order("page_number");
   if (!arts || arts.length < 2) return;
@@ -400,9 +444,9 @@ async function finalizeContinuations(
   // echoed by the full article elsewhere. Rather than drop them, prepend the
   // teaser's headline (the front-page kicker) to the full article's headline so
   // the listener knows this was the front-page lead — then remove the blurb.
-  const longs = (arts as Array<{ id: string; title: string; full_content: string }>)
-    .filter((x) => (x.full_content?.length ?? 0) > 500);
-  for (const a of arts as Array<{ id: string; title: string; full_content: string }>) {
+  type Art = { id: string; title: string; full_content: string; position_json?: Record<string, unknown> };
+  const longs = (arts as Art[]).filter((x) => (x.full_content?.length ?? 0) > 500);
+  for (const a of arts as Art[]) {
     const body = a.full_content ?? "";
     // Was capped at 260 — too narrow. Real front-page highlight/quote boxes
     // measured in production run 400-500+ chars (a multi-sentence pull-quote,
@@ -410,14 +454,14 @@ async function finalizeContinuations(
     // probe below. 600 covers those while still excluding genuinely
     // independent full-length articles.
     if (body.length >= 600 || body.length < 30) continue;
-    let match: { id: string; title: string; full_content: string } | undefined;
-    for (const off of [0, 12, 24, 40, 60]) {
-      const probe = body.slice(off, off + 18).trim();
-      if (probe.length < 12) continue;
-      match = longs.find((L) => L.id !== a.id && L.full_content.includes(probe));
-      if (match) break;
+    let match: Art | undefined;
+    let bestRatio = 0;
+    for (const L of longs) {
+      if (L.id === a.id) continue;
+      const r = teaserContainment(body, L.full_content ?? "");
+      if (r > bestRatio) { bestRatio = r; match = L; }
     }
-    if (!match) continue;
+    if (!match || bestRatio < TEASER_CONTAINMENT) continue;
     const kicker = (a.title ?? "").trim();
     // Only stitch a clean, short kicker; otherwise just drop the blurb.
     if (kicker && kicker.length <= 36 && !(match.title ?? "").includes(kicker)) {
@@ -425,9 +469,23 @@ async function finalizeContinuations(
         .update({ title: `${kicker} — ${match.title}` }).eq("id", match.id);
       console.log(`[edition] stitched front-page kicker "${kicker}" → full story`);
     }
-    await supabase.from("articles").delete().eq("id", a.id);
+    // Marked, not deleted. A hard DELETE here made a bad match unrecoverable
+    // AND invisible — the only trace was a shrinking article count. "absorbed"
+    // is filtered out of the app the same way (it fetches processing_status
+    // =ready), but the row survives for audit and can be restored.
+    await supabase.from("articles").update({
+      processing_status: "absorbed",
+      position_json: {
+        ...(a.position_json ?? {}),
+        absorbed_into: match.id,
+        absorbed_ratio: Number(bestRatio.toFixed(2)),
+      },
+    }).eq("id", a.id);
+    console.log(`[edition] absorbed teaser "${(a.title ?? "").slice(0, 24)}" → ${match.id} (${bestRatio.toFixed(2)})`);
   }
 
+  // Continuation rows already merged into another article this pass.
+  const consumed = new Set<string>();
   for (const a of arts) {
     const body: string = a.full_content ?? "";
     const m = body.match(CONT_TO);
@@ -435,9 +493,17 @@ async function finalizeContinuations(
     const targetPage = parseInt(m.groups?.page1 ?? m.groups?.page2 ?? "", 10);
     if (Number.isNaN(targetPage)) continue;
 
-    // candidate continuations: articles on the target page
+    // A continuation belongs to exactly ONE story, but `arts` is a snapshot
+    // taken before any merging — so a candidate already merged into (and
+    // deleted for) an earlier article was still visible here and got merged a
+    // second time. Real case: the lead's "➤7వ పేజీలో" and a teaser box reading
+    // "…గెలుపు > 7" both resolved to the same page-7 article, and the identical
+    // continuation text ended up inside both. Skip anything already consumed,
+    // and don't treat an already-consumed article as a source either.
+    if (consumed.has(a.id)) continue;
     const cands = arts.filter((x: typeof a) =>
-      x.page_number === targetPage && x.id !== a.id && x.full_content);
+      x.page_number === targetPage && x.id !== a.id && x.full_content &&
+      !consumed.has(x.id));
     let best: typeof a | null = null;
     let bestScore = 0;
     for (const c of cands) {
@@ -484,6 +550,8 @@ async function finalizeContinuations(
       await supabase.from("articles")
         .update({ full_content: merged, content_preview: merged.slice(0, 200) })
         .eq("id", a.id);
+      consumed.add(best.id);
+      a.full_content = merged;
       await supabase.from("articles").delete().eq("id", best.id);
       console.log(`[edition] merged continuation p→${targetPage}: "${(a.title as string).slice(0, 24)}"`);
     } else if (head !== body) {
@@ -493,6 +561,53 @@ async function finalizeContinuations(
         .eq("id", a.id);
     }
   }
+}
+
+// Review status is decided at insert time, but finalizeContinuations rewrites
+// bodies afterwards — merging in the continuation half and stripping the
+// "continued on page N" marker. An article held back as `ends_mid_sentence`
+// purely because of that marker is complete once merged, yet nothing ever
+// recomputed its status, so it stayed invisible (the app fetches
+// processing_status=ready only). Front pages carry the most continued stories,
+// which is how page 1 of an edition could end up with every article withheld.
+async function recomputeReviewStatus(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  newspaperId: string,
+): Promise<void> {
+  if (!newspaperId) return;
+  const { data: arts } = await supabase.from("articles")
+    .select("id,title,full_content,processing_status,position_json")
+    .eq("newspaper_id", newspaperId)
+    // "absorbed" is a terminal decision from the teaser pass — recomputing it
+    // from review flags would hand the blurb a ready/review status again and
+    // put the duplicate straight back in front of the reader.
+    .neq("processing_status", "absorbed");
+  if (!arts) return;
+
+  let promoted = 0;
+  for (const a of arts) {
+    const prior: string[] = a.position_json?.review_flags ?? [];
+    // Keep the process-level flags as recorded; re-derive the text-level ones
+    // from the body as it stands now, post-stitching.
+    const kept = prior.filter(
+      (f) => !TEXT_DERIVED_FLAGS.some((t) => f.startsWith(t)));
+    const flags = [
+      ...kept,
+      ...validateArticle({ title: a.title ?? "", content: a.full_content ?? "" }),
+    ];
+    const hold = needsReview(flags);
+    if (!hold && a.processing_status === "review") promoted++;
+    await supabase.from("articles").update({
+      processing_status: hold ? "review" : "ready",
+      quality_score: hold ? 0.7 : 0.95,
+      position_json: {
+        ...(a.position_json ?? {}),
+        review_flags: flags.length ? flags : undefined,
+      },
+    }).eq("id", a.id);
+  }
+  console.log(`[edition] review recompute: ${promoted} of ${arts.length} promoted to ready`);
 }
 
 function fireContinuation(jobId: string, page: number, geminiKey: string): void {
