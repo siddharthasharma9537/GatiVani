@@ -86,7 +86,10 @@ async function ocrPageToHtml(pageBytes: Uint8Array, sarvamKey: string): Promise<
 
   await sarvamPost(`/doc-digitization/job/v1/${job.job_id}/start`, sarvamKey, {});
   let state = "";
-  for (let i = 0; i < 18; i++) {
+  // 90s was too tight: pages 11 and 12 of a real edition both died on
+  // "OCR job timed out" while Sarvam was merely slow, and a failed page is
+  // dropped from the edition permanently. 150s costs nothing when OCR is fast.
+  for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 5000));
     const st = await fetch(`${SARVAM_BASE}/doc-digitization/job/v1/${job.job_id}/status`, {
       headers: { "api-subscription-key": sarvamKey },
@@ -262,7 +265,16 @@ async function processPage(
     single.addPage(pg);
     const pageBytes = await single.save();
 
-    const html = await ocrPageToHtml(new Uint8Array(pageBytes), SARVAM);
+    // One retry. A page that fails here is recorded in failed_pages and never
+    // revisited, so a single transient Sarvam hiccup silently costs the edition
+    // an entire page — a worse outcome than any extraction error we chase.
+    let html: string;
+    try {
+      html = await ocrPageToHtml(new Uint8Array(pageBytes), SARVAM);
+    } catch (e) {
+      console.warn(`[edition] page ${page} OCR failed (${(e as Error).message}); retrying once`);
+      html = await ocrPageToHtml(new Uint8Array(pageBytes), SARVAM);
+    }
     const result = await extractArticlesStructured(
       html, new Uint8Array(pageBytes), "application/pdf", GEMINI);
 
@@ -377,13 +389,35 @@ function squashSpaces(s: string): string {
     .trim();
 }
 
+// Longest common subsequence length, for comparing two OCR renderings of the
+// same printed headline. Titles are short, so the O(n*m) table is cheap.
+function lcsLen(a: string, b: string): number {
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = a[i - 1] === b[j - 1]
+        ? prev[j - 1] + 1
+        : Math.max(prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
 function titleOverlapMatch(t1: string, t2: string): boolean {
   const n1 = (t1 ?? "").trim().replace(/\s+/g, " ");
   const n2 = (t2 ?? "").trim().replace(/\s+/g, " ");
   if (!n1 || !n2) return false;
   const [shorter, longer] = n1.length <= n2.length ? [n1, n2] : [n2, n1];
   if (shorter.length < 10) return false;
-  return longer.includes(shorter);
+  if (longer.includes(shorter)) return true;
+  // Exact containment also breaks on OCR variance. This paper's second front-page
+  // lead was read as "ఒడిసిపడ్డరా.. ఇడిసిపెద్దరా?" on page 1 and
+  // "ఒడిసిపడ్డా.. ఇడిసిపెడ్డారా?" on its page-8 continuation — the same printed
+  // headline a few characters apart — so `includes` failed, the score stayed at
+  // 0, and the two halves were never joined. Fall back to character similarity.
+  return lcsLen(shorter, longer) / shorter.length >= 0.8;
 }
 
 // Fallback for when neither the CONT_FROM header nor titleOverlapMatch

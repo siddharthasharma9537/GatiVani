@@ -553,8 +553,12 @@ function stitch(parts: string[], breaks?: Set<number>): string[] {
 // of one sentence ("…ఈ సుదీర్ఘ ఆందోళన ప్రభుత్వం" / "మధ్య మూడవ విడత చర్చలు…")
 // came out in reverse order, which both truncated the article and tripped
 // ends_mid_sentence into hiding it.
+// A dateline can carry SEVERAL places before the date — a story filed from two
+// districts runs "వరంగల్, మహబూబాబాద్, జూలై 25 (నమస్తే తెలంగాణ ప్రతినిధి):".
+// Allowing only one place missed exactly that, so the template never fired on
+// the front page's second lead and it kept opening with its side box.
 const DATELINE_START =
-  /^\s*(?:\([^)]{0,40}\)\s*)?[ఀ-౿]{2,20}\s*,\s*[ఀ-౿]{2,12}\s*\d{1,2}\s*(?:\([^)]{0,40}\))?\s*:/;
+  /^\s*(?:\([^)]{0,40}\)\s*)?[ఀ-౿]{2,20}(?:\s*,\s*[ఀ-౿]{2,20}){0,3}\s*,\s*[ఀ-౿]{2,12}\s*\d{1,2}\s*(?:\([^)]{0,40}\))?\s*:/;
 const CONT_FROM_ANCHOR = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
 const CONT_TO_TAIL =
   /(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*\d{1,2}\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)|>\s*\d{1,2}\s*(?:వ\s*పేజీలో)?/;
