@@ -540,6 +540,48 @@ function stitch(parts: string[], breaks?: Set<number>): string[] {
   return out;
 }
 
+// ── Printed article template ─────────────────────────────────────────────────
+// A long newspaper article has a fixed printed shape: the headline, then a deck
+// of three or four subheadings, then the body opening with a city+date dateline
+// ("న్యూఢిల్లీ, జూలై 25:"), and — when the story runs on — a "continued on page
+// N" marker as the very last thing in the column. The half that resumes on the
+// inside page opens with its mirror, "మొదటిపేజీ తరువాయి".
+//
+// Those anchors are printed facts, so they beat the model's fragment ordering.
+// Applying them after the coherence passes is what stops a body starting
+// mid-story or ending on half a sentence: on the 2026-07-26 lead the two halves
+// of one sentence ("…ఈ సుదీర్ఘ ఆందోళన ప్రభుత్వం" / "మధ్య మూడవ విడత చర్చలు…")
+// came out in reverse order, which both truncated the article and tripped
+// ends_mid_sentence into hiding it.
+const DATELINE_START =
+  /^\s*(?:\([^)]{0,40}\)\s*)?[ఀ-౿]{2,20}\s*,\s*[ఀ-౿]{2,12}\s*\d{1,2}\s*(?:\([^)]{0,40}\))?\s*:/;
+const CONT_FROM_ANCHOR = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
+const CONT_TO_TAIL =
+  /(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*\d{1,2}\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)|>\s*\d{1,2}\s*(?:వ\s*పేజీలో)?/;
+
+function applyArticleTemplate(d: Draft): boolean {
+  if (d.blocks.length < 2) return false;
+  let changed = false;
+
+  // Opening anchor: the dateline, or — on the inside-page half of a split
+  // story — the "continued from page 1" header.
+  let lead = d.blocks.findIndex((b) => CONT_FROM_ANCHOR.test(b.text));
+  if (lead < 0) lead = d.blocks.findIndex((b) => DATELINE_START.test(b.text));
+  if (lead > 0) {
+    d.blocks.unshift(d.blocks.splice(lead, 1)[0]);
+    changed = true;
+  }
+
+  // Closing anchor: the "continues on page N" marker ends the printed column,
+  // so anything sorted after it is out of place.
+  const tail = d.blocks.findIndex((b) => CONT_TO_TAIL.test(b.text));
+  if (tail >= 0 && tail !== d.blocks.length - 1) {
+    d.blocks.push(d.blocks.splice(tail, 1)[0]);
+    changed = true;
+  }
+  return changed;
+}
+
 // ── [D] Validate ──────────────────────────────────────────────────────────────
 
 // Leading dateline / byline — publication + city, journalistic metadata, not
@@ -584,7 +626,12 @@ export const TEXT_DERIVED_FLAGS = [
 //                  not block, because the alternative is shipping the article
 //                  with a wrong headline or none at all, and the body remains
 //                  OCR ground truth either way.
-const NON_BLOCKING_FLAGS = ["reordered", "low_coverage", "headline_from_image"];
+//   template_reordered — fragments were snapped to the printed article shape
+//                  (dateline opens the body, continuation marker closes it).
+//                  Like `reordered`, a repair rather than a defect.
+const NON_BLOCKING_FLAGS = [
+  "reordered", "low_coverage", "headline_from_image", "template_reordered",
+];
 
 export function needsReview(flags: string[]): boolean {
   return flags.some((f) => !NON_BLOCKING_FLAGS.some((n) => f.startsWith(n)));
@@ -931,6 +978,19 @@ export async function extractArticlesStructured(
       try { await visionPass(drafts, fileBuffer, mimeType, geminiKey); }
       catch (e) { console.warn("[structure] L3 vision failed:", (e as Error).message); }
     }
+  }
+
+  // Last word on ordering goes to the printed template, not to any model pass:
+  // the dateline opens the body and the "continued on page N" marker closes it.
+  let templated = 0;
+  for (const d of drafts) {
+    if (!applyArticleTemplate(d)) continue;
+    d.breaks = undefined; // positions no longer line up with the fragments
+    d.review.push("template_reordered");
+    templated++;
+  }
+  if (templated) {
+    console.log(`[structure] ${templated} article(s) reordered to the printed template`);
   }
 
   const articles: StructuredArticle[] = [];
