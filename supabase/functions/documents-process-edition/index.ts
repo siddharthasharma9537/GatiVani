@@ -342,8 +342,10 @@ async function processPage(
     // All pages done — stitch cross-page article continuations, re-judge which
     // articles are still worth withholding now that bodies are final, then
     // clean up.
-    await finalizeContinuations(supabase, job.newspaper_id, geminiKey);
+    const placements: Placement[] = [];
+    await finalizeContinuations(supabase, job.newspaper_id, geminiKey, placements);
     await recomputeReviewStatus(supabase, job.newspaper_id);
+    await rebuildPlacements(supabase, job.newspaper_id, placements);
     await supabase.storage.from("uploads").remove([sourcePath])
       .then(() => {}, () => {});
     console.log(`[edition] job ${jobId} completed; source ${sourcePath} deleted`);
@@ -494,9 +496,18 @@ function teaserContainment(short: string, long: string): number {
   return total ? hit / total : 0;
 }
 
+// One printed appearance of an article: the page it showed up on, and the
+// headline as printed THERE. See the article_placements migration.
+interface Placement {
+  page_number: number;
+  headline: string;
+  article_id: string;
+  kind: "primary" | "teaser" | "continuation";
+}
+
 // deno-lint-ignore no-explicit-any
 async function finalizeContinuations(
-  supabase: any, newspaperId: string, geminiKey: string,
+  supabase: any, newspaperId: string, geminiKey: string, extra: Placement[],
 ): Promise<void> {
   if (!newspaperId) return;
   const { data: arts } = await supabase.from("articles")
@@ -505,12 +516,21 @@ async function finalizeContinuations(
     .order("page_number");
   if (!arts || arts.length < 2) return;
 
-  // ── Front-page teaser → stitch its headline onto the full story ───────────
+  // ── Front-page teaser → a placement pointing at the full story ────────────
   // Front pages carry short promo blurbs ("…full story on page 8") whose text is
-  // echoed by the full article elsewhere. Rather than drop them, prepend the
-  // teaser's headline (the front-page kicker) to the full article's headline so
-  // the listener knows this was the front-page lead — then remove the blurb.
-  type Art = { id: string; title: string; full_content: string; position_json?: Record<string, unknown> };
+  // echoed by the full article elsewhere. The blurb is not a second article, but
+  // it IS a real front-page appearance, so it becomes a placement: the teaser's
+  // own printed headline, on the teaser's page, resolving to the one stored body.
+  //
+  // This replaces the old kicker-stitch, which prepended the teaser's headline
+  // to the full article's title. That produced titles fusing two unrelated
+  // stories ("12 వేల కోట్ల నిధుల సేకరణలో ఎన్టీపీసీ — సర్కార్ డర్ గయా") and lost
+  // the teaser's placement anyway. Keeping the headline on the placement is both
+  // truer to the page and non-destructive.
+  type Art = {
+    id: string; title: string; full_content: string; page_number: number;
+    position_json?: Record<string, unknown>;
+  };
   const longs = (arts as Art[]).filter((x) => (x.full_content?.length ?? 0) > 500);
   for (const a of arts as Art[]) {
     const body = a.full_content ?? "";
@@ -529,11 +549,13 @@ async function finalizeContinuations(
     }
     if (!match || bestRatio < TEASER_CONTAINMENT) continue;
     const kicker = (a.title ?? "").trim();
-    // Only stitch a clean, short kicker; otherwise just drop the blurb.
-    if (kicker && kicker.length <= 36 && !(match.title ?? "").includes(kicker)) {
-      await supabase.from("articles")
-        .update({ title: `${kicker} — ${match.title}` }).eq("id", match.id);
-      console.log(`[edition] stitched front-page kicker "${kicker}" → full story`);
+    if (kicker) {
+      extra.push({
+        page_number: a.page_number,
+        headline: kicker,
+        article_id: match.id,
+        kind: "teaser",
+      });
     }
     // Marked, not deleted. A hard DELETE here made a bad match unrecoverable
     // AND invisible — the only trace was a shrinking article count. "absorbed"
@@ -634,6 +656,18 @@ async function finalizeContinuations(
         .eq("id", c.a.id);
       consumed.add(c.best.id);
       c.a.full_content = merged;
+      // The far page printed this story too, under its own headline. Record
+      // that appearance before the row goes away, so page N keeps listing it
+      // instead of silently losing a story it actually carried.
+      const contHeadline = ((c.best.title as string) ?? "").trim();
+      if (contHeadline) {
+        extra.push({
+          page_number: c.best.page_number as number,
+          headline: contHeadline,
+          article_id: c.a.id as string,
+          kind: "continuation",
+        });
+      }
       await supabase.from("articles").delete().eq("id", c.best.id);
       console.log(`[edition] merged continuation p→${c.targetPage}: "${(c.a.title as string).slice(0, 24)}" (score ${c.score})`);
     } else if (c.head !== c.body) {
@@ -691,6 +725,61 @@ async function recomputeReviewStatus(
     }).eq("id", a.id);
   }
   console.log(`[edition] review recompute: ${promoted} of ${arts.length} promoted to ready`);
+}
+
+// Rebuild every printed appearance for the edition. Runs last, after merging
+// and status recomputation have settled, and replaces the edition's placements
+// wholesale so a re-run is idempotent rather than additive.
+//
+// A "primary" is written for each servable article at the page its body lives
+// on; `extra` carries the teaser and continuation appearances collected during
+// finalizeContinuations, whose own rows are gone or absorbed by now. Nothing
+// here copies body text — a placement is a headline and a pointer.
+async function rebuildPlacements(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  newspaperId: string,
+  extra: Placement[],
+): Promise<void> {
+  if (!newspaperId) return;
+  const { data: arts } = await supabase.from("articles")
+    .select("id,title,page_number")
+    .eq("newspaper_id", newspaperId)
+    .eq("processing_status", "ready");
+  if (!arts) return;
+
+  const live = new Set((arts as Array<{ id: string }>).map((a) => a.id));
+  const rows: Array<Placement & { newspaper_id: string }> = [];
+  const seen = new Set<string>();
+  const add = (p: Placement) => {
+    // The unique index is (article_id, page_number, kind); de-dupe here too so
+    // a repeated teaser doesn't fail the whole insert.
+    const key = `${p.article_id}|${p.page_number}|${p.kind}`;
+    if (seen.has(key) || !p.headline?.trim()) return;
+    seen.add(key);
+    rows.push({ ...p, newspaper_id: newspaperId });
+  };
+
+  for (const a of arts as Array<{ id: string; title: string; page_number: number }>) {
+    add({
+      page_number: a.page_number,
+      headline: (a.title ?? "").trim(),
+      article_id: a.id,
+      kind: "primary",
+    });
+  }
+  // Drop any appearance whose target didn't survive as servable.
+  for (const p of extra) if (live.has(p.article_id)) add(p);
+
+  await supabase.from("article_placements").delete().eq("newspaper_id", newspaperId);
+  if (!rows.length) return;
+  const { error } = await supabase.from("article_placements").insert(rows);
+  if (error) {
+    console.warn(`[edition] placements insert failed: ${error.message}`);
+    return;
+  }
+  const secondary = rows.filter((r) => r.kind !== "primary").length;
+  console.log(`[edition] placements: ${rows.length} (${secondary} teaser/continuation)`);
 }
 
 function fireContinuation(jobId: string, page: number, geminiKey: string): void {
