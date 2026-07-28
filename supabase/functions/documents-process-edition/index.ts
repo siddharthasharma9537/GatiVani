@@ -127,12 +127,27 @@ async function ocrPageToHtml(pageBytes: Uint8Array, sarvamKey: string): Promise<
 }
 
 // "Eenadu_TELANGANA_20260512.pdf" → "2026-05-12"
+// Also the separated forms real uploads actually use: "NT-2026-07-26.pdf" and
+// "NT-24-07-2026.pdf". The digits-only pattern matched neither, so both fell
+// through to model date detection unnecessarily.
 function parseDateFromFilename(name: string): string {
-  const m = name.match(/(20\d{2})(\d{2})(\d{2})/);
-  if (!m) return "";
-  const [, y, mo, d] = m;
-  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31) return "";
-  return `${y}-${mo}-${d}`;
+  const ok = (y: string, mo: string, d: string) =>
+    +mo >= 1 && +mo <= 12 && +d >= 1 && +d <= 31
+      ? `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`
+      : "";
+  // YYYY?MM?DD
+  let m = name.match(/(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})/);
+  if (m) {
+    const r = ok(m[1], m[2], m[3]);
+    if (r) return r;
+  }
+  // DD?MM?YYYY
+  m = name.match(/(\d{1,2})[-_.](\d{1,2})[-_.](20\d{2})/);
+  if (m) {
+    const r = ok(m[3], m[2], m[1]);
+    if (r) return r;
+  }
+  return "";
 }
 
 // Indian newspapers print by IST calendar day, but the edge runtime's wall
@@ -159,13 +174,12 @@ function bytesToBase64(bytes: Uint8Array): string {
 async function detectPrintedDate(pageBytes: Uint8Array, geminiKey: string): Promise<string> {
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`;
-    // The masthead date is small print at the top of a broadsheet, which is
-    // exactly what a flat full-page render loses. Send the banded version so
-    // the top strip arrives at band magnification.
-    const detail = await detailPdf(pageBytes).catch(() => pageBytes);
-    const prompt = 'The first PDF page is a whole newspaper page; the rest are ' +
-      'overlapping horizontal bands of that same page, top to bottom. ' +
-      'If a publication/issue date is printed on it ' +
+    // Deliberately the FLAT page, not the banded one. Banding helps every other
+    // vision call, but here it destabilised the read: a page printed 26.7.2026
+    // came back as 2023-07-26, which forked a duplicate edition under the wrong
+    // date. The flat page had returned the correct date on every prior run, and
+    // this call only needs one number.
+    const prompt = 'If a publication/issue date is printed on this newspaper page ' +
       '(masthead or dateline), return it as YYYY-MM-DD. Otherwise return "". ' +
       'Return ONLY JSON: {"publicationDate":""}';
     const resp = await fetch(url, {
@@ -175,7 +189,7 @@ async function detectPrintedDate(pageBytes: Uint8Array, geminiKey: string): Prom
         contents: [{
           role: "user",
           parts: [
-            { inline_data: { mime_type: "application/pdf", data: bytesToBase64(detail) } },
+            { inline_data: { mime_type: "application/pdf", data: bytesToBase64(pageBytes) } },
             { text: prompt },
           ],
         }],
@@ -757,11 +771,19 @@ async function runStart(
 
     // Ground the edition's date in what's actually printed on page 1, so a
     // fresh scan of yesterday's paper doesn't get mislabeled/merged as today.
-    const single = await PDFDocument.create();
-    const [pg] = await single.copyPages(pdf, [0]);
-    single.addPage(pg);
-    const printedDate = await detectPrintedDate(await single.save(), userGeminiKey);
-    const pubDate = printedDate || parseDateFromFilename(originalName) || todayIST();
+    // A date in the filename is deterministic; printed-date detection is a model
+    // read that can misfire, and when it does it forks a duplicate edition under
+    // the wrong date rather than replacing the right one. So trust the filename
+    // when it carries a date, and keep detection for the case it was added for:
+    // camera photos whose names carry nothing.
+    let pubDate = parseDateFromFilename(originalName);
+    if (!pubDate) {
+      const single = await PDFDocument.create();
+      const [pg] = await single.copyPages(pdf, [0]);
+      single.addPage(pg);
+      pubDate = await detectPrintedDate(await single.save(), userGeminiKey);
+    }
+    pubDate = pubDate || todayIST();
     const title = originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 
     let newspaperId: string;
