@@ -491,8 +491,21 @@ async function finalizeContinuations(
     console.log(`[edition] absorbed teaser "${(a.title ?? "").slice(0, 24)}" → ${match.id} (${bestRatio.toFixed(2)})`);
   }
 
-  // Continuation rows already merged into another article this pass.
-  const consumed = new Set<string>();
+  // A continuation belongs to exactly ONE story, and several articles can point
+  // at the same target page — a lead's "➤7వ పేజీలో" and a teaser box reading
+  // "…గెలుపు > 7" both resolve to page 7. Claiming it inside the loop meant
+  // whichever article came first in `arts` won, regardless of how well it
+  // matched: on the front page the 120-char teaser took the continuation and
+  // the real lead story got none. So resolve in two passes — score every claim
+  // first, then award each continuation to its strongest claimant.
+  //
+  // Scores are coarse (0 / 2 / 4), so ties are common; the longer source wins
+  // them, since a full lead story is a likelier parent than a promo box.
+  type Claim = {
+    // deno-lint-ignore no-explicit-any
+    a: any; best: any | null; score: number; head: string; body: string; targetPage: number;
+  };
+  const claims: Claim[] = [];
   for (const a of arts) {
     const body: string = a.full_content ?? "";
     const m = body.match(CONT_TO);
@@ -500,26 +513,15 @@ async function finalizeContinuations(
     const targetPage = parseInt(m.groups?.page1 ?? m.groups?.page2 ?? "", 10);
     if (Number.isNaN(targetPage)) continue;
 
-    // A continuation belongs to exactly ONE story, but `arts` is a snapshot
-    // taken before any merging — so a candidate already merged into (and
-    // deleted for) an earlier article was still visible here and got merged a
-    // second time. Real case: the lead's "➤7వ పేజీలో" and a teaser box reading
-    // "…గెలుపు > 7" both resolved to the same page-7 article, and the identical
-    // continuation text ended up inside both. Skip anything already consumed,
-    // and don't treat an already-consumed article as a source either.
-    if (consumed.has(a.id)) continue;
     const cands = arts.filter((x: typeof a) =>
-      x.page_number === targetPage && x.id !== a.id && x.full_content &&
-      !consumed.has(x.id));
+      x.page_number === targetPage && x.id !== a.id && x.full_content);
     let best: typeof a | null = null;
     let bestScore = 0;
     for (const c of cands) {
       const head = (c.full_content as string).slice(0, 90);
       let score = 0;
       if (CONT_FROM.test(head)) score += 2;
-      if (titleOverlapMatch(a.title as string, c.title as string)) {
-        score += 2;
-      }
+      if (titleOverlapMatch(a.title as string, c.title as string)) score += 2;
       if (score > bestScore) { bestScore = score; best = c; }
     }
 
@@ -546,26 +548,36 @@ async function finalizeContinuations(
 
     // Strip the dangling "continued to" marker from this article regardless.
     const head = body.replace(CONT_TO, " ").replace(/\s{2,}/g, " ").trim();
+    claims.push({ a, best, score: bestScore, head, body, targetPage });
+  }
 
-    if (best && bestScore >= 2) {
-      const contBody = (best.full_content as string)
+  claims.sort((x, y) =>
+    y.score - x.score || (y.body?.length ?? 0) - (x.body?.length ?? 0));
+
+  const consumed = new Set<string>();
+  for (const c of claims) {
+    // This source was itself absorbed as someone else's continuation.
+    if (consumed.has(c.a.id)) continue;
+    if (c.best && c.score >= 2 && !consumed.has(c.best.id)) {
+      const contBody = (c.best.full_content as string)
         .replace(CONT_FROM, " ")
         .replace(/^[\s\S]{0,40}?తరువాయి[^)]*\)?/, " ") // drop leading header line
         .replace(/\s{2,}/g, " ")
         .trim();
-      const merged = `${head} ${contBody}`.trim();
+      const merged = `${c.head} ${contBody}`.trim();
       await supabase.from("articles")
         .update({ full_content: merged, content_preview: merged.slice(0, 200) })
-        .eq("id", a.id);
-      consumed.add(best.id);
-      a.full_content = merged;
-      await supabase.from("articles").delete().eq("id", best.id);
-      console.log(`[edition] merged continuation p→${targetPage}: "${(a.title as string).slice(0, 24)}"`);
-    } else if (head !== body) {
-      // No confident match — at least don't read the marker aloud.
+        .eq("id", c.a.id);
+      consumed.add(c.best.id);
+      c.a.full_content = merged;
+      await supabase.from("articles").delete().eq("id", c.best.id);
+      console.log(`[edition] merged continuation p→${c.targetPage}: "${(c.a.title as string).slice(0, 24)}" (score ${c.score})`);
+    } else if (c.head !== c.body) {
+      // Lost the claim, or no confident match — at least don't read the
+      // dangling "continued on page N" marker aloud.
       await supabase.from("articles")
-        .update({ full_content: head, content_preview: head.slice(0, 200) })
-        .eq("id", a.id);
+        .update({ full_content: c.head, content_preview: c.head.slice(0, 200) })
+        .eq("id", c.a.id);
     }
   }
 }

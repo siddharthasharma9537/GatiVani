@@ -116,6 +116,8 @@ interface Assignment {
     article_id: string;
     category?: string;       // one of CATEGORIES — an enum label, not free text
     blocks: AssignedBlock[];
+    // The ONLY free Telugu the model may emit — see headlineIsNovel.
+    headline_text?: string;
   }>;
   drop?: Array<{ id: number; reason: string }>;
   uncertain?: Array<{ id: number; candidates?: string[]; reason?: string }>;
@@ -304,8 +306,21 @@ when nothing else fits.)
   often on or beside the editorial page) expressing a viewpoint rather than
   reporting news. Letters to the editor are also Opinion.
 
+One exception to "output ids, never Telugu" — "headline_text":
+- Big display headlines are the thing OCR most often misses entirely: huge
+  decorative type, frequently reversed out of a coloured block. If an article's
+  MAIN printed headline is clearly visible in the page image but no manifest
+  block contains it, transcribe it into "headline_text" EXACTLY as printed.
+- Omit the field whenever the headline IS in the manifest. Never re-type a
+  headline that already has a block, never invent one, never put body text or a
+  summary there. If you are not certain of every character, omit it.
+- A headline block may be present and still be the SMALLER secondary banner
+  while the main headline above it was missed — that is exactly the case this
+  field is for.
+
 Return ONLY this JSON:
-{"articles":[{"article_id":"a1","category":"Agriculture","blocks":[{"id":5,"role":"headline"},
+{"articles":[{"article_id":"a1","category":"Agriculture","headline_text":null,
+ "blocks":[{"id":5,"role":"headline"},
  {"id":7,"role":"body","seq":1},{"id":9,"role":"body","seq":2,"continues_block":7}]}],
  "drop":[{"id":3,"reason":"masthead"}],
  "uncertain":[{"id":41,"candidates":["a4","a5"],"reason":"…"}]}
@@ -554,7 +569,13 @@ export const TEXT_DERIVED_FLAGS = [
 //                  characters, not that THIS article is bad. See the coverage
 //                  block in extractArticlesStructured; severe_coverage_loss is
 //                  deliberately absent from this list and still blocks.
-const NON_BLOCKING_FLAGS = ["reordered", "low_coverage"];
+//   headline_from_image — the headline was transcribed from the page image
+//                  because OCR never produced it. This is model-written text
+//                  reaching readers, so it is deliberately recorded; it does
+//                  not block, because the alternative is shipping the article
+//                  with a wrong headline or none at all, and the body remains
+//                  OCR ground truth either way.
+const NON_BLOCKING_FLAGS = ["reordered", "low_coverage", "headline_from_image"];
 
 export function needsReview(flags: string[]): boolean {
   return flags.some((f) => !NON_BLOCKING_FLAGS.some((n) => f.startsWith(n)));
@@ -594,6 +615,27 @@ interface Draft {
   // when Layer 2 didn't run/answer for this article — stitch() then falls
   // back to the regex heuristic.
   breaks?: Set<number>;
+}
+
+// Gate on the one place the assignment step is allowed to emit Telugu.
+//
+// The index-only contract is what makes the BODY trustworthy: the model cannot
+// hallucinate text it never had. But it also means a headline OCR missed can
+// never enter the article — on the 2026-07-26 front page the printed headline
+// was "జెన్-జీత్ గయా", Sarvam never emitted it as a block, and the article
+// silently inherited the smaller pink sub-banner ("సర్కార్ డర్ గయా") instead.
+// Sending the page at band resolution let the model READ the headline
+// correctly; it had nowhere to put it.
+//
+// So the hole is deliberately headline-shaped: bodies stay index-only, and a
+// transcription is accepted only when no manifest block already contains it —
+// meaning it can add a headline OCR missed, but can never overwrite or restate
+// one OCR captured.
+function headlineIsNovel(candidate: string, blocks: Block[]): boolean {
+  const squash = (s: string) => s.replace(/\s+/g, "");
+  const c = squash(candidate);
+  if (c.length < 4 || c.length > 160) return false;
+  return !blocks.some((b) => squash(b.text).includes(c));
 }
 
 function frag(text: string, head = 60, tail = 30): string {
@@ -810,6 +852,7 @@ export async function extractArticlesStructured(
   const drafts: Draft[] = [];
   let missingSeq = 0;
   let bodyTotal = 0;
+  let imageHeadlines = 0;
   for (const art of assignment.articles ?? []) {
     let title = "";
     const subs: string[] = [];
@@ -842,10 +885,28 @@ export async function extractArticlesStructured(
     const category = (CATEGORIES as readonly string[]).includes(art.category ?? "")
       ? art.category!
       : "";
+
+    // Headline the model read off the page that OCR never produced. Accepted
+    // only if no block already contains it, so it can fill a missing headline
+    // or supersede a smaller banner OCR mistook for the main one — but can
+    // never overwrite a headline OCR actually captured.
+    const review: string[] = [];
+    const fromImage = (art.headline_text ?? "").trim();
+    if (fromImage && headlineIsNovel(fromImage, blocks)) {
+      // Keep whatever OCR did find; it is usually the real secondary banner.
+      if (title) subs.unshift(title);
+      title = fromImage;
+      review.push("headline_from_image");
+      imageHeadlines++;
+    }
+
     drafts.push({
-      title, subs, caps, category, review: [],
+      title, subs, caps, category, review,
       blocks: bodyEntries.map((e) => ({ id: e[3], text: e[4] })),
     });
+  }
+  if (imageHeadlines) {
+    console.log(`[structure] ${imageHeadlines} headline(s) transcribed from the page image`);
   }
   if (bodyTotal) {
     console.log(`[structure] seq missing on ${missingSeq}/${bodyTotal} body blocks` +
