@@ -474,6 +474,13 @@ const CITY_DATE_LEAD =
 // story before the two are treated as the same item.
 const TEASER_CONTAINMENT = 0.6;
 
+// A block shorter than this that carries a "…on page N" pointer is a promo box,
+// not a story that runs on. Containment alone could not tell them apart: it only
+// recognises a teaser whose text DUPLICATES the story's opening, while this
+// paper prints pointer boxes with their own summary text, which score ~0 and so
+// were never detected as teasers at all.
+const TEASER_MAX_CHARS = 600;
+
 // The previous test was: does ONE 18-codepoint window from the short article
 // appear anywhere in the long one. In Telugu 18 codepoints is 2-4 words, and
 // the window at offset 0 is the dateline — so an NTPC funding brief matched a
@@ -582,9 +589,16 @@ async function finalizeContinuations(
   //
   // Scores are coarse (0 / 2 / 4), so ties are common; the longer source wins
   // them, since a full lead story is a likelier parent than a promo box.
+  //
+  // A SHORT block carrying a pointer is a different animal: it is a teaser box,
+  // not a story that runs on. It must never absorb the article it points at —
+  // a 116-char promo swallowing a full page-7 story is how "విజయం" ended up
+  // holding the lead's continuation. Teasers are split out below and become
+  // placements instead.
   type Claim = {
     // deno-lint-ignore no-explicit-any
-    a: any; best: any | null; score: number; head: string; body: string; targetPage: number;
+    a: any; best: any | null; score: number; head: string; body: string;
+    targetPage: number; isTeaser: boolean;
   };
   const claims: Claim[] = [];
   for (const a of arts) {
@@ -593,6 +607,7 @@ async function finalizeContinuations(
     if (!m) continue;
     const targetPage = parseInt(m.groups?.page1 ?? m.groups?.page2 ?? "", 10);
     if (Number.isNaN(targetPage)) continue;
+    const isTeaser = body.length < TEASER_MAX_CHARS;
 
     const cands = arts.filter((x: typeof a) =>
       x.page_number === targetPage && x.id !== a.id && x.full_content);
@@ -632,16 +647,60 @@ async function finalizeContinuations(
     // turned every paragraph break into a space and left any article that got
     // a continuation merged as one unbroken 6000-character blob.
     const head = squashSpaces(body.replace(CONT_TO, " "));
-    claims.push({ a, best, score: bestScore, head, body, targetPage });
+    claims.push({ a, best, score: bestScore, head, body, targetPage, isTeaser });
   }
 
+  // Teasers resolve after the real continuations, so a teaser pointing at a
+  // story that got merged elsewhere can follow it to wherever it ended up.
   claims.sort((x, y) =>
-    y.score - x.score || (y.body?.length ?? 0) - (x.body?.length ?? 0));
+    Number(x.isTeaser) - Number(y.isTeaser) ||
+    y.score - x.score ||
+    (y.body?.length ?? 0) - (x.body?.length ?? 0));
 
   const consumed = new Set<string>();
+  // consumed row -> the article that absorbed it, so a teaser aimed at a merged
+  // continuation still points somewhere real.
+  const absorbedInto = new Map<string, string>();
   for (const c of claims) {
     // This source was itself absorbed as someone else's continuation.
     if (consumed.has(c.a.id)) continue;
+
+    if (c.isTeaser) {
+      // A promo box: keep its headline on the page it was printed on and point
+      // it at the full story, rather than letting it swallow that story.
+      const target = c.best && c.score >= 2
+        ? (absorbedInto.get(c.best.id) ?? c.best.id)
+        : null;
+      const headline = ((c.a.title as string) ?? "").trim();
+      if (target && headline) {
+        extra.push({
+          page_number: c.a.page_number as number,
+          headline,
+          article_id: target,
+          kind: "teaser",
+        });
+        await supabase.from("articles").update({
+          processing_status: "absorbed",
+          position_json: { ...(c.a.position_json ?? {}), teaser_of: target },
+        }).eq("id", c.a.id);
+        console.log(`[edition] teaser "${headline.slice(0, 24)}" p${c.a.page_number} → ${target}`);
+      } else {
+        // Nothing to point at — keep it as its own short item, and mark it so
+        // the article-shaped checks stop withholding it. A teaser box is meant
+        // to be short and to stop at a page pointer.
+        const flags: string[] = [
+          ...((c.a.position_json?.review_flags as string[]) ?? []),
+        ];
+        if (!flags.includes("teaser_box")) flags.push("teaser_box");
+        await supabase.from("articles").update({
+          full_content: c.head,
+          content_preview: c.head.slice(0, 200),
+          position_json: { ...(c.a.position_json ?? {}), review_flags: flags },
+        }).eq("id", c.a.id);
+      }
+      continue;
+    }
+
     if (c.best && c.score >= 2 && !consumed.has(c.best.id)) {
       const contBody = squashSpaces(
         (c.best.full_content as string)
@@ -655,6 +714,7 @@ async function finalizeContinuations(
         .update({ full_content: merged, content_preview: merged.slice(0, 200) })
         .eq("id", c.a.id);
       consumed.add(c.best.id);
+      absorbedInto.set(c.best.id as string, c.a.id as string);
       c.a.full_content = merged;
       // The far page printed this story too, under its own headline. Record
       // that appearance before the row goes away, so page N keeps listing it

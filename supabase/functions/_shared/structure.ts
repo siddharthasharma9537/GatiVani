@@ -633,12 +633,25 @@ export const TEXT_DERIVED_FLAGS = [
 //   template_reordered — fragments were snapped to the printed article shape
 //                  (dateline opens the body, continuation marker closes it).
 //                  Like `reordered`, a repair rather than a defect.
+//   teaser_box   — marks the row as a promo box rather than a story. A label,
+//                  not a defect; see needsReview for what it exempts.
 const NON_BLOCKING_FLAGS = [
   "reordered", "low_coverage", "headline_from_image", "template_reordered",
+  "teaser_box",
 ];
 
+// `teaser_box` marks a front-page promo pointing at a story printed elsewhere.
+// It is SHORT and stops at a page pointer by design, so ends_mid_sentence — a
+// check that assumes a full article — is meaningless for it and was withholding
+// every such box. headline_missing still blocks: a teaser with no headline has
+// nothing to list.
 export function needsReview(flags: string[]): boolean {
-  return flags.some((f) => !NON_BLOCKING_FLAGS.some((n) => f.startsWith(n)));
+  const teaser = flags.includes("teaser_box");
+  return flags.some((f) => {
+    if (NON_BLOCKING_FLAGS.some((n) => f.startsWith(n))) return false;
+    if (teaser && f.startsWith("ends_mid_sentence")) return false;
+    return true;
+  });
 }
 
 export function validateArticle(a: { title: string; content: string }): string[] {
