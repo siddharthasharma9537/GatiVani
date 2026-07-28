@@ -289,6 +289,15 @@ Rules:
   continues another block mid-sentence, add "continues_block": <id>.
 - class hints can be wrong (a headline may be tagged section-title; a news brief may be
   tagged advertisement). Trust the page over the hint.
+- A page often runs a narrow COMMENTARY / opinion column down one edge, beside
+  the lead story and usually about the same event. It is a SEPARATE article, and
+  folding it into the news story beside it is a serious error. Tells: it has no
+  dateline ("న్యూఢిల్లీ, జూలై 25:"); it argues rather than reports, using
+  rhetorical questions, second person, or literary phrasing; it is set in its own
+  narrow column running much of the page height, often in colour or a distinct
+  face. Sharing a topic with the lead is NOT evidence it is the same item — a
+  commentary piece beside a news story is precisely the case that looks related
+  and is not.
 - footnote blocks are photo captions ("caption") attached to the article whose photo
   they describe, or dropped as noise if decorative.
 - If genuinely unsure where a block belongs, put it in "uncertain" with candidate

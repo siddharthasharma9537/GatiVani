@@ -366,6 +366,17 @@ const CONT_FROM = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పే
 // cases. Check whether the shorter (normalized) title appears ANYWHERE in
 // the longer one, with a length floor so short titles can't false-positive
 // on a shared common word.
+// Collapse runs of spaces/tabs WITHOUT touching newlines, so paragraph breaks
+// survive. Body text is stored with "\n\n" between paragraphs and the app reads
+// it back that way; a plain /\s{2,}/ collapse silently destroys that.
+function squashSpaces(s: string): string {
+  return s
+    .replace(/[^\S\n]{2,}/g, " ")
+    .replace(/[^\S\n]*\n[^\S\n]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function titleOverlapMatch(t1: string, t2: string): boolean {
   const n1 = (t1 ?? "").trim().replace(/\s+/g, " ");
   const n2 = (t2 ?? "").trim().replace(/\s+/g, " ");
@@ -561,7 +572,10 @@ async function finalizeContinuations(
     }
 
     // Strip the dangling "continued to" marker from this article regardless.
-    const head = body.replace(CONT_TO, " ").replace(/\s{2,}/g, " ").trim();
+    // squashSpaces, not /\s{2,}/ — \s matches newlines, so the old collapse
+    // turned every paragraph break into a space and left any article that got
+    // a continuation merged as one unbroken 6000-character blob.
+    const head = squashSpaces(body.replace(CONT_TO, " "));
     claims.push({ a, best, score: bestScore, head, body, targetPage });
   }
 
@@ -573,12 +587,14 @@ async function finalizeContinuations(
     // This source was itself absorbed as someone else's continuation.
     if (consumed.has(c.a.id)) continue;
     if (c.best && c.score >= 2 && !consumed.has(c.best.id)) {
-      const contBody = (c.best.full_content as string)
-        .replace(CONT_FROM, " ")
-        .replace(/^[\s\S]{0,40}?తరువాయి[^)]*\)?/, " ") // drop leading header line
-        .replace(/\s{2,}/g, " ")
-        .trim();
-      const merged = `${c.head} ${contBody}`.trim();
+      const contBody = squashSpaces(
+        (c.best.full_content as string)
+          .replace(CONT_FROM, " ")
+          .replace(/^[\s\S]{0,40}?తరువాయి[^)]*\)?/, " "), // drop leading header line
+      );
+      // Paragraph break at the seam: the continuation resumes on another page,
+      // so it is never a mid-paragraph continuation of the last line.
+      const merged = `${c.head}\n\n${contBody}`.trim();
       await supabase.from("articles")
         .update({ full_content: merged, content_preview: merged.slice(0, 200) })
         .eq("id", c.a.id);
