@@ -287,6 +287,24 @@ Rules:
   continue in a different row/column (follow the visual flow).
 - "seq" gives body reading order within the article (1, 2, 3, …). If a block visually
   continues another block mid-sentence, add "continues_block": <id>.
+- "subheading" covers TWO different printed things, and both need a "seq" so they land
+  in the right place: (1) a deck of several short lines right under the main headline,
+  before the body starts, and (2) a bold section header INSIDE a long article's body
+  (e.g. "మార్గదర్శకాలేవీ?"), marking where a new part of the story begins mid-column.
+  The second kind is common in analysis pieces and is easy to lose: the page usually
+  carries several blocks with the SAME "section-title" class hint belonging to several
+  DIFFERENT nearby articles (their own headlines, or another article's section
+  headers) — use the image and the surrounding body text to attribute each one to the
+  right article, don't drop it just because its class hint looks like every other
+  headline on a busy page.
+- A short block reading "- Name, Role/Title" is a QUOTE ATTRIBUTION (byline) for the
+  testimony/pull-quote paragraph it follows — often set in its own tinted or bordered
+  box next to the main columns. The OCR's row/column grouping is NOT reliable for
+  these boxes — it can place a byline in the same structural group as an unrelated
+  headline from a different story lower on the page. Use the IMAGE to see which quote
+  box this byline is actually printed under, assign it to that same article, and give
+  it the seq immediately after that quote's body — never let it attach to a different,
+  merely-nearby-in-the-manifest paragraph.
 - class hints can be wrong (a headline may be tagged section-title; a news brief may be
   tagged advertisement). Trust the page over the hint.
 - A page often runs a narrow COMMENTARY / opinion column down one edge, beside
@@ -524,18 +542,29 @@ function isContinuation(prev: string, next: string): boolean {
 // previous fragment end with punctuation", since TELUGU_START matches
 // almost any Telugu text) only when Layer 2 didn't judge this article —
 // single-block articles, or a failed/skipped coherence call.
-function stitch(parts: string[], breaks?: Set<number>): string[] {
+// `headingAt(i)` marks fragments that must always stand as their own
+// paragraph — a mid-article section header is a break in the narrative by
+// definition, and merging it onto the sentence before or after it (either
+// silently via the regex heuristic, or because Layer 2's `breaks` judgment
+// didn't happen to notice this particular fragment was a header) is what
+// turns "మార్గదర్శకాలేవీ?" from a labeled section start back into an
+// unlabeled clause stuck mid-sentence. This overrides `breaks` rather than
+// just seeding it, since a header is not a judgment call.
+function stitch(parts: string[], breaks?: Set<number>, headingAt?: (i: number) => boolean): string[] {
   const out: string[] = [];
+  let prevWasHeading = false;
   parts.forEach((raw, i) => {
     const t = raw.trim();
     if (!t) return;
-    const shouldMerge = out.length > 0 &&
+    const isHeading = headingAt?.(i) ?? false;
+    const shouldMerge = out.length > 0 && !isHeading && !prevWasHeading &&
       (breaks ? !breaks.has(i) : isContinuation(out[out.length - 1], t));
     if (shouldMerge) {
       out[out.length - 1] = out[out.length - 1].replace(/\s+$/, "") + " " + t;
     } else {
       out.push(t);
     }
+    prevWasHeading = isHeading;
   });
   return out;
 }
@@ -569,10 +598,21 @@ function applyArticleTemplate(d: Draft): boolean {
 
   // Opening anchor: the dateline, or — on the inside-page half of a split
   // story — the "continued from page 1" header.
+  //
+  // Moves to just past any LEADING run of subheading blocks, not to absolute
+  // position 0. A front-page lead prints headline, then a deck of several
+  // subheadings, THEN the dateline-anchored body -- unshifting the dateline
+  // all the way to the front would shove that deck to AFTER it, the wrong way
+  // round, for every article that has both. A subheading elsewhere in the
+  // body (the far more common case -- a mid-article section header) is
+  // unaffected either way, since it isn't part of this leading run.
+  let leadStart = 0;
+  while (leadStart < d.blocks.length && d.blocks[leadStart].kind === "subheading") leadStart++;
+
   let lead = d.blocks.findIndex((b) => CONT_FROM_ANCHOR.test(b.text));
   if (lead < 0) lead = d.blocks.findIndex((b) => DATELINE_START.test(b.text));
-  if (lead > 0) {
-    d.blocks.unshift(d.blocks.splice(lead, 1)[0]);
+  if (lead > leadStart) {
+    d.blocks.splice(leadStart, 0, d.blocks.splice(lead, 1)[0]);
     changed = true;
   }
 
@@ -681,7 +721,13 @@ interface Draft {
   subs: string[];
   caps: string[];
   category: string;
-  blocks: Array<{ id: number; text: string }>;
+  // "subheading" blocks live IN this ordered flow now, not off to the side.
+  // A long article can carry several mid-body section headers (e.g.
+  // "మార్గదర్శకాలేవీ?"), not just a deck cluster before the body starts, and a
+  // header that isn't positioned where it was printed is as good as dropped --
+  // subs (below) still mirrors every one of them for audit, but nothing reads
+  // subs for display, so it was never actually reaching a listener.
+  blocks: Array<{ id: number; text: string; kind: "body" | "subheading" }>;
   review: string[];
   // Positions (in `blocks`' final order) where Layer 2 judged a new paragraph
   // starts; everything else continues the previous fragment's sentence. Unset
@@ -894,11 +940,11 @@ ${lines.join("\n")}`;
       list.push(ins.text.trim());
       after.set(ins.after, list);
     }
-    const out: Array<{ id: number; text: string }> = [];
-    for (const t of after.get(-1) ?? []) out.push({ id: -1, text: t });
+    const out: Draft["blocks"] = [];
+    for (const t of after.get(-1) ?? []) out.push({ id: -1, text: t, kind: "body" });
     d.blocks.forEach((b, j) => {
       out.push(b);
-      for (const t of after.get(j) ?? []) out.push({ id: -1, text: t });
+      for (const t of after.get(j) ?? []) out.push({ id: -1, text: t, kind: "body" });
     });
     d.blocks = out;
     d.breaks = undefined;
@@ -930,18 +976,26 @@ export async function extractArticlesStructured(
     let title = "";
     const subs: string[] = [];
     const caps: string[] = [];
-    // [seq, col, row, id, text] — see the sort below for why col/row are here.
-    const bodyEntries: Array<[number, number, number, number, string]> = [];
+    // [seq, col, row, id, text, kind] — see the sort below for why col/row are
+    // here. "subheading" blocks are mixed in with "body" ones now (both get a
+    // real position in the flow) rather than pulled into a side list — a mid-
+    // article section header only means something at the point it introduces,
+    // and `subs` (below, kept for audit) is never read by anything that
+    // displays or narrates an article, so anything routed only there was
+    // invisible to a reader no matter how well it was captured.
+    const bodyEntries: Array<[number, number, number, number, string, "body" | "subheading"]> = [];
     for (const blk of art.blocks ?? []) {
       const b = byId.get(blk.id);
       if (!b) continue;
       if (blk.role === "headline") title = b.text;
-      else if (blk.role === "subheading") subs.push(b.text);
-      else if (blk.role === "caption") caps.push(b.text);
+      else if (blk.role === "subheading") {
+        subs.push(b.text);
+        bodyEntries.push([blk.seq ?? 1e6, b.col, b.row, blk.id, b.text, "subheading"]);
+      } else if (blk.role === "caption") caps.push(b.text);
       else if (blk.role === "body") {
         if (blk.seq === undefined) missingSeq++;
         bodyTotal++;
-        bodyEntries.push([blk.seq ?? 1e6, b.col, b.row, blk.id, b.text]);
+        bodyEntries.push([blk.seq ?? 1e6, b.col, b.row, blk.id, b.text, "body"]);
       }
       // role "table": excluded from spoken body
     }
@@ -975,7 +1029,7 @@ export async function extractArticlesStructured(
 
     drafts.push({
       title, subs, caps, category, review,
-      blocks: bodyEntries.map((e) => ({ id: e[3], text: e[4] })),
+      blocks: bodyEntries.map((e) => ({ id: e[3], text: e[4], kind: e[5] })),
     });
   }
   if (imageHeadlines) {
@@ -1012,7 +1066,11 @@ export async function extractArticlesStructured(
 
   const articles: StructuredArticle[] = [];
   for (const d of drafts) {
-    const paragraphs = stitch(d.blocks.map((b) => b.text), d.breaks);
+    const paragraphs = stitch(
+      d.blocks.map((b) => b.text),
+      d.breaks,
+      (i) => d.blocks[i]?.kind === "subheading",
+    );
     if (paragraphs.length) paragraphs[0] = stripLeadingDateline(paragraphs[0]);
     const article: StructuredArticle = {
       title: d.title || d.subs[0] || "",
