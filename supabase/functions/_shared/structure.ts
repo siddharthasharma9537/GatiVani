@@ -11,6 +11,82 @@
 //   [C] assemble — deterministic grouping + Telugu mid-sentence fragment stitching.
 //   [D] validate — deterministic checks; failures become review flags, not crashes.
 
+import { PDFDocument } from "npm:pdf-lib@1.17.1";
+
+// ── Page detail for vision calls ─────────────────────────────────────────────
+// Gemini bills a PDF page at a FLAT token cost regardless of its physical size
+// (258 on 2.5, 560 on 3.x) — roughly one 768x768 tile's worth of detail for an
+// entire broadsheet. A Namaste Telangana page is a 2501x3900 300-DPI scan, so
+// body text sits far below what the model can resolve, and even the display
+// headline (జెన్-జీత్ గయా) doesn't survive.
+//
+// Fix: build ONE PDF whose first page is the whole page (global layout) and
+// whose remaining pages are overlapping horizontal bands of that SAME page.
+// The source is embedded once and drawn N+1 times, so the scan's bytes appear
+// exactly once — measured on a real edition, 1637 KB in gives 1759 KB out at
+// 2, 3 or 4 bands alike. That is (N+1)x the vision tokens for ~0 extra payload.
+export const DETAIL_BANDS = 3;
+const BAND_OVERLAP = 0.06; // bands overlap so a headline sitting on a cut survives whole
+
+export async function detailPdf(
+  pageBytes: Uint8Array,
+  bands = DETAIL_BANDS,
+): Promise<Uint8Array> {
+  const src = await PDFDocument.load(pageBytes);
+  const srcPage = src.getPage(0);
+  const { width, height } = srcPage.getSize();
+
+  const doc = await PDFDocument.create();
+  const embedded = await doc.embedPage(srcPage);
+  doc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0, width, height });
+
+  const band = height / bands;
+  const pad = band * BAND_OVERLAP;
+  for (let i = 0; i < bands; i++) {
+    // PDF y-origin is bottom-left, so band 0 must be the TOP of the page.
+    const bottom = Math.max(0, height - (i + 1) * band - pad);
+    const top = Math.min(height, height - i * band + pad);
+    doc.addPage([width, top - bottom])
+      .drawPage(embedded, { x: 0, y: -bottom, width, height });
+  }
+  return await doc.save();
+}
+
+// Without this the model reads the payload as several DIFFERENT pages and
+// reports the same article once per band.
+const DETAIL_NOTE =
+  `The attached PDF is ONE newspaper page. Its first page is the whole page; ` +
+  `the remaining ${DETAIL_BANDS} pages are overlapping horizontal bands of that ` +
+  `SAME page, top to bottom, shown larger so small print is legible. They are ` +
+  `the same content at two magnifications — never treat a band as a separate ` +
+  `page, and never report anything twice because it appears in both.\n\n`;
+
+// Doc parts for a vision call, at band resolution when the source is a PDF.
+// Returns null when there is nothing usable to show the model.
+async function visionParts(
+  fileBuffer: Uint8Array,
+  mimeType: string,
+): Promise<{ parts: unknown[]; note: string } | null> {
+  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
+    fileBuffer.length < 15 * 1024 * 1024;
+  if (!visual) return null;
+  const flat = {
+    parts: [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }],
+    note: "",
+  };
+  if (mimeType !== "application/pdf") return flat;
+  try {
+    const detail = await detailPdf(fileBuffer);
+    return {
+      parts: [{ inline_data: { mime_type: "application/pdf", data: bytesToBase64(detail) } }],
+      note: DETAIL_NOTE,
+    };
+  } catch (e) {
+    console.warn("[structure] band tiling failed, sending flat page:", (e as Error).message);
+    return flat;
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Block {
@@ -40,6 +116,8 @@ interface Assignment {
     article_id: string;
     category?: string;       // one of CATEGORIES — an enum label, not free text
     blocks: AssignedBlock[];
+    // The ONLY free Telugu the model may emit — see headlineIsNovel.
+    headline_text?: string;
   }>;
   drop?: Array<{ id: number; reason: string }>;
   uncertain?: Array<{ id: number; candidates?: string[]; reason?: string }>;
@@ -209,8 +287,35 @@ Rules:
   continue in a different row/column (follow the visual flow).
 - "seq" gives body reading order within the article (1, 2, 3, …). If a block visually
   continues another block mid-sentence, add "continues_block": <id>.
+- "subheading" covers TWO different printed things, and both need a "seq" so they land
+  in the right place: (1) a deck of several short lines right under the main headline,
+  before the body starts, and (2) a bold section header INSIDE a long article's body
+  (e.g. "మార్గదర్శకాలేవీ?"), marking where a new part of the story begins mid-column.
+  The second kind is common in analysis pieces and is easy to lose: the page usually
+  carries several blocks with the SAME "section-title" class hint belonging to several
+  DIFFERENT nearby articles (their own headlines, or another article's section
+  headers) — use the image and the surrounding body text to attribute each one to the
+  right article, don't drop it just because its class hint looks like every other
+  headline on a busy page.
+- A short block reading "- Name, Role/Title" is a QUOTE ATTRIBUTION (byline) for the
+  testimony/pull-quote paragraph it follows — often set in its own tinted or bordered
+  box next to the main columns. The OCR's row/column grouping is NOT reliable for
+  these boxes — it can place a byline in the same structural group as an unrelated
+  headline from a different story lower on the page. Use the IMAGE to see which quote
+  box this byline is actually printed under, assign it to that same article, and give
+  it the seq immediately after that quote's body — never let it attach to a different,
+  merely-nearby-in-the-manifest paragraph.
 - class hints can be wrong (a headline may be tagged section-title; a news brief may be
   tagged advertisement). Trust the page over the hint.
+- A page often runs a narrow COMMENTARY / opinion column down one edge, beside
+  the lead story and usually about the same event. It is a SEPARATE article, and
+  folding it into the news story beside it is a serious error. Tells: it has no
+  dateline ("న్యూఢిల్లీ, జూలై 25:"); it argues rather than reports, using
+  rhetorical questions, second person, or literary phrasing; it is set in its own
+  narrow column running much of the page height, often in colour or a distinct
+  face. Sharing a topic with the lead is NOT evidence it is the same item — a
+  commentary piece beside a news story is precisely the case that looks related
+  and is not.
 - footnote blocks are photo captions ("caption") attached to the article whose photo
   they describe, or dropped as noise if decorative.
 - If genuinely unsure where a block belongs, put it in "uncertain" with candidate
@@ -228,8 +333,21 @@ when nothing else fits.)
   often on or beside the editorial page) expressing a viewpoint rather than
   reporting news. Letters to the editor are also Opinion.
 
+One exception to "output ids, never Telugu" — "headline_text":
+- Big display headlines are the thing OCR most often misses entirely: huge
+  decorative type, frequently reversed out of a coloured block. If an article's
+  MAIN printed headline is clearly visible in the page image but no manifest
+  block contains it, transcribe it into "headline_text" EXACTLY as printed.
+- Omit the field whenever the headline IS in the manifest. Never re-type a
+  headline that already has a block, never invent one, never put body text or a
+  summary there. If you are not certain of every character, omit it.
+- A headline block may be present and still be the SMALLER secondary banner
+  while the main headline above it was missed — that is exactly the case this
+  field is for.
+
 Return ONLY this JSON:
-{"articles":[{"article_id":"a1","category":"Agriculture","blocks":[{"id":5,"role":"headline"},
+{"articles":[{"article_id":"a1","category":"Agriculture","headline_text":null,
+ "blocks":[{"id":5,"role":"headline"},
  {"id":7,"role":"body","seq":1},{"id":9,"role":"body","seq":2,"continues_block":7}]}],
  "drop":[{"id":3,"reason":"masthead"}],
  "uncertain":[{"id":41,"candidates":["a4","a5"],"reason":"…"}]}
@@ -348,19 +466,16 @@ async function assignWithGemini(
   geminiKey: string,
 ): Promise<Assignment> {
   const manifestText = ASSIGN_PROMPT + manifest(blocks);
-  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
-    fileBuffer.length < 15 * 1024 * 1024;
-  const docPart = visual
-    ? { inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }
-    : null;
+  const vp = await visionParts(fileBuffer, mimeType);
+  const docText = vp ? vp.note + manifestText : manifestText;
 
   // Quota-resilient ladder. Stage 2 (refineWithGemini) consumes flash quota with
   // the same document seconds earlier, so a 429 here is common — flash-lite has a
   // SEPARATE per-model quota bucket, and the text-only call is tiny.
   const configs: Array<{ model: string; parts: unknown[]; label: string }> = [];
-  if (docPart) {
-    configs.push({ model: "gemini-2.5-flash", parts: [docPart, { text: manifestText }], label: "flash+doc" });
-    configs.push({ model: "gemini-2.5-flash-lite", parts: [docPart, { text: manifestText }], label: "flash-lite+doc" });
+  if (vp) {
+    configs.push({ model: "gemini-2.5-flash", parts: [...vp.parts, { text: docText }], label: "flash+doc" });
+    configs.push({ model: "gemini-2.5-flash-lite", parts: [...vp.parts, { text: docText }], label: "flash-lite+doc" });
   }
   configs.push({ model: "gemini-2.5-flash", parts: [{ text: manifestText }], label: "flash text-only" });
   configs.push({ model: "gemini-2.5-flash-lite", parts: [{ text: manifestText }], label: "flash-lite text-only" });
@@ -427,20 +542,88 @@ function isContinuation(prev: string, next: string): boolean {
 // previous fragment end with punctuation", since TELUGU_START matches
 // almost any Telugu text) only when Layer 2 didn't judge this article —
 // single-block articles, or a failed/skipped coherence call.
-function stitch(parts: string[], breaks?: Set<number>): string[] {
+// `headingAt(i)` marks fragments that must always stand as their own
+// paragraph — a mid-article section header is a break in the narrative by
+// definition, and merging it onto the sentence before or after it (either
+// silently via the regex heuristic, or because Layer 2's `breaks` judgment
+// didn't happen to notice this particular fragment was a header) is what
+// turns "మార్గదర్శకాలేవీ?" from a labeled section start back into an
+// unlabeled clause stuck mid-sentence. This overrides `breaks` rather than
+// just seeding it, since a header is not a judgment call.
+function stitch(parts: string[], breaks?: Set<number>, headingAt?: (i: number) => boolean): string[] {
   const out: string[] = [];
+  let prevWasHeading = false;
   parts.forEach((raw, i) => {
     const t = raw.trim();
     if (!t) return;
-    const shouldMerge = out.length > 0 &&
+    const isHeading = headingAt?.(i) ?? false;
+    const shouldMerge = out.length > 0 && !isHeading && !prevWasHeading &&
       (breaks ? !breaks.has(i) : isContinuation(out[out.length - 1], t));
     if (shouldMerge) {
       out[out.length - 1] = out[out.length - 1].replace(/\s+$/, "") + " " + t;
     } else {
       out.push(t);
     }
+    prevWasHeading = isHeading;
   });
   return out;
+}
+
+// ── Printed article template ─────────────────────────────────────────────────
+// A long newspaper article has a fixed printed shape: the headline, then a deck
+// of three or four subheadings, then the body opening with a city+date dateline
+// ("న్యూఢిల్లీ, జూలై 25:"), and — when the story runs on — a "continued on page
+// N" marker as the very last thing in the column. The half that resumes on the
+// inside page opens with its mirror, "మొదటిపేజీ తరువాయి".
+//
+// Those anchors are printed facts, so they beat the model's fragment ordering.
+// Applying them after the coherence passes is what stops a body starting
+// mid-story or ending on half a sentence: on the 2026-07-26 lead the two halves
+// of one sentence ("…ఈ సుదీర్ఘ ఆందోళన ప్రభుత్వం" / "మధ్య మూడవ విడత చర్చలు…")
+// came out in reverse order, which both truncated the article and tripped
+// ends_mid_sentence into hiding it.
+// A dateline can carry SEVERAL places before the date — a story filed from two
+// districts runs "వరంగల్, మహబూబాబాద్, జూలై 25 (నమస్తే తెలంగాణ ప్రతినిధి):".
+// Allowing only one place missed exactly that, so the template never fired on
+// the front page's second lead and it kept opening with its side box.
+const DATELINE_START =
+  /^\s*(?:\([^)]{0,40}\)\s*)?[ఀ-౿]{2,20}(?:\s*,\s*[ఀ-౿]{2,20}){0,3}\s*,\s*[ఀ-౿]{2,12}\s*\d{1,2}\s*(?:\([^)]{0,40}\))?\s*:/;
+const CONT_FROM_ANCHOR = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
+const CONT_TO_TAIL =
+  /(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*\d{1,2}\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)|>\s*\d{1,2}\s*(?:వ\s*పేజీలో)?/;
+
+function applyArticleTemplate(d: Draft): boolean {
+  if (d.blocks.length < 2) return false;
+  let changed = false;
+
+  // Opening anchor: the dateline, or — on the inside-page half of a split
+  // story — the "continued from page 1" header.
+  //
+  // Moves to just past any LEADING run of subheading blocks, not to absolute
+  // position 0. A front-page lead prints headline, then a deck of several
+  // subheadings, THEN the dateline-anchored body -- unshifting the dateline
+  // all the way to the front would shove that deck to AFTER it, the wrong way
+  // round, for every article that has both. A subheading elsewhere in the
+  // body (the far more common case -- a mid-article section header) is
+  // unaffected either way, since it isn't part of this leading run.
+  let leadStart = 0;
+  while (leadStart < d.blocks.length && d.blocks[leadStart].kind === "subheading") leadStart++;
+
+  let lead = d.blocks.findIndex((b) => CONT_FROM_ANCHOR.test(b.text));
+  if (lead < 0) lead = d.blocks.findIndex((b) => DATELINE_START.test(b.text));
+  if (lead > leadStart) {
+    d.blocks.splice(leadStart, 0, d.blocks.splice(lead, 1)[0]);
+    changed = true;
+  }
+
+  // Closing anchor: the "continues on page N" marker ends the printed column,
+  // so anything sorted after it is out of place.
+  const tail = d.blocks.findIndex((b) => CONT_TO_TAIL.test(b.text));
+  if (tail >= 0 && tail !== d.blocks.length - 1) {
+    d.blocks.push(d.blocks.splice(tail, 1)[0]);
+    changed = true;
+  }
+  return changed;
 }
 
 // ── [D] Validate ──────────────────────────────────────────────────────────────
@@ -460,7 +643,58 @@ const DATELINE = /[ఀ-౿()\s]{2,30}[,:]\s*న్యూ[సన]్?\s?టుడ
 const SIGNATURE = /-\s*న్యూ[సన]్?\s?టుడే/g;
 const ATTRIBUTION_END = /-\s*[ఀ-౿][ఀ-౿\s,()]{2,40}$/;
 
-function validateArticle(a: StructuredArticle): string[] {
+// These flags are derived purely from the article's final text. Cross-page
+// continuation stitching rewrites bodies AFTER insert (merging in the
+// continuation half, stripping the "మిగతా Nవ పేజీలో" marker), so they have to
+// be recomputed at that point — see recomputeReviewStatus in
+// documents-process-edition. Every other flag describes the extraction process
+// and stays as originally recorded.
+export const TEXT_DERIVED_FLAGS = [
+  "caption_leak", "fused_articles", "headline_missing", "ends_mid_sentence",
+] as const;
+
+// Flags that are worth recording but must not hide the article. Matched by
+// prefix, since some carry a value suffix (low_coverage:0.86).
+//   reordered    — the coherence pass REPAIRED fragment order. That is the
+//                  pipeline working as designed, not a defect; gating on it
+//                  withheld 25 of the 44 held-back articles in the 2026-07-26
+//                  edition.
+//   low_coverage — a PAGE-level statistic applied to every article on the page.
+//                  Above the severe floor it says the page shed some
+//                  characters, not that THIS article is bad. See the coverage
+//                  block in extractArticlesStructured; severe_coverage_loss is
+//                  deliberately absent from this list and still blocks.
+//   headline_from_image — the headline was transcribed from the page image
+//                  because OCR never produced it. This is model-written text
+//                  reaching readers, so it is deliberately recorded; it does
+//                  not block, because the alternative is shipping the article
+//                  with a wrong headline or none at all, and the body remains
+//                  OCR ground truth either way.
+//   template_reordered — fragments were snapped to the printed article shape
+//                  (dateline opens the body, continuation marker closes it).
+//                  Like `reordered`, a repair rather than a defect.
+//   teaser_box   — marks the row as a promo box rather than a story. A label,
+//                  not a defect; see needsReview for what it exempts.
+const NON_BLOCKING_FLAGS = [
+  "reordered", "low_coverage", "headline_from_image", "template_reordered",
+  "teaser_box",
+];
+
+// `teaser_box` marks a front-page promo pointing at a story printed elsewhere.
+// It is SHORT and stops at a page pointer by design, so ends_mid_sentence — a
+// check that assumes a full article — is meaningless for it and was withholding
+// every such box. headline_missing still blocks: a teaser with no headline has
+// nothing to list.
+export function needsReview(flags: string[]): boolean {
+  const teaser = flags.includes("teaser_box");
+  return flags.some((f) => {
+    if (NON_BLOCKING_FLAGS.some((n) => f.startsWith(n))) return false;
+    if (teaser && f.startsWith("ends_mid_sentence")) return false;
+    return true;
+  });
+}
+
+export function validateArticle(a: { title: string; content: string }): string[] {
   const flags: string[] = [];
   const body = a.content;
   if (AI_DESC.test(body)) flags.push("caption_leak");
@@ -487,13 +721,40 @@ interface Draft {
   subs: string[];
   caps: string[];
   category: string;
-  blocks: Array<{ id: number; text: string }>;
+  // "subheading" blocks live IN this ordered flow now, not off to the side.
+  // A long article can carry several mid-body section headers (e.g.
+  // "మార్గదర్శకాలేవీ?"), not just a deck cluster before the body starts, and a
+  // header that isn't positioned where it was printed is as good as dropped --
+  // subs (below) still mirrors every one of them for audit, but nothing reads
+  // subs for display, so it was never actually reaching a listener.
+  blocks: Array<{ id: number; text: string; kind: "body" | "subheading" }>;
   review: string[];
   // Positions (in `blocks`' final order) where Layer 2 judged a new paragraph
   // starts; everything else continues the previous fragment's sentence. Unset
   // when Layer 2 didn't run/answer for this article — stitch() then falls
   // back to the regex heuristic.
   breaks?: Set<number>;
+}
+
+// Gate on the one place the assignment step is allowed to emit Telugu.
+//
+// The index-only contract is what makes the BODY trustworthy: the model cannot
+// hallucinate text it never had. But it also means a headline OCR missed can
+// never enter the article — on the 2026-07-26 front page the printed headline
+// was "జెన్-జీత్ గయా", Sarvam never emitted it as a block, and the article
+// silently inherited the smaller pink sub-banner ("సర్కార్ డర్ గయా") instead.
+// Sending the page at band resolution let the model READ the headline
+// correctly; it had nowhere to put it.
+//
+// So the hole is deliberately headline-shaped: bodies stay index-only, and a
+// transcription is accepted only when no manifest block already contains it —
+// meaning it can add a headline OCR missed, but can never overwrite or restate
+// one OCR captured.
+function headlineIsNovel(candidate: string, blocks: Block[]): boolean {
+  const squash = (s: string) => s.replace(/\s+/g, "");
+  const c = squash(candidate);
+  if (c.length < 4 || c.length > 160) return false;
+  return !blocks.some((b) => squash(b.text).includes(c));
 }
 
 function frag(text: string, head = 60, tail = 30): string {
@@ -512,19 +773,30 @@ function applyOrder(d: Draft, order: unknown): boolean {
 }
 
 // ── Layer 2: text coherence ──────────────────────────────────────────────────
-// One cheap text call per page. Reorders body fragments by MEANING (catches the
-// within-column semantic mis-orders that string heuristics miss) and flags
-// narrative gaps. Index-only: it permutes existing fragments, never edits text.
-async function coherencePass(drafts: Draft[], geminiKey: string): Promise<void> {
+// One cheap call per page. Reorders body fragments by MEANING (catches the
+// within-column semantic mis-orders that string heuristics miss), flags
+// narrative gaps, and splits out fragments that belong to a different story.
+// Index-only: it permutes existing fragments, never edits text.
+//
+// Now sees the page image and 160+60 chars per fragment. At 60+30 text-only it
+// was judging topical membership from ~90-character snippets with no view of
+// the layout, and missed a 1,965-char foreign column sitting inside a
+// front-page lead — it reordered that article and reported it coherent.
+async function coherencePass(
+  drafts: Draft[], fileBuffer: Uint8Array, mimeType: string, geminiKey: string,
+): Promise<void> {
   const lines: string[] = [];
   drafts.forEach((d, i) => {
     if (d.blocks.length < 2) return;
     lines.push(`# Article ${i}: ${d.title.slice(0, 40)}`);
-    d.blocks.forEach((b, j) => lines.push(`  [${j}] ${frag(b.text)}`));
+    d.blocks.forEach((b, j) => lines.push(`  [${j}] ${frag(b.text, 160, 60)}`));
   });
   if (!lines.length) return;
   const prompt =
-`Each article below is a list of OCR text fragments in their CURRENT order.
+`The page image is provided — use it to see which fragments physically belong to
+the same article, and in what order a reader would take them.
+
+Each article below is a list of OCR text fragments in their CURRENT order.
 Newspapers split stories across columns, so fragments can be out of reading order.
 For each article decide if the fragments read as ONE coherent story in the right
 order, judging by MEANING (does each fragment continue the previous idea?).
@@ -555,9 +827,13 @@ RULES:
   don't topically belong in this article. Only include a position when you're
   genuinely confident it's unrelated — being out of order or hard to follow is
   NOT the same as being misplaced. Omit or leave empty when everything fits.
+  A run of fragments that reads as a self-contained column or commentary piece
+  in the middle of a news story is the clearest case: list all of them.
 
 ${lines.join("\n")}`;
-  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
+  const vp = await visionParts(fileBuffer, mimeType);
+  const parts = vp ? [...vp.parts, { text: vp.note + prompt }] : [{ text: prompt }];
+  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", parts, geminiKey);
   if (status !== 200) return;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
     articles?: Array<{
@@ -565,6 +841,7 @@ ${lines.join("\n")}`;
       paragraph_breaks?: number[]; misplaced?: number[];
     }>;
   };
+  const spawned: Draft[] = [];
   for (const r of data.articles ?? []) {
     const d = drafts[r.i];
     if (!d) continue;
@@ -577,12 +854,32 @@ ${lines.join("\n")}`;
         ),
       );
     }
-    if (Array.isArray(r.misplaced) && r.misplaced.some(
+    // Misplaced fragments used to only raise a review flag while STAYING in the
+    // article — so a whole foreign column could sit inside the lead story and
+    // still be narrated as part of it (real case: a 1,965-char opinion column
+    // wedged into a front-page lead between its own body and its page-7
+    // continuation). Detection without remediation is not a safeguard. Split
+    // them into their own draft instead; it lands headless, so validateArticle
+    // flags headline_missing and it is held for review rather than read aloud
+    // under someone else's headline.
+    const mis = (r.misplaced ?? []).filter(
       (x) => typeof x === "number" && x >= 0 && x < d.blocks.length,
-    )) {
+    );
+    if (mis.length && mis.length < d.blocks.length) {
+      const misSet = new Set(mis);
+      const moved = d.blocks.filter((_, j) => misSet.has(j));
+      d.blocks = d.blocks.filter((_, j) => !misSet.has(j));
+      // Positions shifted, so Layer 2's paragraph_breaks no longer line up.
+      d.breaks = undefined;
       d.review.push("topic_mismatch");
+      spawned.push({
+        title: "", subs: [], caps: [], category: d.category,
+        blocks: moved, review: ["split_from_fused"],
+      });
+      console.log(`[structure] split ${moved.length} misplaced fragment(s) out of article ${r.i}`);
     }
   }
+  drafts.push(...spawned);
 }
 
 // ── Layer 3: vision recovery ─────────────────────────────────────────────────
@@ -596,9 +893,9 @@ async function visionPass(
   const targets = drafts
     .map((d, i) => ({ d, i }))
     .filter((t) => t.d.review.includes("gap_suspected"));
-  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
-    fileBuffer.length < 15 * 1024 * 1024;
-  if (!targets.length || !visual) return;
+  if (!targets.length) return;
+  const vp = await visionParts(fileBuffer, mimeType);
+  if (!vp) return;
 
   const lines: string[] = [];
   for (const { d, i } of targets) {
@@ -619,7 +916,7 @@ RULES:
 ${lines.join("\n")}`;
   const { status, text } = await callGeminiJson(
     "gemini-2.5-flash-lite",
-    [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }, { text: prompt }],
+    [...vp.parts, { text: vp.note + prompt }],
     geminiKey,
   );
   if (status !== 200) return;
@@ -643,11 +940,11 @@ ${lines.join("\n")}`;
       list.push(ins.text.trim());
       after.set(ins.after, list);
     }
-    const out: Array<{ id: number; text: string }> = [];
-    for (const t of after.get(-1) ?? []) out.push({ id: -1, text: t });
+    const out: Draft["blocks"] = [];
+    for (const t of after.get(-1) ?? []) out.push({ id: -1, text: t, kind: "body" });
     d.blocks.forEach((b, j) => {
       out.push(b);
-      for (const t of after.get(j) ?? []) out.push({ id: -1, text: t });
+      for (const t of after.get(j) ?? []) out.push({ id: -1, text: t, kind: "body" });
     });
     d.blocks = out;
     d.breaks = undefined;
@@ -672,34 +969,81 @@ export async function extractArticlesStructured(
   // Build drafts (body kept as ordered fragments — stitching deferred until
   // after the coherence passes can reorder / patch them).
   const drafts: Draft[] = [];
+  let missingSeq = 0;
+  let bodyTotal = 0;
+  let imageHeadlines = 0;
   for (const art of assignment.articles ?? []) {
     let title = "";
     const subs: string[] = [];
     const caps: string[] = [];
-    const bodyEntries: Array<[number, number, string]> = [];
+    // [seq, col, row, id, text, kind] — see the sort below for why col/row are
+    // here. "subheading" blocks are mixed in with "body" ones now (both get a
+    // real position in the flow) rather than pulled into a side list — a mid-
+    // article section header only means something at the point it introduces,
+    // and `subs` (below, kept for audit) is never read by anything that
+    // displays or narrates an article, so anything routed only there was
+    // invisible to a reader no matter how well it was captured.
+    const bodyEntries: Array<[number, number, number, number, string, "body" | "subheading"]> = [];
     for (const blk of art.blocks ?? []) {
       const b = byId.get(blk.id);
       if (!b) continue;
       if (blk.role === "headline") title = b.text;
-      else if (blk.role === "subheading") subs.push(b.text);
-      else if (blk.role === "caption") caps.push(b.text);
-      else if (blk.role === "body") bodyEntries.push([blk.seq ?? 1e6, blk.id, b.text]);
+      else if (blk.role === "subheading") {
+        subs.push(b.text);
+        bodyEntries.push([blk.seq ?? 1e6, b.col, b.row, blk.id, b.text, "subheading"]);
+      } else if (blk.role === "caption") caps.push(b.text);
+      else if (blk.role === "body") {
+        if (blk.seq === undefined) missingSeq++;
+        bodyTotal++;
+        bodyEntries.push([blk.seq ?? 1e6, b.col, b.row, blk.id, b.text, "body"]);
+      }
       // role "table": excluded from spoken body
     }
-    bodyEntries.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+    // "seq" is optional in the assignment contract, so when the model omits it
+    // every block collapses to 1e6 and the tiebreaker decides the whole reading
+    // order. That tiebreaker used to be block id. parseBlocks walks
+    // rows.forEach(cols.forEach(...)), so ids are column-major WITHIN a row
+    // band but restart at the next band — an article spanning several bands
+    // gets every column of band 0, then every column of band 1, which reads
+    // across the page instead of down it. That is the zigzag.
+    // Column-major (col, then row) is how a newspaper is actually read, so an
+    // unanswered seq now degrades to the right order instead of the worst one.
+    bodyEntries.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || x[3] - y[3]);
     const category = (CATEGORIES as readonly string[]).includes(art.category ?? "")
       ? art.category!
       : "";
+
+    // Headline the model read off the page that OCR never produced. Accepted
+    // only if no block already contains it, so it can fill a missing headline
+    // or supersede a smaller banner OCR mistook for the main one — but can
+    // never overwrite a headline OCR actually captured.
+    const review: string[] = [];
+    const fromImage = (art.headline_text ?? "").trim();
+    if (fromImage && headlineIsNovel(fromImage, blocks)) {
+      // Keep whatever OCR did find; it is usually the real secondary banner.
+      if (title) subs.unshift(title);
+      title = fromImage;
+      review.push("headline_from_image");
+      imageHeadlines++;
+    }
+
     drafts.push({
-      title, subs, caps, category, review: [],
-      blocks: bodyEntries.map((e) => ({ id: e[1], text: e[2] })),
+      title, subs, caps, category, review,
+      blocks: bodyEntries.map((e) => ({ id: e[3], text: e[4], kind: e[5] })),
     });
+  }
+  if (imageHeadlines) {
+    console.log(`[structure] ${imageHeadlines} headline(s) transcribed from the page image`);
+  }
+  if (bodyTotal) {
+    console.log(`[structure] seq missing on ${missingSeq}/${bodyTotal} body blocks` +
+      `${missingSeq / bodyTotal > 0.2 ? " — ordering is leaning on the column-major fallback" : ""}`);
   }
 
   // Layer 2 (text coherence) → Layer 3 (vision, only for flagged gaps). Both
   // non-fatal: any failure leaves the structure-engine order untouched.
   if (geminiKey) {
-    try { await coherencePass(drafts, geminiKey); }
+    try { await coherencePass(drafts, fileBuffer, mimeType, geminiKey); }
     catch (e) { console.warn("[structure] L2 coherence failed:", (e as Error).message); }
     if (drafts.some((d) => d.review.includes("gap_suspected"))) {
       try { await visionPass(drafts, fileBuffer, mimeType, geminiKey); }
@@ -707,9 +1051,26 @@ export async function extractArticlesStructured(
     }
   }
 
+  // Last word on ordering goes to the printed template, not to any model pass:
+  // the dateline opens the body and the "continued on page N" marker closes it.
+  let templated = 0;
+  for (const d of drafts) {
+    if (!applyArticleTemplate(d)) continue;
+    d.breaks = undefined; // positions no longer line up with the fragments
+    d.review.push("template_reordered");
+    templated++;
+  }
+  if (templated) {
+    console.log(`[structure] ${templated} article(s) reordered to the printed template`);
+  }
+
   const articles: StructuredArticle[] = [];
   for (const d of drafts) {
-    const paragraphs = stitch(d.blocks.map((b) => b.text), d.breaks);
+    const paragraphs = stitch(
+      d.blocks.map((b) => b.text),
+      d.breaks,
+      (i) => d.blocks[i]?.kind === "subheading",
+    );
     if (paragraphs.length) paragraphs[0] = stripLeadingDateline(paragraphs[0]);
     const article: StructuredArticle = {
       title: d.title || d.subs[0] || "",
@@ -735,8 +1096,18 @@ export async function extractArticlesStructured(
     .reduce((s, b) => s + b.text.length, 0);
   const keptChars = articles.reduce(
     (s, a) => s + a.content.length + a.title.length + a.subheadings.join("").length, 0);
+  // Coverage is a PAGE-level statistic, so withholding every article on the
+  // page because the page as a whole shed some characters punished articles
+  // that were individually fine — it blacked out pages 8 and 9 of the
+  // 2026-07-26 edition entirely (13 articles) at 0.79 and 0.86. Showing a page
+  // that lost a fraction of its characters beats showing nothing, and genuinely
+  // damaged articles are still caught by the per-article checks. So this is
+  // informational above the floor and blocking only below it, where the page
+  // really is too broken to serve.
   const coverage = ocrChars ? keptChars / ocrChars : 1;
-  if (coverage < 0.9) {
+  if (coverage < 0.6) {
+    for (const a of articles) a.review.push(`severe_coverage_loss:${coverage.toFixed(2)}`);
+  } else if (coverage < 0.9) {
     for (const a of articles) a.review.push(`low_coverage:${coverage.toFixed(2)}`);
   }
 
