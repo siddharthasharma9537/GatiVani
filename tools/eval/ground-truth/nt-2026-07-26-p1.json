@@ -1,0 +1,129 @@
+{
+  "newspaper_title": "NT 2026 07 26",
+  "publication_date": "2026-07-26",
+  "source_pdf": "NT-2026-07-26.pdf",
+  "gold_page": 1,
+  "verified_against": "printed PDF page 1, rendered at 130-260 DPI and read directly (not from memory of earlier pipeline output). See README for what 'verified' means per field.",
+  "items": [
+    {
+      "id": "p1-lead",
+      "title": "జెన్-జీత్ గయా",
+      "secondary_headline": "సర్కార్ డర్ గయా!",
+      "subheadings": [
+        "ఫలించిన విద్యార్థులు, యువత అసమాన పోరాటం",
+        "కేంద్ర విద్యా శాఖ మంత్రి ధర్మేంద్ర ప్రధాన్ రాజీనామా",
+        "ప్రహ్లాద్ జోషికి విద్యా శాఖ మంత్రిగా అదనపు బాధ్యతలు",
+        "బొద్దింకల సత్తా అందరికీ తెలిసిందన్న అభిజిత్ దీప్కే",
+        "ప్రజాస్వామ్య విజయంగా పేర్కొన్న సోనమ్ వాంగ్చుక్",
+        "ప్రజాగ్రహానికి మూల్యం తప్పదని గ్రహించిన కేంద్రం"
+      ],
+      "body_start": "న్యూఢిల్లీ, జూలై 25: దేశ యువతరం అసమాన పోరాటంతో అనుకున్నది సాధించింది.",
+      "page_end_anchor": "తాజా పరిణామాలతో కేంద్రం వైఫల్యాలపై ప్రజల ఆగ్రహం",
+      "continues_on_page": 7,
+      "confidence": "high",
+      "notes": "Giant display headline; the pink sub-banner below it is a DIFFERENT, smaller text and must not be reported as the title. Deck (subheadings) verified against print. Page-1→7 pointer marker seen directly. Which specific box on page 7 is the true continuation body was NOT independently re-verified in this pass -- 'జయహో.. జెన్ జీ!' (top-left box on p7) was checked and is a DIFFERENT, self-contained story (its own dateline, Special Task Bureau byline), so it is NOT the continuation. The true target box on page 7 is unresolved; do not assume any specific p7 title is correct without checking body text against this article's page_end_anchor."
+    },
+    {
+      "id": "p1-sidebar",
+      "title": null,
+      "kind": "commentary",
+      "body_start": "ప్రజాస్వామ్యం పతనావస్థలో ఉన్నప్పుడు, సర్కారీ వ్యవస్థలు సర్వం ధ్వంసమైనప్పుడు",
+      "continues_on_page": null,
+      "confidence": "high",
+      "notes": "Full-height narrow column on the LEFT edge of the page, no boxed headline visible, no page pointer visible. This is the column that was repeatedly getting fused into the lead article's body (the bug fixed by ASSIGN_PROMPT's commentary-column guidance) -- it MUST remain a separate item, headless, not merged into p1-lead. headline_missing on this row is correct pipeline behavior, not a defect."
+    },
+    {
+      "id": "p1-ktr-quote",
+      "title": "ప్రజాశక్తే ఎల్లప్పుడూ గొప్పది",
+      "continues_on_page": 2,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-marpu",
+      "title": "మార్పు మొదలైంది",
+      "continues_on_page": 2,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-bandiki",
+      "title": "'బండి'కి బుద్ధిలేదు.. నోటికి హద్దులేదు",
+      "continues_on_page": null,
+      "confidence": "high",
+      "notes": "No page pointer visible in this render; treated as self-contained on page 1."
+    },
+    {
+      "id": "p1-neet-leak-benefit",
+      "title": "నీట్ లీక్‌తో కొందరు విద్యార్థులకు మేలు",
+      "continues_on_page": 7,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-prajaswamya-vijayam",
+      "title": "ఇది ప్రజాస్వామ్య విజయం",
+      "continues_on_page": 7,
+      "confidence": "medium",
+      "notes": "Headline read as 'ఇది ప్రజాస్వామ్య విజయం' in this render; earlier pipeline runs stored the shorter 'విజయం' for what is presumably this same box (plausible OCR truncation), not independently confirmed to be the same item."
+    },
+    {
+      "id": "p1-more-ministers",
+      "title": "మరికొందరు మంత్రులపైనా వేటు..!",
+      "continues_on_page": 6,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-us-trade-deal",
+      "title": "యూఎస్‌తో ట్రేడ్ డీల్ వద్దు",
+      "continues_on_page": 6,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-ethanol-march",
+      "title": "ఇథనాల్ పెట్రోల్‌కు వ్యతిరేకంగా పార్లమెంట్ మార్చ్",
+      "continues_on_page": 6,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-endrin-party",
+      "title": "తెలంగాణ ఎండ్రిన్ పార్టీ!",
+      "continues_on_page": 6,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-flood-main",
+      "title": "ఒడిసిపడ్తరా.. ఇడిసిపెడ్తరా?",
+      "kicker": "వస్తున్నది వరద..",
+      "subheadings": [
+        "24 గంటల్లో కృష్ణలో మొదలుకానున్న ప్రవాహం.. ఎగువ నుంచి దాదాపు 25 వేల క్యూసెక్కుల రాక"
+      ],
+      "body_start": "వరంగల్/ మహబూబాబాద్‌నగర్, జూలై 25 (నమస్తే తెలంగాణ ప్రతినిధి): రాష్ట్రంలోని ప్రాజెక్టులకు వస్తున్న వరదను ఒడిసిపట్టడంలో రాష్ట్ర సర్కార్ విఫలమవుతున్నది.",
+      "page_end_anchor": "అనేది చర్చనీయాంశంగా మారింది. ఎగువన",
+      "continues_on_page": 5,
+      "confidence": "high",
+      "notes": "IMPORTANT: the continuation pointer digit was zoomed and read at 260 DPI directly off the page -- it reads '5వ పేజీలో', not page 8. As of the last edition reprocess observed in this session, the pipeline had instead merged a DIFFERENT, similarly-worded flood story from page 8 (title 'ఒడిసిపడ్తరా.. ఇడిసిపెడ్తారా?', near-identical to this headline, body opening 'మహారాష్ట్రతో పాటు కర్ణాటకలో...') into this article. Telangana flood coverage on a single day commonly runs multiple stories with near-identical generic phrasing ('ఒడిసిపట్టడం', headline structure), which is exactly the kind of false positive titleOverlapMatch/semanticContinuationMatch can produce. This gold entry exists specifically to catch that: if the scorer reports this article's continuation placement pointing at page 8, that is a suspected FALSE MATCH, not a confirmed correct merge -- page 5's actual content was not independently checked in this pass, so this is not yet proof positive of a bug, but it is strong enough evidence to treat the current page-8 merge as unverified."
+    },
+    {
+      "id": "p1-chalo-karnataka",
+      "title": "నేడు బీఆర్ఎస్ 'చలో కర్ణాటక'",
+      "continues_on_page": 5,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-spdcl-no-stock",
+      "title": "ఎస్పీడీసీఎల్ స్టోర్లలో 'నో స్టాక్'!",
+      "continues_on_page": 5,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-congress-kavvampalli",
+      "title": "కాంగ్రెస్‌లో 'కవ్వంపల్లి' రగడ",
+      "continues_on_page": 5,
+      "confidence": "high"
+    },
+    {
+      "id": "p1-uniforms",
+      "title": "యూనిఫామ్‌లు ఇచ్చేదెన్నడు?",
+      "continues_on_page": 9,
+      "confidence": "high"
+    }
+  ]
+}
