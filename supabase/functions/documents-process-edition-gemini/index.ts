@@ -82,6 +82,43 @@ function estimateDurationSeconds(text: string): number {
   return Math.max(15, Math.round((text.length / 700) * 60));
 }
 
+// ── Repetition-loop detection ────────────────────────────────────────────────
+// Both gemini-2.5-flash and gemini-3.5-flash were observed (real editions,
+// this experiment) to occasionally loop and re-emit a chunk of text it just
+// produced — either as a whole duplicated article row, or as a repeated block
+// within one article's body. Not a safety/error condition the API surfaces;
+// has to be caught by inspecting the actual text. Signature is taken from
+// ~1/3 into the body (not the opening line) since the observed in-body loop
+// repeated a middle paragraph, not the lede.
+function findRepeatedBlock(text: string): { repeated: boolean; cutAt: number | null } {
+  if (text.length < 300) return { repeated: false, cutAt: null };
+  const sigLen = 50;
+  const sigStart = Math.floor(text.length / 3);
+  const sig = text.slice(sigStart, sigStart + sigLen);
+  if (sig.trim().length < 30) return { repeated: false, cutAt: null };
+  const firstIdx = text.indexOf(sig);
+  const secondIdx = text.indexOf(sig, firstIdx + sigLen);
+  return secondIdx === -1 ? { repeated: false, cutAt: null } : { repeated: true, cutAt: secondIdx };
+}
+
+// deno-lint-ignore no-explicit-any
+function dedupeByTitle(articles: HolisticArticle[]): HolisticArticle[] {
+  const seen = new Map<string, HolisticArticle>();
+  let untitledCount = 0;
+  for (const a of articles) {
+    const key = (a.title ?? "").trim().replace(/\s+/g, " ");
+    if (!key) {
+      seen.set(`__untitled_${untitledCount++}`, a);
+      continue;
+    }
+    const existing = seen.get(key);
+    if (!existing || (a.body?.length ?? 0) > (existing.body?.length ?? 0)) {
+      seen.set(key, a);
+    }
+  }
+  return [...seen.values()];
+}
+
 // ── Gemini holistic page-half read ──────────────────────────────────────────
 
 interface HolisticArticle {
@@ -261,9 +298,37 @@ async function processPage(supabase: any, jobId: string, page: number, geminiKey
     single.addPage(pg);
     const pageBytes = await single.save();
 
-    const result = await callHolistic(pageBytes, geminiKey);
+    let result = await callHolistic(pageBytes, geminiKey);
+    let articles = dedupeByTitle(result.articles.filter((a) => (a.body ?? "").trim().length > 0));
+    let repeated = articles.filter((a) => findRepeatedBlock(a.body ?? "").repeated);
+
+    if (repeated.length) {
+      console.warn(`[edition-gemini] page ${page}: ${repeated.length} article(s) with internal repetition, retrying`);
+      await new Promise((r) => setTimeout(r, 500));
+      const retry = await callHolistic(pageBytes, geminiKey);
+      const retryArticles = dedupeByTitle(retry.articles.filter((a) => (a.body ?? "").trim().length > 0));
+      const retryRepeated = retryArticles.filter((a) => findRepeatedBlock(a.body ?? "").repeated);
+      if (retryRepeated.length === 0) {
+        result = retry;
+        articles = retryArticles;
+      } else {
+        // Retry looped again too — truncate each affected body at the second
+        // occurrence of its repeated block rather than lose the page/article
+        // outright; the pre-loop content is still real, extracted text.
+        console.warn(`[edition-gemini] page ${page}: repetition persisted after retry, truncating affected articles`);
+        result = retry;
+        articles = retryArticles.map((a) => {
+          const check = findRepeatedBlock(a.body ?? "");
+          if (check.repeated && check.cutAt !== null) {
+            return { ...a, body: (a.body ?? "").slice(0, check.cutAt).trim() };
+          }
+          return a;
+        });
+      }
+    }
+
     const printedPage = result.printedPageNumber ?? page;
-    const combined = result.articles.filter((a) => (a.body ?? "").trim().length > 0);
+    const combined = articles;
 
     const rows = combined.map((a, i) => ({
       newspaper_id: job.newspaper_id,
@@ -279,7 +344,8 @@ async function processPage(supabase: any, jobId: string, page: number, geminiKey
         page: printedPage,
         pdf_page: page,
         estimated_duration_seconds: estimateDurationSeconds(a.body ?? ""),
-        extraction_engine: "gemini-3.6-holistic-fullpage",
+        extraction_engine: `${MODEL}-holistic-fullpage`,
+        repetition_guard: repeated.length > 0 ? "retried" : "clean",
       },
     }));
     if (rows.length) {
