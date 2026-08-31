@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import * as r2 from "../_shared/r2.ts";
 
 // feeds-podcasts — real Telugu podcast episodes for the Podcasts grid. Each
 // show is fetched from its own public RSS feed (found via Apple's keyless
@@ -188,8 +189,9 @@ async function fetchAirTelugu(): Promise<Episode | null> {
     let durationSeconds = 0;
     let cached = false;
     if (supabase) {
-      const publicUrl =
-        supabase.storage.from("audio").getPublicUrl(storagePath).data.publicUrl;
+      const publicUrl = r2.configured()
+        ? r2.publicUrl(storagePath)
+        : supabase.storage.from("audio").getPublicUrl(storagePath).data.publicUrl;
       try {
         const head = await fetch(publicUrl, {
           method: "HEAD",
@@ -227,13 +229,17 @@ async function fetchAirTelugu(): Promise<Episode | null> {
               const bytes = new Uint8Array(await res.arrayBuffer());
               clearTimeout(dt);
               if (bytes.length < 100_000) throw new Error("suspiciously small");
-              const { error } = await supabase.storage
-                .from("audio")
-                .upload(storagePath, bytes, {
-                  contentType: "audio/mpeg",
-                  upsert: true,
-                });
-              if (error) throw error;
+              if (r2.configured()) {
+                await r2.put(storagePath, bytes, "audio/mpeg");
+              } else {
+                const { error } = await supabase.storage
+                  .from("audio")
+                  .upload(storagePath, bytes, {
+                    contentType: "audio/mpeg",
+                    upsert: true,
+                  });
+                if (error) throw error;
+              }
               console.log(`[feeds-podcasts] cached AIR bulletin ${storagePath} (${bytes.length}b)`);
               return;
             } catch (e) {
@@ -289,28 +295,50 @@ async function fetchAirTelugu(): Promise<Episode | null> {
 // back to the NEWEST bulletin already cached in storage — a few hours stale
 // beats the tile silently vanishing from the feed.
 async function airFromStorage(): Promise<Episode | null> {
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-  const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!SUPABASE_URL || !SERVICE_KEY) return null;
   try {
-    const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { data, error } = await supabase.storage.from("audio").list("air", {
-      limit: 1,
-      sortBy: { column: "created_at", order: "desc" },
-    });
-    if (error || !data?.length) return null;
-    const f = data[0]; // name like "11-Jul-2026-0705.mp3"
-    const m = f.name.match(/^(\d{2})-([A-Za-z]{3})-(\d{4})-(\d{2})(\d{2})\.mp3$/);
-    const size = (f.metadata as { size?: number } | null)?.size ?? 0;
+    // name like "11-Jul-2026-0705.mp3", plus its size for the duration estimate
+    let name: string;
+    let size: number;
+    let url: string;
+
+    if (r2.configured()) {
+      const objects = await r2.list("air/");
+      if (!objects.length) return null;
+      // S3 ListObjectsV2 has no sortBy and returns keys lexicographically, so
+      // the newest must be picked here. The filenames are "DD-Mon-YYYY-HHMM"
+      // which does NOT sort chronologically as a string ("11-Jul" precedes
+      // "11-Jun"), so sort on lastModified rather than on the key.
+      const newest = objects.reduce((a, b) =>
+        b.lastModified > a.lastModified ? b : a
+      );
+      name = newest.key.replace(/^air\//, "");
+      size = newest.size;
+      url = r2.publicUrl(newest.key);
+    } else {
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+      const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!SUPABASE_URL || !SERVICE_KEY) return null;
+      const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+      const { data, error } = await supabase.storage.from("audio").list("air", {
+        limit: 1,
+        sortBy: { column: "created_at", order: "desc" },
+      });
+      if (error || !data?.length) return null;
+      const f = data[0];
+      name = f.name;
+      size = (f.metadata as { size?: number } | null)?.size ?? 0;
+      url = supabase.storage.from("audio").getPublicUrl(`air/${f.name}`).data
+        .publicUrl;
+    }
+
+    const m = name.match(/^(\d{2})-([A-Za-z]{3})-(\d{4})-(\d{2})(\d{2})\.mp3$/);
     return {
       key: "air_news",
       title: "AIR Telugu News",
       episodeTitle: m
         ? `AIR Telugu News — ${m[4]}:${m[5]}`
         : "AIR Telugu News",
-      audioUrl:
-        supabase.storage.from("audio").getPublicUrl(`air/${f.name}`).data
-          .publicUrl,
+      audioUrl: url,
       durationSeconds:
         size > 0 ? Math.round((size * 8) / AIR_ASSUMED_BITRATE_BPS) : 0,
       pubDate: m ? `${m[1]} ${m[2]} ${m[3]} ${m[4]}:${m[5]}:00 +0000` : "",

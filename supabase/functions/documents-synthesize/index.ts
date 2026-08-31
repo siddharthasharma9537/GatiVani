@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import * as r2 from "../_shared/r2.ts";
 // Sarvam STT forced-alignment (./alignment.ts) is disabled for cost — see the
 // commented-out alignAndStore call in the handler.
 // (touch: retrigger deploy now that the CI loop skips _shared)
@@ -24,6 +25,35 @@ function jwtSub(req: Request): string {
   } catch {
     return "";
   }
+}
+
+// Stores synthesized audio and returns its public URL, or "" when it could not
+// be stored (callers fall back to a data: URI, so playback still works).
+//
+// R2 wins when it is configured; there is deliberately no fallback to the
+// Supabase bucket on an R2 failure, since the point of the migration is to stop
+// writing audio there — see docs/R2_AUDIO_MIGRATION.md. Until the credentials
+// are set, this keeps using Supabase Storage exactly as before.
+// deno-lint-ignore no-explicit-any
+async function storeAudio(supabase: any, path: string, bytes: Uint8Array): Promise<string> {
+  if (r2.configured()) {
+    try {
+      await r2.put(path, bytes, "audio/wav");
+      return r2.publicUrl(path);
+    } catch (e) {
+      console.warn("[synthesize] r2 upload failed:", e);
+      return "";
+    }
+  }
+  if (!supabase) return "";
+  const { error } = await supabase.storage
+    .from("audio")
+    .upload(path, bytes, { contentType: "audio/wav", upsert: true });
+  if (error) {
+    console.warn("[synthesize] audio upload failed:", error.message);
+    return "";
+  }
+  return supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -480,13 +510,8 @@ Deno.serve(async (req) => {
       if (supabase && articleId) {
         const base = fileSuffix.replace(/\.wav$/, ""); // "" or ".brief"
         const path = `articles/${articleId}${base}.chunk${chunkIndex}.wav`;
-        const { error: upErr } = await supabase.storage
-          .from("audio")
-          .upload(path, wavBytes, { contentType: "audio/wav", upsert: true });
-        if (upErr) {
-          console.warn("[synthesize] chunk upload failed:", upErr.message);
-        } else {
-          audioUrl = supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
+        audioUrl = await storeAudio(supabase, path, wavBytes);
+        if (audioUrl) {
           const { error: cacheErr } = await supabase.from("article_chunks").upsert({
             article_id: articleId,
             target,
@@ -536,13 +561,8 @@ Deno.serve(async (req) => {
     let timingsUrl = "";
     if (supabase) {
       const path = `articles/${articleId}${fileSuffix}`;
-      const { error: upErr } = await supabase.storage
-        .from("audio")
-        .upload(path, wavBytes, { contentType: "audio/wav", upsert: true });
-      if (upErr) {
-        console.warn("[synthesize] audio upload failed:", upErr.message);
-      } else {
-        audioUrl = supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
+      audioUrl = await storeAudio(supabase, path, wavBytes);
+      if (audioUrl) {
         timingsUrl = audioUrl.replace(/\.wav$/, ".timings.json");
         const { error: updErr } = await supabase
           .from("articles").update({ [target]: audioUrl, [hashCol]: textHash }).eq("id", articleId);

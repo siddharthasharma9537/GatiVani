@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import * as r2 from "../_shared/r2.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,29 +39,51 @@ Deno.serve(async (req) => {
   const retentionDays = Number(body.retentionDays ?? RETENTION_DAYS);
   const dryRun = body.dryRun === true;
 
-  const { data: stale, error } = await supabase.rpc("stale_audio_objects", {
-    retention_days: retentionDays,
-  });
-  if (error) return json({ error: "lookup_failed", message: error.message }, 500);
-
-  const paths: string[] = (stale ?? []).map((r: { name: string }) => r.name);
+  // R2 keeps no metadata in Postgres, so the candidate list comes from the
+  // bucket listing rather than the stale_audio_objects lookup. Both paths
+  // produce the same thing: keys older than the retention window.
+  let paths: string[];
+  if (r2.configured()) {
+    const cutoff = Date.now() - retentionDays * 86_400_000;
+    const objects = await r2.list("");
+    paths = objects
+      .filter((o) => o.lastModified.getTime() < cutoff)
+      .map((o) => o.key);
+  } else {
+    const { data: stale, error } = await supabase.rpc("stale_audio_objects", {
+      retention_days: retentionDays,
+    });
+    if (error) return json({ error: "lookup_failed", message: error.message }, 500);
+    paths = (stale ?? []).map((r: { name: string }) => r.name);
+  }
   if (dryRun) return json({ ok: true, dryRun: true, retentionDays, candidates: paths.length });
 
-  const publicPrefix = `${supabaseUrl}/storage/v1/object/public/audio/`;
+  const usingR2 = r2.configured();
+  // The URL prefix has to match whichever store the objects were written to,
+  // or the reference-clearing below silently matches nothing.
+  const publicPrefix = usingR2
+    ? ""
+    : `${supabaseUrl}/storage/v1/object/public/audio/`;
   let removed = 0;
 
   for (let i = 0; i < paths.length; i += BATCH) {
     const batch = paths.slice(i, i + BATCH);
-    const { error: rmErr } = await supabase.storage.from("audio").remove(batch);
-    if (rmErr) {
-      console.warn("[cleanup] remove failed:", rmErr.message);
-      continue;
+    if (usingR2) {
+      const n = await r2.remove(batch);
+      if (n === 0) continue;
+      removed += n;
+    } else {
+      const { error: rmErr } = await supabase.storage.from("audio").remove(batch);
+      if (rmErr) {
+        console.warn("[cleanup] remove failed:", rmErr.message);
+        continue;
+      }
+      removed += batch.length;
     }
-    removed += batch.length;
 
     // Only clear references once the objects are actually gone, so a failed
     // batch leaves the rows pointing at audio that still exists.
-    const urls = batch.map((p) => publicPrefix + p);
+    const urls = batch.map((p) => (usingR2 ? r2.publicUrl(p) : publicPrefix + p));
     await supabase.from("article_chunks").delete().in("audio_url", urls);
     for (const table of ["articles", "edition_page_items"]) {
       await supabase.from(table).update({ audio_url: null }).in("audio_url", urls);
