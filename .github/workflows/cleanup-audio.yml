@@ -1,0 +1,46 @@
+name: Cleanup Audio Bucket
+
+# Nightly retention pass over the `audio` storage bucket, which otherwise grows
+# ~600 MB/month of regenerable TTS and eventually trips the project storage
+# quota (which restricts every edge function, not just storage).
+#
+# Requires the CRON_SECRET repo secret, matching the same-named secret on the
+# storage-cleanup function:
+#   gh secret set CRON_SECRET
+#   supabase secrets set CRON_SECRET=... --project-ref jjoxowdvzmlchtfarpbs
+# Until the secret exists this workflow skips (does not fail).
+
+on:
+  schedule:
+    - cron: "45 20 * * *" # 02:15 IST
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Report candidates without deleting"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cleanup-audio
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      FN_URL: https://jjoxowdvzmlchtfarpbs.supabase.co/functions/v1/storage-cleanup
+    steps:
+      - name: Invoke storage-cleanup
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::warning::CRON_SECRET not set — cleanup skipped"
+            exit 0
+          fi
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -X POST "$FN_URL" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"dryRun": ${{ inputs.dryRun || false }}}')
+          cat /tmp/out.json
+          echo
+          [ "$code" = "200" ] || { echo "::error::cleanup returned $code"; exit 1; }
