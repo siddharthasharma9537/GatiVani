@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 // feeds-news — server-side fetch + parse of Google News' Telugu RSS.
 //
@@ -54,6 +55,64 @@ const TOPICS: Record<string, Record<string, string>> = {
     business: "व्यापार शेयर बाजार",
   },
 };
+
+// Google News throttles this function's IP range: ~40% of requests come back
+// 503 after a ~10s hang, while the same request from a residential IP is a
+// 0.25s 200. So: fail fast, retry once, and fall back to the last good payload
+// rather than showing an empty feed. See the feed_cache migration.
+const FETCH_TIMEOUT_MS = 4000;
+const CACHE_FRESH_MS = 5 * 60 * 1000;
+
+const supabase = (() => {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  return url && key ? createClient(url, key) : null;
+})();
+
+async function readCache(cacheKey: string) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("feed_cache").select("payload, fetched_at")
+    .eq("source", "news").eq("cache_key", cacheKey).maybeSingle();
+  if (error) {
+    console.warn("[feeds-news] cache read failed:", error.message);
+    return null;
+  }
+  return data ?? null;
+}
+
+async function writeCache(cacheKey: string, payload: unknown) {
+  if (!supabase) return;
+  const { error } = await supabase.from("feed_cache").upsert({
+    source: "news",
+    cache_key: cacheKey,
+    payload,
+    fetched_at: new Date().toISOString(),
+  }, { onConflict: "source,cache_key" });
+  if (error) console.warn("[feeds-news] cache write failed:", error.message);
+}
+
+/** One attempt at the upstream feed, bounded by FETCH_TIMEOUT_MS. */
+async function fetchFeedOnce(url: string): Promise<string> {
+  const resp = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!resp.ok) throw new Error(`upstream ${resp.status}`);
+  return await resp.text();
+}
+
+/** Two attempts with a short backoff — most 503s here are transient throttling,
+ *  so a single retry converts the majority of them into successes. */
+async function fetchFeed(url: string): Promise<string> {
+  try {
+    return await fetchFeedOnce(url);
+  } catch (first) {
+    console.warn("[feeds-news] attempt 1 failed:", first);
+    await new Promise((r) => setTimeout(r, 300));
+    return await fetchFeedOnce(url);
+  }
+}
 
 function feedUrl(lang: string, topic: string): string {
   const base = "https://news.google.com/rss";
@@ -126,15 +185,51 @@ Deno.serve(async (req) => {
     if (!(topic in TOPICS[lang])) topic = "top";
     limit = Math.min(Math.max(Number.isFinite(limit) ? limit : 12, 1), 30);
 
-    const resp = await fetch(feedUrl(lang, topic), {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; GatiVani/2.0)" },
-    });
-    if (!resp.ok) {
-      return json({ error: "upstream_error", status: resp.status }, 502);
+    // `limit` only trims the parsed list, so it is deliberately not part of the
+    // cache key — one stored payload serves every limit for a lang+topic.
+    const cacheKey = `${lang}:${topic}`;
+    const cached = await readCache(cacheKey);
+
+    if (cached && Date.now() - new Date(cached.fetched_at).getTime() < CACHE_FRESH_MS) {
+      const items = (cached.payload as { items: unknown[] }).items ?? [];
+      return json({
+        ok: true, topic, lang,
+        count: Math.min(items.length, limit),
+        items: items.slice(0, limit),
+        cached: true,
+      });
     }
-    const xml = await resp.text();
-    const items = parseItems(xml, limit);
-    return json({ ok: true, topic, lang, count: items.length, items });
+
+    try {
+      const xml = await fetchFeed(feedUrl(lang, topic));
+      const items = parseItems(xml, 30); // cache the full set, trim per request
+      await writeCache(cacheKey, { items });
+      return json({
+        ok: true, topic, lang,
+        count: Math.min(items.length, limit),
+        items: items.slice(0, limit),
+      });
+    } catch (fetchErr) {
+      // Upstream is throttling us. Stale headlines beat an empty screen, so
+      // serve the last good payload however old it is; only a cold cache is a
+      // real failure.
+      console.warn("[feeds-news] upstream failed, falling back to cache:", fetchErr);
+      if (cached) {
+        const items = (cached.payload as { items: unknown[] }).items ?? [];
+        return json({
+          ok: true, topic, lang,
+          count: Math.min(items.length, limit),
+          items: items.slice(0, limit),
+          cached: true,
+          stale: true,
+          fetchedAt: cached.fetched_at,
+        });
+      }
+      return json({
+        error: "upstream_error",
+        message: fetchErr instanceof Error ? fetchErr.message : "fetch failed",
+      }, 502);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[feeds-news]", err);
