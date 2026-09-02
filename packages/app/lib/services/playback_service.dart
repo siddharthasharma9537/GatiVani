@@ -39,40 +39,19 @@ class PlaybackService extends ChangeNotifier {
       // loading, not already advancing, and the clip actually played to its end.
       if (s.processingState == ProcessingState.completed &&
           !loading &&
-          !_advancing &&
-          _activeSeeks == 0) {
+          !_advancing) {
         final dur = player.duration;
         final pos = player.position;
         final reachedEnd = dur != null &&
             dur.inMilliseconds > 500 &&
             pos.inMilliseconds >= dur.inMilliseconds - 800;
-        // In chunked mode, additionally require the completed source to BE
-        // the chunk the bookkeeping says is loaded. Each chunk's duration is
-        // measured server-side from the same file the player loads, so they
-        // match to rounding; a mismatch means this event is a stale emission
-        // from a previous chunk (web re-emits completed around source swaps),
-        // and advancing on it would cut the real current chunk short.
-        final isCurrentChunk = _totalChunks == null ||
-            _loadedChunkIndex >= _chunkDurations.length ||
-            (dur != null &&
-                (dur - _chunkDurations[_loadedChunkIndex]).abs() <
-                    const Duration(seconds: 3));
-        if (reachedEnd && isCurrentChunk) {
-          final total = _totalChunks;
-          if (total != null && _loadedChunkIndex + 1 < total) {
-            // More chunks left in THIS article — advance within it, not the
-            // queue. _advancing still guards against this same completed
-            // state re-firing while the next chunk's setUrl() loads.
-            _advancing = true;
-            _advanceChunk().whenComplete(() => _advancing = false);
+        if (reachedEnd) {
+          _saveProgress(completed: true); // mark this one finished → "Replay"
+          if (_sleepAtTrackEnd) {
+            _clearSleep(); // stop here per the sleep timer
           } else {
-            _saveProgress(completed: true); // mark this one finished → "Replay"
-            if (_sleepAtTrackEnd) {
-              _clearSleep(); // stop here per the sleep timer
-            } else {
-              _advancing = true;
-              _autoAdvance().whenComplete(() => _advancing = false);
-            }
+            _advancing = true;
+            _autoAdvance().whenComplete(() => _advancing = false);
           }
         }
       }
@@ -84,16 +63,12 @@ class PlaybackService extends ChangeNotifier {
       // Persist progress every ~10s while actually playing, so a tile can show
       // "Resume" with the right spot. Cheap upsert; full saves also on pause /
       // completion / track start.
-      // Compare article-level positions: _lastSaveSec stores the article
-      // position, so measuring against the chunk-level `pos` made every tick
-      // past chunk 0 look ≥10s away and fire a save attempt each time.
       if (!brief &&
           player.playing &&
           (position.inSeconds - _lastSaveSec).abs() >= 10) {
         _saveProgress();
       }
       _maybePrefetchNext();
-      _maybeFetchNextChunk();
     });
   }
   static final PlaybackService i = PlaybackService._();
@@ -107,65 +82,15 @@ class PlaybackService extends ChangeNotifier {
   // _playIndex so only the most recent one ever touches the player.
   bool _advancing = false;
   int _playEpoch = 0;
-  // Serializes chunk-swap operations (_advanceChunk / _seekChunked): each op
-  // takes a fresh id and abandons itself the moment another op has started,
-  // so two overlapping swaps can never both commit position bookkeeping —
-  // previously a seek dragged during a slow chunk transition interleaved
-  // with the in-flight advance and corrupted _priorChunksElapsed.
-  int _chunkOpId = 0;
-  // Non-zero while a chunked seek is resolving/loading its target chunk;
-  // blocks the completed-listener from auto-advancing over the user's seek.
-  int _activeSeeks = 0;
   // Article id we've already kicked off a background prefetch-synthesis for,
   // so a burst of position-stream ticks near the end of a track doesn't fire
   // duplicate requests.
   String? _prefetchedArticleId;
   // How close to the end of the current ARTICLE to start synthesizing the
   // next queued one (see _maybePrefetchNext). Close enough that closing the
-  // app / bailing out mid-article doesn't burn Gemini quota on a track never
+  // app / bailing out mid-article doesn't burn TTS quota on a track never
   // reached; 25s (not 20) for margin against real-world network/API jitter.
-  //
-  // This intentionally does NOT pace the current article's own chunks: one
-  // chunk takes 32-52s to synthesize, so a 25s window can never cover a
-  // chunk boundary — _maybeFetchNextChunk pipelines one chunk ahead
-  // instead, and explains why there.
   static const _prefetchLookahead = Duration(seconds: 25);
-  // Progressive chunk playback for the CURRENT article: instead of waiting
-  // for the whole article to synthesize, chunk 0 plays as soon as it's
-  // ready and later chunks synthesize in the background, paced by the same
-  // lookahead — so quota is only spent on audio actually listened to (plus
-  // a small buffer), not the whole article up front. Null when the current
-  // track isn't in chunked mode (briefs, or an already-fully-cached URL).
-  int? _totalChunks;
-  int _loadedChunkIndex = 0;
-  final List<Duration> _chunkDurations = [];
-  Duration _priorChunksElapsed = Duration.zero;
-  // Set right before a chunk swap's setUrl() and cleared right after
-  // _priorChunksElapsed/_loadedChunkIndex commit for it. just_audio's
-  // position resets to zero the moment the new source loads — BEFORE our own
-  // bookkeeping has caught up — and position's stream listener can observe
-  // that transient zero in between (article-level `position` would briefly
-  // read as 0 instead of "just finished the previous chunk"). That's a real,
-  // confirmed bug: it wrote position_seconds=0 to recent_plays mid-article
-  // (traced against a real play — the row's content_expires_at proved it
-  // wasn't a genuine restart, just this transient reflected into a periodic
-  // save) and, for the same reason, could show the seek bar/highlight
-  // snapping back to the start for a frame. Holding `position` at its
-  // last-known-correct value for this narrow window closes both.
-  Duration? _frozenPosition;
-  // The background prefetch's own in-flight request, keyed by which chunk
-  // it's for — so _advanceChunk can AWAIT this instead of firing a second,
-  // redundant fetch for the same chunk when playback catches up before the
-  // prefetch resolves. Two concurrent requests for one chunk each burn a
-  // full call against a rate-limited key for no benefit (same target,
-  // same cache row) — that duplication was silently doubling Gemini usage
-  // on exactly the transitions that were already running late.
-  Future<({String audioUrl, Duration duration, int totalChunks})?>?
-      _inFlightChunkFuture;
-  int? _inFlightChunkIndex;
-  int? _pendingChunkIndex;
-  String? _pendingChunkUrl;
-  Duration? _pendingChunkDuration;
   // When true, this session narrates the short briefing (headline + lede) and
   // caches it separately. The lyrics view reads this to show matching text.
   bool brief = false;
@@ -188,44 +113,17 @@ class PlaybackService extends ChangeNotifier {
   // leaves `playing == true` at completion, so guard the play/pause UI on this
   // (require a real duration so the transient zero-length completes web emits
   // while loading a new url don't count).
-  // In chunked mode a MIDDLE chunk completing is not the article ending —
-  // it's the (possibly long) stall while the next chunk synthesizes. Without
-  // the last-chunk check, the UI flipped to "replay" during every stalled
-  // transition, and tapping it restarted the whole article from chunk 0.
   bool get ended =>
       player.processingState == ProcessingState.completed &&
-      (player.duration?.inMilliseconds ?? 0) > 500 &&
-      (_totalChunks == null || _loadedChunkIndex + 1 >= _totalChunks!);
+      (player.duration?.inMilliseconds ?? 0) > 500;
   bool get isPlaying => player.playing && !ended;
   double get speed => player.speed;
-  // In chunked mode, player.position/duration only cover the currently
-  // loaded chunk (each chunk is its own setUrl()) — add back the elapsed
-  // time of chunks already played through so the whole article reads as one
-  // continuous track, matching how it behaved before chunking existed.
-  Duration get position {
-    if (_totalChunks == null) return player.position;
-    final frozen = _frozenPosition;
-    if (frozen != null) return frozen;
-    return _priorChunksElapsed + player.position;
-  }
+  Duration get position => player.position;
   // Only report a duration once a real track is loaded (avoids a stale/zero
   // duration making the lyric highlight race).
-  Duration get duration {
-    if (player.processingState == ProcessingState.idle) return Duration.zero;
-    final total = _totalChunks;
-    if (total == null) return player.duration ?? Duration.zero;
-    if (_chunkDurations.length >= total) {
-      // Every chunk has been synthesized — exact total.
-      return _chunkDurations.fold(Duration.zero, (a, b) => a + b);
-    }
-    // Chunks are still being synthesized in the background — fall back to
-    // the article's text-length estimate so the progress bar reads
-    // sensibly until the real total is known.
-    final estSec = current?.estimatedDurationSeconds ?? 0;
-    return estSec > 0
-        ? Duration(seconds: estSec)
-        : _priorChunksElapsed + (player.duration ?? Duration.zero);
-  }
+  Duration get duration => player.processingState == ProcessingState.idle
+      ? Duration.zero
+      : (player.duration ?? Duration.zero);
 
   Future<void> playAll(List<NewspaperArticle> articles,
       {int start = 0, bool brief = false}) async {
@@ -306,14 +204,6 @@ class PlaybackService extends ChangeNotifier {
   /// cost on tracks they never get to (closing the app, skipping around).
   void _maybePrefetchNext() {
     if (!player.playing) return;
-    // Use the article-level duration/position (sums across all chunks), not
-    // player.duration/player.position which only cover the currently loaded
-    // chunk. Using chunk-level values here meant a short chunk 0 (e.g. ~19s)
-    // was already inside the lookahead window the instant playback started,
-    // firing a full background synthesis for the NEXT queued article within
-    // seconds of starting the CURRENT one — burning Gemini's 3 RPM budget
-    // against the current article's own in-flight chunk fetches and starving
-    // them, not just wasting quota on a track the user might skip.
     final dur = duration;
     if (dur == Duration.zero) return;
     if (dur - position > _prefetchLookahead) return;
@@ -363,259 +253,12 @@ class PlaybackService extends ChangeNotifier {
     }
   }
 
-  void _resetChunkState() {
-    // Track change: allow the queue-level prefetch to consider articles
-    // afresh — a marker left from a FAILED prefetch otherwise blocked any
-    // retry for that article for the rest of the session.
+  /// Track change: allow the queue-level prefetch to consider articles
+  /// afresh — a marker left from a FAILED prefetch otherwise blocked any
+  /// retry for that article for the rest of the session.
+  void _resetTrackState() {
     _prefetchedArticleId = null;
-    _totalChunks = null;
-    _loadedChunkIndex = 0;
-    _chunkDurations.clear();
-    _priorChunksElapsed = Duration.zero;
-    // Any Future already in flight for the previous article just gets
-    // orphaned here (Futures can't be cancelled) — its .then() callback
-    // still runs eventually, but the epoch check inside it discards the
-    // result since _playEpoch will have moved on.
-    _inFlightChunkFuture = null;
-    _inFlightChunkIndex = null;
-    _pendingChunkIndex = null;
-    _pendingChunkUrl = null;
-    _pendingChunkDuration = null;
-    // Guaranteed cleared by try/finally in _advanceChunk/_seekChunked
-    // already — this is just a clean-slate safety net on track change.
-    _frozenPosition = null;
   }
-
-  /// Fetch (or cache-hit) chunk [i] of article [a]. Chunking is deterministic
-  /// server-side (same text + limit always splits the same way), so a chunk
-  /// index is directly addressable — no job/session state needed. Set
-  /// [throwOnError] for the initial blocking chunk-0 fetch (so _playIndex can
-  /// surface a real error, same as today's full-synthesis failure); the
-  /// background prefetch call leaves it false and just retries next tick.
-  Future<({String audioUrl, Duration duration, int totalChunks})?> _fetchChunk(
-    NewspaperArticle a,
-    int i, {
-    bool throwOnError = false,
-  }) async {
-    try {
-      final r = await http
-          .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
-              headers: {
-                ...ApiConfig.authHeaders,
-                'Content-Type': 'application/json',
-              },
-              body: json.encode({
-                'text': a.spokenText,
-                'language': '${a.language}-IN',
-                'articleId': a.id,
-                'chunkIndex': i,
-                if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
-                if (a.readingStyle.isNotEmpty) 'readingStyle': a.readingStyle,
-              }))
-          .timeout(const Duration(seconds: 150));
-      final data = json.decode(r.body) as Map<String, dynamic>;
-      if (data['ok'] != true) {
-        if (throwOnError) {
-          final msg = data['error'] == 'gemini_key_required'
-              ? 'Add your Gemini API key to narrate this.'
-              : (data['message'] ?? 'TTS failed');
-          throw Exception(msg);
-        }
-        return null;
-      }
-      final durSec = (data['durationSeconds'] as num?)?.toDouble() ?? 0;
-      return (
-        audioUrl: data['audioUrl'] as String,
-        duration: Duration(milliseconds: (durSec * 1000).round()),
-        totalChunks: (data['totalChunks'] as num?)?.toInt() ?? 1,
-      );
-    } catch (e) {
-      if (throwOnError) rethrow;
-      return null;
-    }
-  }
-
-  /// Within the CURRENT article's chunks: fetch the next chunk in the
-  /// background so _advanceChunk() finds it already waiting.
-  ///
-  /// This deliberately does NOT wait for a tail window the way
-  /// _maybePrefetchNext does for the next queued article. Synthesizing one
-  /// chunk takes 32-52s in production (measured across live plays — see
-  /// GEMINI_CHUNK_LIMIT's note in documents-synthesize; the latency is
-  /// queueing-dominated, so it barely moves with chunk length). Starting
-  /// that request only [_prefetchLookahead] (25s) before the loaded chunk
-  /// ends therefore guaranteed the request could not finish in time:
-  /// chunk 0 runs ~40-50s of audio, so chunk 1 was requested ~20s in and
-  /// arrived ~30-50s after it was already needed. That's the "plays for
-  /// about 45 seconds, then dead air" symptom — and on iOS Safari a resume
-  /// after that long a stall can silently replay the last buffered chunk
-  /// instead, which is the "starts over" half of it.
-  ///
-  /// So: request the next chunk as soon as the current one starts playing.
-  /// One chunk of lookahead is the minimum the pipeline needs to keep audio
-  /// continuous, and it stays quota-bounded — still exactly one chunk ahead
-  /// of the listener, never the whole article up front.
-  void _maybeFetchNextChunk() {
-    final total = _totalChunks;
-    if (total == null || _loadedChunkIndex + 1 >= total) return;
-    if (!player.playing) return;
-    // A swap is mid-flight — indices are about to shift, and firing a fetch
-    // against the old _loadedChunkIndex here re-requests the very chunk the
-    // swap is loading.
-    if (_advancing || _activeSeeks > 0) return;
-    final nextIndex = _loadedChunkIndex + 1;
-    if (_pendingChunkIndex == nextIndex || _inFlightChunkIndex == nextIndex) {
-      return;
-    }
-    // Only gate on the source actually being loaded — no tail window (see
-    // above). player.duration is null until the chunk is ready to play.
-    if (player.duration == null) return;
-    final a = current;
-    if (a == null) return;
-    final epoch = _playEpoch;
-    final future = _fetchChunk(a, nextIndex);
-    _inFlightChunkIndex = nextIndex;
-    _inFlightChunkFuture = future;
-    unawaited(future.then((res) {
-      if (identical(_inFlightChunkFuture, future)) {
-        _inFlightChunkIndex = null;
-        _inFlightChunkFuture = null;
-      }
-      if (epoch != _playEpoch || res == null) return; // stale, or retry next tick
-      _pendingChunkIndex = nextIndex;
-      _pendingChunkUrl = res.audioUrl;
-      _pendingChunkDuration = res.duration;
-    }));
-  }
-
-  /// Move from the chunk that just finished to the next one — either the
-  /// already-prefetched clip (the common case), the background prefetch's
-  /// own request if it's still running (waited on rather than duplicated),
-  /// or — if nothing was prefetched at all — synthesize it now with a brief
-  /// stall (same idea as today's cold-start wait, just scoped to one chunk).
-  Future<void> _advanceChunk() async {
-    final epoch = _playEpoch;
-    final op = ++_chunkOpId;
-    bool live() => epoch == _playEpoch && op == _chunkOpId;
-    try {
-      final nextIndex = _loadedChunkIndex + 1;
-      String? url;
-      Duration? dur;
-      if (_pendingChunkIndex == nextIndex) {
-        url = _pendingChunkUrl;
-        dur = _pendingChunkDuration;
-      } else if (_inFlightChunkIndex == nextIndex &&
-          _inFlightChunkFuture != null) {
-        loading = true;
-        notifyListeners();
-        final res = await _inFlightChunkFuture!;
-        if (!live()) return;
-        if (res != null) {
-          url = res.audioUrl;
-          dur = res.duration;
-        }
-        // res == null: the prefetch failed silently (it doesn't throw) —
-        // fall through to a fresh, error-surfacing attempt below rather
-        // than leaving the player stuck with no signal.
-      }
-      if (url == null) {
-        final a = current;
-        if (a == null) return;
-        loading = true;
-        notifyListeners();
-        final res = (await _fetchChunk(a, nextIndex, throwOnError: true))!;
-        if (!live()) return;
-        url = res.audioUrl;
-        dur = res.duration;
-      }
-      _pendingChunkIndex = null;
-      _pendingChunkUrl = null;
-      _pendingChunkDuration = null;
-      // Load — and VERIFY — the new source before committing "we've
-      // advanced" bookkeeping. Committing first left the article-level
-      // position claiming the next chunk was playing while the player was
-      // still on (and could replay) the old one whenever the swap failed,
-      // which is exactly the "seek bar far ahead of the audio" symptom.
-      // Freeze the reported position across the swap: player.position
-      // resets to 0 the instant the new source loads, before the
-      // _priorChunksElapsed commit below catches up, and a positionStream
-      // tick landing in that gap would read (and could even persist) the
-      // article as being back at 0 — see _frozenPosition's own doc comment.
-      _frozenPosition = position;
-      try {
-        await _loadChunkUrl(url, dur!, epoch);
-        if (!live()) return;
-        _priorChunksElapsed += _chunkDurations[_loadedChunkIndex];
-        _chunkDurations.add(dur);
-        _loadedChunkIndex = nextIndex;
-      } finally {
-        _frozenPosition = null;
-      }
-      loading = false;
-      notifyListeners();
-      // Respect a pause made during the stall: `playing` stays true through
-      // a natural chunk completion, so false here means the user explicitly
-      // paused while waiting — don't yank playback back on.
-      if (player.playing) await _resumePlayback(epoch);
-      _updateMedia();
-    } catch (e) {
-      if (!live()) return;
-      error = e.toString();
-      loading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Load [url] and verify the player actually swapped to it. On iOS Safari
-  /// a setUrl over an ended source can fail SILENTLY — the call returns but
-  /// the old audio stays loaded, so the old chunk replays while the
-  /// bookkeeping says the next one is playing. The loaded duration is the
-  /// tell: [expected] was measured server-side from the very same file, so
-  /// they match to rounding; a real mismatch means the swap didn't take.
-  /// Retries once (covers plain transient network failures too), then throws
-  /// so the caller surfaces a retryable error instead of desyncing.
-  Future<void> _loadChunkUrl(String url, Duration expected, int epoch) async {
-    Future<bool> swapped() async {
-      final d = await player.setUrl(url);
-      return d == null || (d - expected).abs() < const Duration(seconds: 3);
-    }
-    try {
-      if (await swapped()) return;
-    } catch (_) {
-      // fall through to the single retry below
-    }
-    if (epoch != _playEpoch) return;
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (epoch != _playEpoch) return;
-    if (!await swapped()) {
-      throw Exception('Audio failed to load — tap retry.');
-    }
-  }
-
-  /// Some browsers — notably iOS Safari, especially a PWA opened via "Add to
-  /// Home Screen" — can silently fail to actually resume playback after the
-  /// player has sat idle through a long wait (e.g. a slow chunk synthesis),
-  /// rather than throwing where the caller would notice: the new source
-  /// loads but audio never advances, and whatever was last buffered can
-  /// keep sounding like it's replaying. A bare `unawaited(player.play())`
-  /// swallowed that silently; this awaits it and retries once.
-  Future<void> _resumePlayback(int epoch) async {
-    try {
-      await player.play();
-    } catch (_) {
-      if (epoch != _playEpoch) return;
-      await Future.delayed(const Duration(milliseconds: 300));
-      if (epoch != _playEpoch) return;
-      try {
-        await player.play();
-      } catch (e) {
-        if (epoch != _playEpoch) return;
-        error = e.toString();
-        notifyListeners();
-      }
-    }
-  }
-
   /// How many tracks are queued after the current one.
   int get upNextCount => index < 0 ? 0 : (queue.length - index - 1);
 
@@ -664,17 +307,10 @@ class PlaybackService extends ChangeNotifier {
   }
 
   /// Restart the current track from the top (single-track repeat — see
-  /// `next()` and `_autoAdvance()`). A chunked article needs a real restart
-  /// through `_playIndex` (chunk 0 is an instant cache hit moments after
-  /// finishing it) since a bare seek-to-zero would only rewind within
-  /// whichever chunk happened to be loaded last, not the whole article.
+  /// `next()` and `_autoAdvance()`).
   void _restartCurrentTrack() {
-    if (_totalChunks != null && _totalChunks! > 1) {
-      unawaited(_playIndex(index));
-    } else {
-      player.seek(Duration.zero);
-      player.play();
-    }
+    player.seek(Duration.zero);
+    player.play();
   }
 
   Future<void> previous() async {
@@ -750,7 +386,7 @@ class PlaybackService extends ChangeNotifier {
     brief = false;
     _advancing = false;
     _pendingSeek = null;
-    _resetChunkState();
+    _resetTrackState();
     notifyListeners();
     await player.stop();
     updateMediaSession(title: '', artist: '', playing: false);
@@ -821,103 +457,7 @@ class PlaybackService extends ChangeNotifier {
     );
   }
 
-  /// Seek to an article-relative position. Plain player.seek() only works
-  /// within whichever chunk happens to be loaded, so in chunked mode this
-  /// resolves the target to a (possibly different) chunk first — the seek
-  /// bar spans the whole article, and the OS media-session ±15s controls
-  /// use the same public position/duration the seek bar does, so both need
-  /// this to actually land at the right spot instead of erroring or
-  /// silently clamping. Kept synchronous (fire-and-forget internally) since
-  /// callers (GatiSeekBar's ValueChanged<Duration>, the media-session
-  /// void-Function() closures) expect a plain void call.
-  void seek(Duration d) {
-    if (_totalChunks == null) {
-      player.seek(d);
-      return;
-    }
-    unawaited(_seekChunked(d));
-  }
-
-  Future<void> _seekChunked(Duration d) async {
-    final a = current;
-    if (a == null) return;
-    final epoch = _playEpoch;
-    // Take the chunk-op token: any in-flight _advanceChunk abandons itself
-    // at its next checkpoint, so a seek dragged during a slow transition
-    // can't interleave with it and corrupt the position bookkeeping.
-    final op = ++_chunkOpId;
-    bool live() => epoch == _playEpoch && op == _chunkOpId;
-    final total = _totalChunks!;
-    final target = d < Duration.zero ? Duration.zero : d;
-    _activeSeeks++;
-    try {
-      // Resolve which chunk the target falls in, fetching forward as needed.
-      // Anything already synthesized earlier this session (or in a past
-      // session, since the server caches per chunk) is a fast cache hit;
-      // only genuinely new territory past everything fetched so far pays a
-      // real synthesis cost.
-      var idx = 0;
-      var remaining = target;
-      while (true) {
-        if (idx >= _chunkDurations.length) {
-          loading = true;
-          notifyListeners();
-          final res = (await _fetchChunk(a, idx, throwOnError: true))!;
-          if (!live()) return;
-          _chunkDurations.add(res.duration);
-        }
-        if (idx + 1 >= total || remaining < _chunkDurations[idx]) break;
-        remaining -= _chunkDurations[idx];
-        idx++;
-      }
-      final chunkDur = _chunkDurations[idx];
-      final offset = remaining < chunkDur ? remaining : chunkDur;
-
-      if (idx == _loadedChunkIndex) {
-        // Already the loaded chunk — no reload needed. (Also clears a
-        // `loading` left behind by an advance this seek superseded.)
-        loading = false;
-        player.seek(offset);
-        notifyListeners();
-        return;
-      }
-      // Jumping to a different chunk — (re)fetch its URL, almost always a
-      // cache hit, since we only keep durations (not URLs) for past chunks.
-      final targetChunk = (await _fetchChunk(a, idx, throwOnError: true))!;
-      if (!live()) return;
-      final wasPlaying = player.playing;
-      // Same verified-load as _advanceChunk, and same ordering rule: only
-      // commit the position bookkeeping once the player really holds the
-      // target chunk. Freeze position at the seek TARGET (not the pre-seek
-      // spot — the user is deliberately leaving that) across the swap, same
-      // reasoning as _advanceChunk: player.position resets to 0 the instant
-      // the new chunk loads, before _priorChunksElapsed/the actual seek()
-      // below catch up, and a positionStream tick in that gap would
-      // otherwise report the article as sitting at 0.
-      _frozenPosition = target;
-      try {
-        await _loadChunkUrl(targetChunk.audioUrl, targetChunk.duration, epoch);
-        if (!live()) return;
-        _priorChunksElapsed = _chunkDurations
-            .sublist(0, idx)
-            .fold(Duration.zero, (x, y) => x + y);
-        _loadedChunkIndex = idx;
-      } finally {
-        _frozenPosition = null;
-      }
-      loading = false;
-      if (offset > Duration.zero) player.seek(offset);
-      if (wasPlaying) unawaited(player.play());
-      notifyListeners();
-    } catch (e) {
-      if (!live()) return;
-      error = e.toString();
-      loading = false;
-      notifyListeners();
-    } finally {
-      _activeSeeks--;
-    }
-  }
+  void seek(Duration d) => player.seek(d < Duration.zero ? Duration.zero : d);
 
   void setSpeed(double s) => player.setSpeed(s);
 
@@ -983,13 +523,9 @@ class PlaybackService extends ChangeNotifier {
         .catchError((_) => http.Response('', 204));
   }
 
-  /// Re-attempt the current track after a failure (e.g. a transient TTS error).
-  /// A chunk-mode failure typically happens mid-article (chunk 0 played fine,
-  /// chunk N's fetch threw) — restarting via a bare _playIndex would replay
-  /// chunk 0 in full before hitting the same failure again. Carrying the
-  /// current article-level position into _pendingSeek makes _playIndex reuse
-  /// its existing resume-walk (built for "Continue listening") to skip
-  /// straight back to re-fetching the chunk that actually failed.
+  /// Re-attempt the current track after a failure (e.g. a transient TTS
+  /// error), carrying the current position so a retry resumes where it
+  /// stopped rather than restarting the article.
   Future<void> retry() async {
     if (index < 0 || index >= queue.length) return;
     error = null;
@@ -1013,7 +549,7 @@ class PlaybackService extends ChangeNotifier {
     index = idx;
     loading = true;
     error = null;
-    _resetChunkState();
+    _resetTrackState();
     notifyListeners();
     try {
       final a = queue[idx];
@@ -1029,88 +565,45 @@ class PlaybackService extends ChangeNotifier {
       final url = brief ? a.summaryAudioUrl : a.audioUrl;
       if (url != null && url.startsWith('http')) {
         // Already fully synthesized (download, an earlier full play, or a
-        // prefetch) — one complete file, exactly like before chunking.
+        // prefetch) — play it directly.
         await player.setUrl(url);
         if (epoch != _playEpoch) return;
         _finishStartingPlayback();
         return;
       }
-      if (brief) {
-        // Briefs are short (headline + lede) — always one Gemini call, so
-        // there's no benefit to chunking; stays on the simple single-shot path.
-        final r = await http
-            .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
-                headers: {
-                  ...ApiConfig.authHeaders,
-                  'Content-Type': 'application/json',
-                  },
-                body: json.encode({
-                  'text': a.summaryText ?? a.briefingText,
-                  'language': '${a.language}-IN',
-                  'articleId': a.id,
-                  'target': 'summary_audio_url',
-                  if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
-                  if (a.readingStyle.isNotEmpty) 'readingStyle': a.readingStyle,
-                }))
-            .timeout(const Duration(seconds: 150));
-        if (epoch != _playEpoch) return; // superseded while synthesizing
-        final data = json.decode(r.body) as Map<String, dynamic>;
-        if (data['ok'] != true) {
-          final msg = data['error'] == 'gemini_key_required'
-              ? 'Add your Gemini API key to narrate this.'
-              : (data['message'] ?? 'TTS failed');
-          throw Exception(msg);
-        }
-        a.summaryAudioUrl = data['audioUrl'] as String;
-        await player.setUrl(a.summaryAudioUrl!);
-        if (epoch != _playEpoch) return;
-        _finishStartingPlayback();
-        return;
-      }
-      // Full article, not yet synthesized: play chunk 0 the instant it's
-      // ready, then fetch the rest in the background (_maybeFetchNextChunk /
-      // _advanceChunk), paced by how far the listener actually gets — so
-      // closing the app or skipping around doesn't burn quota synthesizing
-      // audio nobody heard.
-      var chunk = (await _fetchChunk(a, 0, throwOnError: true))!;
+      // Not yet synthesized: one request, one complete file. Briefs narrate
+      // the headline + lede into their own cache column; full articles
+      // narrate the whole body.
+      final r = await http
+          .post(Uri.parse(ApiConfig.documentsSynthesizeUrl),
+              headers: {
+                ...ApiConfig.authHeaders,
+                'Content-Type': 'application/json',
+              },
+              body: json.encode({
+                'text':
+                    brief ? (a.summaryText ?? a.briefingText) : a.spokenText,
+                'language': '${a.language}-IN',
+                'articleId': a.id,
+                if (brief) 'target': 'summary_audio_url',
+                if (a.suggestedSpeaker.isNotEmpty) 'speaker': a.suggestedSpeaker,
+                if (a.readingStyle.isNotEmpty) 'readingStyle': a.readingStyle,
+              }))
+          .timeout(const Duration(seconds: 150));
       if (epoch != _playEpoch) return; // superseded while synthesizing
-      _totalChunks = chunk.totalChunks;
-      _chunkDurations.add(chunk.duration);
-      _loadedChunkIndex = 0;
-
-      // Resuming partway through (e.g. "Continue listening")? Walk forward
-      // through chunks — sequentially, since each one's duration is only
-      // known once fetched — until the target position falls within one.
-      // These are almost always cache hits in practice: a resume target
-      // only exists because the article was already played up to roughly
-      // that point, so the leading chunks were already synthesized (and
-      // cached) during that earlier listen.
-      final resumeTarget = _pendingSeek;
-      var offsetInChunk = Duration.zero;
-      if (resumeTarget != null && resumeTarget > Duration.zero) {
-        var remaining = resumeTarget;
-        while (remaining >= _chunkDurations[_loadedChunkIndex] &&
-            _loadedChunkIndex + 1 < _totalChunks!) {
-          remaining -= _chunkDurations[_loadedChunkIndex];
-          _priorChunksElapsed += _chunkDurations[_loadedChunkIndex];
-          _loadedChunkIndex++;
-          final next = (await _fetchChunk(a, _loadedChunkIndex, throwOnError: true))!;
-          if (epoch != _playEpoch) return;
-          _chunkDurations.add(next.duration);
-          chunk = next;
-        }
-        final currentChunkDur = _chunkDurations[_loadedChunkIndex];
-        offsetInChunk = remaining < currentChunkDur ? remaining : currentChunkDur;
+      final data = json.decode(r.body) as Map<String, dynamic>;
+      if (data['ok'] != true) {
+        throw Exception(data['message'] ?? 'TTS failed');
       }
-
-      // Verified load — same reasoning as _advanceChunk/_seekChunked: a
-      // resume can land several chunks in, and a silent setUrl failure here
-      // would leave the bookkeeping claiming that position while nothing
-      // actually plays.
-      await _loadChunkUrl(chunk.audioUrl, chunk.duration, epoch);
+      final fresh = data['audioUrl'] as String;
+      if (brief) {
+        a.summaryAudioUrl = fresh;
+      } else {
+        a.audioUrl = fresh;
+      }
+      await player.setUrl(fresh);
       if (epoch != _playEpoch) return;
-      if (offsetInChunk > Duration.zero) player.seek(offsetInChunk);
-      _finishStartingPlayback(seek: false);
+      _finishStartingPlayback();
     } catch (e) {
       if (epoch != _playEpoch) return;
       error = e.toString();
@@ -1120,14 +613,11 @@ class PlaybackService extends ChangeNotifier {
   }
 
   /// Shared tail once a source is loaded and about to play: resume-seek,
-  /// bump recently-played, clear loading, start playback. Pass [seek]=false
-  /// when the caller already positioned the player itself (chunked mode maps
-  /// a global resume position to a specific chunk + offset, which a plain
-  /// `player.seek(_pendingSeek!)` against the whole-article duration can't do).
-  void _finishStartingPlayback({bool seek = true}) {
+  /// bump recently-played, clear loading, start playback.
+  void _finishStartingPlayback() {
     // Resume partway through if requested (e.g. "Resume" on a tile).
     final startPos = _pendingSeek?.inSeconds ?? 0;
-    if (seek && _pendingSeek != null) player.seek(_pendingSeek!);
+    if (_pendingSeek != null) player.seek(_pendingSeek!);
     _pendingSeek = null;
     // bumps recently-played + records spot + (re)writes the 24h content
     // snapshot so this article can still be resumed/reopened later even if

@@ -2,16 +2,15 @@
 --
 -- The Live feed used to be a straight pass-through of feeds-articles: whatever
 -- the publisher RSS had at that second, narrated on demand. That put TTS
--- synthesis on the critical path of playback, and since one Gemini chunk takes
--- 32-52s while a chunk only buys ~45s of audio, the very first chunk boundary
--- was a coin flip (see the _maybeFetchNextChunk note in playback_service.dart).
+-- synthesis on the critical path of playback, so the first play of any article
+-- paid the full synthesis wait.
 --
 -- Instead: stage a batch out of band, synthesize every article in it while
--- nobody is watching (paced under the Gemini rate limit), and only then swap it
--- in front of readers. Until that swap the previous batch keeps serving, so the
--- feed is never empty and never half-narrated. An article reaches the feed only
--- once all of its chunks are cached, which makes "audio is ready" an invariant
--- of the published feed rather than something playback has to race.
+-- nobody is watching (paced under the provider's rate limit), and only then
+-- swap it in front of readers. Until that swap the previous batch keeps
+-- serving, so the feed is never empty and never half-narrated. An article
+-- reaches the feed only once its audio is cached, which makes "audio is ready"
+-- an invariant of the published feed rather than something playback has to race.
 --
 -- The second prize is retention. Audio here is regenerable and short-lived, and
 -- an unbounded `audio` bucket is what put the whole project into
@@ -41,29 +40,26 @@ create table if not exists public.live_batches (
 create index if not exists live_batches_lang_status_idx
   on public.live_batches (lang, status, created_at desc);
 
--- One row per (batch, article, chunk) of synthesis work. Chunk 0 is enqueued
--- when the batch is created; chunks 1..n-1 can only be enqueued after chunk 0
--- comes back, since the server-side split is what reveals how many there are.
-create table if not exists public.live_batch_chunks (
+-- One row per (batch, article) of synthesis work, all enqueued when the batch
+-- is created.
+create table if not exists public.live_batch_items (
   batch_id     uuid not null references public.live_batches(id) on delete cascade,
   article_id   uuid not null,
-  chunk_index  int  not null,
-  total_chunks int,
   status       text not null default 'pending'
                check (status in ('pending', 'done', 'failed')),
   attempts     int  not null default 0,
   audio_url    text,
   error        text,
   updated_at   timestamptz not null default now(),
-  primary key (batch_id, article_id, chunk_index)
+  primary key (batch_id, article_id)
 );
 
-create index if not exists live_batch_chunks_pending_idx
-  on public.live_batch_chunks (batch_id, status, article_id, chunk_index);
+create index if not exists live_batch_items_pending_idx
+  on public.live_batch_items (batch_id, status, article_id);
 
 -- Single-row advisory lock. Ticks are driven by an external scheduler, and a
 -- manual dispatch can land on top of a scheduled run; two ticks draining the
--- same queue would double-spend the Gemini budget on identical chunks. Claimed
+-- same queue would double-spend the synthesis budget on identical work. Claimed
 -- with a conditional UPDATE, which is atomic, so the loser simply does nothing.
 create table if not exists public.live_warm_lock (
   id           int primary key default 1 check (id = 1),
@@ -76,6 +72,6 @@ insert into public.live_warm_lock (id, locked_until)
 -- Service-role only, like feed_cache: the app never reads these tables
 -- directly, it only ever sees what feeds-articles returns. RLS on with no
 -- policy means the anon and authenticated keys get nothing.
-alter table public.live_batches      enable row level security;
-alter table public.live_batch_chunks enable row level security;
-alter table public.live_warm_lock    enable row level security;
+alter table public.live_batches     enable row level security;
+alter table public.live_batch_items enable row level security;
+alter table public.live_warm_lock   enable row level security;

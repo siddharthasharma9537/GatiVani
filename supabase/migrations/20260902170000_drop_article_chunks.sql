@@ -1,0 +1,11 @@
+-- Chunked playback is gone: the client now requests one complete narration per
+-- article instead of addressable slices, so documents-synthesize no longer has
+-- a chunkIndex mode and nothing reads or writes this table.
+--
+-- Dropping it is safe because it was only ever a cache — every row could be
+-- regenerated from the article text, and articles.audio_url is the cache that
+-- replaces it. The chunk .wav objects it pointed at are NOT deleted here: the
+-- storage-cleanup retention sweep removes them by age, which keeps object
+-- deletion on the one path that goes through the storage API (deleting
+-- storage.objects rows directly orphans the files permanently).
+drop table if exists public.article_chunks;

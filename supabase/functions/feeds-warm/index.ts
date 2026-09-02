@@ -8,7 +8,7 @@ import * as r2 from "../_shared/r2.ts";
 // it often. The work is a small state machine per language:
 //
 //   no staging batch, last publish older than the interval → build one
-//   staging batch with pending chunks                      → drain some
+//   staging batch with pending articles                    → drain some
 //   staging batch drained (or past its deadline)           → publish it
 //   batches retired long enough                            → drop their audio
 //
@@ -90,8 +90,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── Article text ──────────────────────────────────────────────────────────────
 // MUST match NewspaperArticle.spokenText in the Dart client exactly, character
-// for character. documents-synthesize keys its chunk cache on sha256(text), so
-// a single differing space means every warmed chunk is a cache MISS and the
+// for character. documents-synthesize keys its cache on sha256(text), so a
+// single differing space means the warmed audio is a cache MISS and the
 // reader silently pays for on-demand synthesis anyway — with no error to notice.
 // See packages/app/lib/models/newspaper_article.dart.
 function spokenText(title: string, body: string, summary: string): string {
@@ -112,19 +112,18 @@ interface FeedItem {
   body: string;
 }
 
-// ── One chunk of synthesis ────────────────────────────────────────────────────
-// Goes through documents-synthesize rather than calling Gemini directly, so the
-// warmed audio lands in exactly the cache row (article_chunks, keyed by
-// article_id + target + chunk_index + text_hash) that the client will look in.
+// ── One article of synthesis ──────────────────────────────────────────────────
+// Goes through documents-synthesize rather than calling the TTS provider
+// directly, so the warmed audio lands in exactly the cache row
+// (articles.audio_url, guarded by audio_text_hash) that the client will look in.
 // Reimplementing synthesis here would mean two paths that have to agree forever.
 //
 // The service-role key is a valid JWT with no `sub`, so documents-synthesize's
 // per-user rate limit does not apply — this job is budgeted by its own pacing.
-async function synthesizeChunk(
+async function synthesizeArticle(
   item: FeedItem,
   lang: string,
-  chunkIndex: number,
-): Promise<{ audioUrl: string; totalChunks: number }> {
+): Promise<{ audioUrl: string }> {
   const resp = await fetch(
     `${Deno.env.get("SUPABASE_URL")}/functions/v1/documents-synthesize`,
     {
@@ -137,7 +136,6 @@ async function synthesizeChunk(
         text: spokenText(item.title, item.body, item.summary),
         language: `${lang}-IN`,
         articleId: item.id,
-        chunkIndex,
         // Live articles carry no suggested speaker, so the client omits it too
         // and both sides land on the language default voice.
         readingStyle: "news_anchor",
@@ -151,10 +149,7 @@ async function synthesizeChunk(
       `synthesize ${resp.status}: ${String(data.error ?? data.message ?? "unknown")}`,
     );
   }
-  return {
-    audioUrl: String(data.audioUrl ?? ""),
-    totalChunks: Number(data.totalChunks ?? 1),
-  };
+  return { audioUrl: String(data.audioUrl ?? "") };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -181,10 +176,8 @@ async function buildBatch(db: Db, lang: string, cfg: Config) {
     .insert({ lang, status: "staging", items: usable }).select("id").single();
   if (error) throw new Error(`batch insert failed: ${error.message}`);
 
-  // Only chunk 0 can be enqueued now; the rest are unknowable until the server
-  // splits the text, which it only reveals in chunk 0's response.
-  const { error: qErr } = await db.from("live_batch_chunks").insert(
-    usable.map((i) => ({ batch_id: batch.id, article_id: i.id, chunk_index: 0 })),
+  const { error: qErr } = await db.from("live_batch_items").insert(
+    usable.map((i) => ({ batch_id: batch.id, article_id: i.id })),
   );
   if (qErr) throw new Error(`queue insert failed: ${qErr.message}`);
   console.log(`[warm] ${lang}: staged batch ${batch.id} with ${usable.length} articles`);
@@ -200,11 +193,11 @@ async function drain(
   cfg: Config,
   deadline: number,
 ): Promise<{ started: number; done: number; failed: number }> {
-  const { data: pending } = await db.from("live_batch_chunks")
-    .select("article_id, chunk_index, attempts")
+  const { data: pending } = await db.from("live_batch_items")
+    .select("article_id, attempts")
     .eq("batch_id", batchId).eq("status", "pending")
     .lt("attempts", cfg.maxAttempts)
-    .order("article_id").order("chunk_index");
+    .order("article_id");
   if (!pending?.length) return { started: 0, done: 0, failed: 0 };
 
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -224,34 +217,18 @@ async function drain(
     if (!item) continue;
     inFlight.push((async () => {
       try {
-        const res = await synthesizeChunk(item, lang, row.chunk_index);
-        await db.from("live_batch_chunks").update({
+        const res = await synthesizeArticle(item, lang);
+        await db.from("live_batch_items").update({
           status: "done",
           audio_url: res.audioUrl,
-          total_chunks: res.totalChunks,
           attempts: row.attempts + 1,
           updated_at: new Date().toISOString(),
-        }).eq("batch_id", batchId).eq("article_id", row.article_id)
-          .eq("chunk_index", row.chunk_index);
+        }).eq("batch_id", batchId).eq("article_id", row.article_id);
         done++;
-        // Chunk 0's response is the only place the chunk count comes from, so
-        // this is where the rest of the article becomes schedulable.
-        if (row.chunk_index === 0 && res.totalChunks > 1) {
-          const rest = Array.from({ length: res.totalChunks - 1 }, (_, k) => ({
-            batch_id: batchId,
-            article_id: row.article_id,
-            chunk_index: k + 1,
-            total_chunks: res.totalChunks,
-          }));
-          await db.from("live_batch_chunks").upsert(rest, {
-            onConflict: "batch_id,article_id,chunk_index",
-            ignoreDuplicates: true,
-          });
-        }
       } catch (e) {
         failed++;
         const attempts = row.attempts + 1;
-        await db.from("live_batch_chunks").update({
+        await db.from("live_batch_items").update({
           // Out of attempts means this article just won't make the batch;
           // publish filters it out rather than shipping a gap.
           status: attempts >= cfg.maxAttempts ? "failed" : "pending",
@@ -259,8 +236,7 @@ async function drain(
           error: String((e as Error).message ?? e).slice(0, 300),
           updated_at: new Date().toISOString(),
         }).eq("batch_id", batchId).eq("article_id", row.article_id)
-          .eq("chunk_index", row.chunk_index);
-        console.warn(`[warm] chunk ${row.article_id}#${row.chunk_index} failed:`, e);
+        console.warn(`[warm] article ${row.article_id} failed:`, e);
       }
     })());
   }
@@ -270,27 +246,12 @@ async function drain(
 }
 
 // ── Ready set ─────────────────────────────────────────────────────────────────
-// An article is ready only when chunk 0 came back AND every chunk it announced
-// is done. Anything short of that is exactly the half-synthesized state this
-// whole design exists to keep out of the feed.
+// An article is ready once its narration came back. Anything short of that is
+// exactly the un-narrated state this whole design exists to keep out of the feed.
 async function readyArticleIds(db: Db, batchId: string): Promise<Set<string>> {
-  const { data: rows } = await db.from("live_batch_chunks")
-    .select("article_id, chunk_index, total_chunks, status").eq("batch_id", batchId);
-  const byArticle = new Map<string, { total: number | null; done: Set<number> }>();
-  for (const r of rows ?? []) {
-    const e = byArticle.get(r.article_id) ?? { total: null, done: new Set<number>() };
-    if (r.chunk_index === 0 && r.status === "done") e.total = r.total_chunks ?? 1;
-    if (r.status === "done") e.done.add(r.chunk_index);
-    byArticle.set(r.article_id, e);
-  }
-  const ready = new Set<string>();
-  for (const [id, e] of byArticle) {
-    if (e.total === null) continue;
-    let all = true;
-    for (let i = 0; i < e.total; i++) if (!e.done.has(i)) { all = false; break; }
-    if (all) ready.add(id);
-  }
-  return ready;
+  const { data: rows } = await db.from("live_batch_items")
+    .select("article_id").eq("batch_id", batchId).eq("status", "done");
+  return new Set<string>((rows ?? []).map((r: { article_id: string }) => r.article_id));
 }
 
 // ── Publish ───────────────────────────────────────────────────────────────────
@@ -325,9 +286,9 @@ async function publish(
     published_at: new Date().toISOString(),
     items: readyItems,
   }).eq("id", batchId);
-  // Drop the queue rows for chunks that never made it — the audio they point at
-  // doesn't exist, and keeping them would confuse the retention pass below.
-  await db.from("live_batch_chunks").delete()
+  // Drop the queue rows that never made it — the audio they point at doesn't
+  // exist, and keeping them would confuse the retention pass below.
+  await db.from("live_batch_items").delete()
     .eq("batch_id", batchId).neq("status", "done");
   console.log(`[warm] ${lang}: published batch ${batchId} with ${readyItems.length} articles`);
   return { published: true, articles: readyItems.length };
@@ -347,14 +308,14 @@ async function collectGarbage(db: Db, cfg: Config): Promise<number> {
   if (!batches?.length) return 0;
 
   const ids = batches.map((b: { id: string }) => b.id);
-  const { data: chunks } = await db.from("live_batch_chunks")
-    .select("article_id, chunk_index").in("batch_id", ids);
-  if (!chunks?.length) {
+  const { data: rows } = await db.from("live_batch_items")
+    .select("article_id").in("batch_id", ids);
+  if (!rows?.length) {
     await db.from("live_batches").delete().in("id", ids);
     return 0;
   }
 
-  const articleIds = [...new Set(chunks.map((c: { article_id: string }) => c.article_id))];
+  const articleIds = [...new Set(rows.map((r: { article_id: string }) => r.article_id))];
   const keep = new Set<string>();
 
   // A story that is still running routinely survives into the next batch — the
@@ -365,7 +326,7 @@ async function collectGarbage(db: Db, cfg: Config): Promise<number> {
   const { data: live } = await db.from("live_batches")
     .select("id").neq("status", "retired");
   if (live?.length) {
-    const { data: stillUsed } = await db.from("live_batch_chunks")
+    const { data: stillUsed } = await db.from("live_batch_items")
       .select("article_id")
       .in("batch_id", live.map((b: { id: string }) => b.id))
       .in("article_id", articleIds);
@@ -380,10 +341,10 @@ async function collectGarbage(db: Db, cfg: Config): Promise<number> {
 
   // Path is reconstructed the same way documents-synthesize writes it for the
   // full-article target ("" suffix); a brief would be ".brief".
-  const paths = chunks
-    .filter((c: { article_id: string }) => !keep.has(c.article_id))
-    .map((c: { article_id: string; chunk_index: number }) =>
-      `articles/${c.article_id}.chunk${c.chunk_index}.wav`);
+  const dead = [...new Set(
+    articleIds.filter((id: string) => !keep.has(id)),
+  )] as string[];
+  const paths = dead.map((id) => `articles/${id}.wav`);
 
   let removed = 0;
   for (let i = 0; i < paths.length; i += 100) {
@@ -400,14 +361,11 @@ async function collectGarbage(db: Db, cfg: Config): Promise<number> {
       console.warn("[warm] audio remove failed:", e);
     }
   }
-  // Clearing article_chunks is what makes a later play re-synthesize rather
+  // Clearing the cached URL is what makes a later play re-synthesize rather
   // than hand the player a URL that now 404s.
-  const gone = chunks
-    .filter((c: { article_id: string }) => !keep.has(c.article_id))
-    .map((c: { article_id: string }) => c.article_id);
-  if (gone.length) {
-    await db.from("article_chunks").delete()
-      .in("article_id", [...new Set(gone)]).eq("target", "audio_url");
+  if (dead.length) {
+    await db.from("articles")
+      .update({ audio_url: null, audio_text_hash: null }).in("id", dead);
   }
   await db.from("live_batches").delete().in("id", ids);
   console.log(`[warm] retention: removed ${removed} objects from ${ids.length} retired batch(es)`);
@@ -441,7 +399,7 @@ async function tickLang(db: Db, lang: string, cfg: Config, deadline: number, for
   const items = staging.items as FeedItem[];
   const res = await drain(db, staging.id, lang, items, cfg, deadline);
 
-  const { count: left } = await db.from("live_batch_chunks")
+  const { count: left } = await db.from("live_batch_items")
     .select("*", { count: "exact", head: true })
     .eq("batch_id", staging.id).eq("status", "pending").lt("attempts", cfg.maxAttempts);
   const ageMin = (Date.now() - Date.parse(staging.created_at)) / 60_000;
@@ -453,7 +411,7 @@ async function tickLang(db: Db, lang: string, cfg: Config, deadline: number, for
     const pub = await publish(db, staging.id, lang, items, cfg);
     return { lang, action: pub.published ? "published" : "discarded", overdue, ...res, ...pub };
   }
-  return { lang, action: "draining", pendingChunks: left, ...res };
+  return { lang, action: "draining", pendingArticles: left, ...res };
 }
 
 Deno.serve(async (req) => {
