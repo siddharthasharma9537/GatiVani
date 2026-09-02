@@ -79,7 +79,7 @@ class PlaybackService extends ChangeNotifier {
       _updateMedia();
       notifyListeners();
     });
-    player.positionStream.listen((pos) {
+    player.positionStream.listen((_) {
       notifyListeners();
       // Persist progress every ~10s while actually playing, so a tile can show
       // "Resume" with the right spot. Cheap upsert; full saves also on pause /
@@ -93,7 +93,7 @@ class PlaybackService extends ChangeNotifier {
         _saveProgress();
       }
       _maybePrefetchNext();
-      _maybeFetchNextChunk(pos);
+      _maybeFetchNextChunk();
     });
   }
   static final PlaybackService i = PlaybackService._();
@@ -120,14 +120,15 @@ class PlaybackService extends ChangeNotifier {
   // so a burst of position-stream ticks near the end of a track doesn't fire
   // duplicate requests.
   String? _prefetchedArticleId;
-  // How close to the end of the current track/chunk to start synthesizing the
-  // next one. Close enough that closing the app / bailing out mid-article
-  // doesn't burn the user's Gemini quota on content never reached; early
-  // enough that a single chunk-mode chunk (sized server-side to fit this
-  // window — see CHUNK_MODE_LIMIT in documents-synthesize) usually finishes
-  // synthesizing before it's actually needed. 25s (not 20) for margin against
-  // real-world network/API jitter, while staying inside the "20-30s ahead"
-  // quota budget this was scoped to.
+  // How close to the end of the current ARTICLE to start synthesizing the
+  // next queued one (see _maybePrefetchNext). Close enough that closing the
+  // app / bailing out mid-article doesn't burn Gemini quota on a track never
+  // reached; 25s (not 20) for margin against real-world network/API jitter.
+  //
+  // This intentionally does NOT pace the current article's own chunks: one
+  // chunk takes 32-52s to synthesize, so a 25s window can never cover a
+  // chunk boundary — _maybeFetchNextChunk pipelines one chunk ahead
+  // instead, and explains why there.
   static const _prefetchLookahead = Duration(seconds: 25);
   // Progressive chunk playback for the CURRENT article: instead of waiting
   // for the whole article to synthesize, chunk 0 plays as soon as it's
@@ -434,12 +435,27 @@ class PlaybackService extends ChangeNotifier {
     }
   }
 
-  /// Within the CURRENT article's chunks: once the buffered time left in the
-  /// loaded chunk drops under [_prefetchLookahead], fetch the next chunk in
-  /// the background so _advanceChunk() finds it already waiting — same
-  /// pacing idea as _maybePrefetchNext, just scoped to one article's chunks
-  /// instead of queued tracks.
-  void _maybeFetchNextChunk(Duration pos) {
+  /// Within the CURRENT article's chunks: fetch the next chunk in the
+  /// background so _advanceChunk() finds it already waiting.
+  ///
+  /// This deliberately does NOT wait for a tail window the way
+  /// _maybePrefetchNext does for the next queued article. Synthesizing one
+  /// chunk takes 32-52s in production (measured across live plays — see
+  /// GEMINI_CHUNK_LIMIT's note in documents-synthesize; the latency is
+  /// queueing-dominated, so it barely moves with chunk length). Starting
+  /// that request only [_prefetchLookahead] (25s) before the loaded chunk
+  /// ends therefore guaranteed the request could not finish in time:
+  /// chunk 0 runs ~40-50s of audio, so chunk 1 was requested ~20s in and
+  /// arrived ~30-50s after it was already needed. That's the "plays for
+  /// about 45 seconds, then dead air" symptom — and on iOS Safari a resume
+  /// after that long a stall can silently replay the last buffered chunk
+  /// instead, which is the "starts over" half of it.
+  ///
+  /// So: request the next chunk as soon as the current one starts playing.
+  /// One chunk of lookahead is the minimum the pipeline needs to keep audio
+  /// continuous, and it stays quota-bounded — still exactly one chunk ahead
+  /// of the listener, never the whole article up front.
+  void _maybeFetchNextChunk() {
     final total = _totalChunks;
     if (total == null || _loadedChunkIndex + 1 >= total) return;
     if (!player.playing) return;
@@ -451,9 +467,9 @@ class PlaybackService extends ChangeNotifier {
     if (_pendingChunkIndex == nextIndex || _inFlightChunkIndex == nextIndex) {
       return;
     }
-    final dur = player.duration;
-    if (dur == null || dur == Duration.zero) return;
-    if (dur - pos > _prefetchLookahead) return;
+    // Only gate on the source actually being loaded — no tail window (see
+    // above). player.duration is null until the chunk is ready to play.
+    if (player.duration == null) return;
     final a = current;
     if (a == null) return;
     final epoch = _playEpoch;
