@@ -7,7 +7,9 @@ the **Live feed on free-tier TTS**. Runtime stack stays **Sarvam Vision (OCR) +
 Gemini (vision/structure) + Gemini TTS** — this plan does not move inference to
 Claude. Prices below were looked up on 2026-09-02; ₹ figures use **₹95 / $1**.
 Sources at the end. Anything marked *verify* could not be read from the vendor's
-own page (blocked from this session) and was taken from secondary sources.
+own page (blocked from this session) and was taken from secondary sources. The
+`te-IN` Cloud TTS voice list and rates in §2.1/§2.3 were supplied by the project
+owner on 2026-09-02; confirm them once from Cloud Billing after the first month.
 
 ---
 
@@ -23,13 +25,12 @@ whole edition on Gemini for under ₹50" is not achievable at any orchestration.
    structure is paid once per edition, not per user.
 2. **Prewarm only the top stories on Gemini TTS via Batch mode** (50 % off) —
    ~35 min of premium audio for **₹13–26**. Edition total lands at **₹35–50**.
-3. **Narrate the long tail and the Live feed on Google Cloud TTS Standard
-   Telugu voices** — **free for 4 M characters/month** (≈ 22 full editions or
-   ~4,000 headlines a day), ₹0.38/1k chars after that. Browser
-   `speechSynthesis` on Android Chrome is the ₹0 first choice for headlines.
-   (WaveNet is *not* confirmed to share Standard's price or free pool, and
-   `te-IN` may have no WaveNet voice at all — settle it with §2.3 before
-   choosing a tier.)
+3. **Narrate the long tail and the Live feed on a Cloud TTS free-lane cascade** —
+   WaveNet's 1 M, Standard's 4 M and Chirp 3 HD's 1 M are separate monthly pools,
+   so **5–6 M free characters/month** (≈ 28–42 editions) before anything bills.
+   WaveNet costs the *same* $4/1M as Standard past the pool, so paid Standard is
+   never the right call. Browser `speechSynthesis` on Android Chrome stays the ₹0
+   first choice for headlines. Details in §2.3.
 4. **Stop storing WAV.** 24 kHz PCM is ~2.9 MB/min; Opus/MP3 at 32 kbps is ~0.24 MB/min.
    That is why the audio bucket blew the Supabase quota.
 5. **Migrate off every `gemini-2.5-*` model before 16 Oct 2026** — Google retires
@@ -88,9 +89,10 @@ Findings that matter for cost and reliability:
 | Gemini 3.1 Flash TTS | $20 per 1M → $1.80/h | avoid |
 | Gemini Batch mode | **50 % off**, TTS included | results within 24 h |
 | Gemini TTS free tier | 3 RPM / 15 RPD | unusable for anything |
-| Google Cloud TTS **Standard** te‑IN | **0–4 M chars/month free**, then **$4 / 1M chars ≈ ₹0.38 / 1k chars ≈ ₹0.27/min** | returns MP3/OGG directly |
-| Google Cloud TTS **WaveNet** te‑IN | **disputed — see §2.3**: either 4 M free + $4/1M (2026 price cut) or 1 M free + $16/1M (classic) | **and te‑IN may have no WaveNet voice at all — run the `voices.list` check in §2.3 first** |
-| Google Cloud TTS Chirp 3 HD te‑IN | 1 M free/month, then $30/1M | te‑IN added Mar 2026; best quality of the Cloud tiers |
+| Cloud TTS **Standard** te‑IN (`-Standard-A/B`) | **4 M chars/month free**, then **$4 / 1M ≈ ₹0.38 / 1k chars ≈ ₹0.27/min** | returns MP3/OGG directly |
+| Cloud TTS **WaveNet** te‑IN (`-Wavenet-A/B`) | **1 M chars/month free**, then **$4 / 1M — same rate as Standard** | better voice at an identical paid price; only the free pool is smaller |
+| Cloud TTS **Neural2** te‑IN (`-Neural2-A`) | 1 M free/month, then $16/1M ≈ ₹1.06/min | costs more per minute than Gemini 3.5 Flash TTS — skip |
+| Cloud TTS **Chirp 3 HD** te‑IN (`-Chirp3-HD-Achernar`, `-Achird`) | 1 M free/month, then $30/1M | best Cloud-tier quality; use the free pool, never pay the rate |
 | Azure Neural TTS te‑IN | 0.5 M chars/month free, then $16/1M | second free pool |
 | Sarvam Bulbul v2 / v3 | ₹15 / ₹30 per 10k chars → ₹1.05 / ₹2.1 per min | more expensive than Gemini per minute |
 | Browser `speechSynthesis` te‑IN | ₹0 | Android Chrome + Google TTS engine; quality varies by device |
@@ -118,49 +120,61 @@ statistic in `structure.ts`), 800–1,200 Telugu chars per article, **700 chars/
 |---|---|---|---|
 | Everything on Gemini 2.5 Flash TTS, interactive | 168–252 min | ₹240–360 | No |
 | Everything on Gemini 3.5 Flash TTS, Batch | 168–252 min | ₹72–108 | No |
-| Everything on Google Cloud Standard, beyond free tier | 118–176k chars | ₹45–67 | Borderline |
-| Everything on Google Cloud Standard, **inside 4 M free/month** | up to ~22 editions | **₹0** | **Yes** |
-| **Top 24 stories prewarmed on Gemini 3.5 Flash TTS Batch (~35 min), tail on Cloud Standard free** | 35 min premium + rest lazy | **₹15 + ₹0** | **Yes: ₹29 now, ₹39 after Oct** |
+| Everything on Cloud TTS, past every free pool | 118–176k chars | ₹45–67 | Borderline |
+| Everything on the **Cloud TTS free cascade** (§2.3) | ~28–42 editions/month | **₹0** | **Yes** |
+| **Top 24 stories prewarmed on Gemini 3.5 Flash TTS Batch (~35 min), tail on the free cascade** | 35 min premium + rest lazy | **₹15 + ₹0** | **Yes: ₹29 now, ₹39 after Oct** |
 | Same, prewarm on Gemini 2.5 Flash TTS Batch | | ₹25 + ₹0 | Yes: ₹39 / ₹49 |
 | Tail synthesised lazily on Gemini per play | ~₹0.86–1.43 per listened minute | user-driven | Only if listening is short |
 
 The hybrid row is the recommendation. Premium voice where most taps land, free
 Telugu voice everywhere else, nothing synthesised twice.
 
-### 2.3 Standard vs WaveNet: settle it with one API call
+### 2.3 The free-lane cascade: 5 M free characters a month
 
-Secondary sources disagree, Google's own pricing page is unreachable from here, and
-the two answers differ by 4× in price and 4× in free allowance. **Do not pick a
-voice tier from any blog — including this document.** Two checks, both free:
+Confirmed pricing for `te-IN` (2026): **WaveNet costs the same $4/1M as Standard —
+its price was cut from $16 — but its free pool is 1 M/month, not 4 M.** That single
+fact decides the whole free lane, because two consequences follow:
 
-**Check 1 — does Telugu even have a WaveNet voice?** This is the decisive one.
-`te-IN` historically shipped Standard voices only; Chirp 3 HD added `te-IN` in
-March 2026. If there is no `te-IN-Wavenet-*`, the pricing question is moot.
+1. **Paid Standard is never rational.** Beyond the free pools, Standard and WaveNet
+   bill identically, so there is no volume at which the worse voice is cheaper.
+   Standard exists only to consume its own 4 M free characters.
+2. **The pools are per voice type and they stack.** WaveNet 1 M + Standard 4 M =
+   **5 M free characters every month**, ≈ 28–42 full editions, before a rupee is
+   billed. Chirp 3 HD adds a third 1 M pool on top.
+
+So the free lane is a **cascade, not a voice choice** — spend the best free pool
+first, fall through as each is exhausted, and land on paid WaveNet (never paid
+Standard):
+
+| Order | Voice | Monthly pool | Rate past the pool | Give it |
+|---|---|---|---|---|
+| 1 | `te-IN-Chirp3-HD-*` | 1 M | $30/1M — never pay it | the day's lead stories, if you skip the Gemini prewarm |
+| 2 | `te-IN-Wavenet-A/B` | 1 M | $4/1M | section leads and everything a user actually opens |
+| 3 | `te-IN-Standard-A/B` | 4 M | $4/1M — never pay it | the long tail and the Live feed ticker |
+| 4 | `te-IN-Wavenet-*` (paid) | — | $4/1M ≈ ₹0.27/min | overflow past 5 M; still the best voice at the price |
+
+**What this costs GatiVani at one edition a day:** ~147k chars/edition × 30 ≈ 4.4 M,
+plus ~0.75 M for the Live feed ≈ **5.2 M chars/month** against 5 M free — roughly
+**₹60/month of overflow**, and ₹0 if edition dedupe removes a few repeat uploads.
+The free pools *are* the narration budget; the ₹50-per-edition target is met with
+room to spare as long as you stay inside them.
+
+**Implementation:** the `model_calls` table from Phase 0 already records `chars` per
+call. A view summing this month's characters per voice tier is the routing input —
+`pickVoice()` reads it and returns the first tier with pool remaining. No guessing,
+and the cascade self-corrects on the 1st of each month.
+
+**One check still worth running once**, because voice *names* must be exact and this
+pricing came from a secondary summary rather than the vendor page:
 
 ```bash
 curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   "https://texttospeech.googleapis.com/v1/voices?languageCode=te-IN" \
-  | jq -r '.voices[] | "\(.name)\t\(.ssmlGender)\t\(.naturalSampleRateHertz)"' | sort
+  | jq -r '.voices[] | "\(.name)\t\(.ssmlGender)"' | sort
 ```
 
-Every voice you may use is in that list, and the tier is in the name
-(`te-IN-Standard-A`, `te-IN-Wavenet-A`, `te-IN-Chirp3-HD-*`).
-
-**Check 2 — what does it actually bill?** Synthesise ~10k characters on each tier
-that exists, then read Cloud Billing → *Reports*, filtered to the Text-to-Speech
-SKU, grouped by SKU. The SKU names carry the tier and the rate. That is the only
-authoritative price for your account.
-
-**Decision rule, once you know:**
-
-| If te‑IN WaveNet exists and bills at $4/1M with a 4 M free pool | Use it instead of Standard. Same cost, better voice — a pure upgrade. |
-|---|---|
-| If it bills at $16/1M with a 1 M free pool | **Skip WaveNet.** 1 M chars ≈ 6–8 editions/month, and beyond that it costs ≈ ₹1.06/min — *more* than Gemini 3.5 Flash TTS (₹0.86/min) and close to Gemini 2.5 Flash TTS (₹1.43/min), both of which sound better. Paying WaveNet rates to avoid Gemini makes no sense; keep Standard for the free lane and spend on the Gemini prewarm instead. |
-| If te‑IN has no WaveNet voice | Free lane stays Standard. For a quality lift, the tail's next step is Chirp 3 HD te‑IN inside its 1 M free chars/month (≈ 6–8 editions), not WaveNet. |
-
-Note the free tiers are **per voice type, per month, per billing account** — Standard's
-4 M and Chirp 3 HD's 1 M are separate pools, so you can run the bulk on Standard and
-spend Chirp 3 HD's pool on the stories that matter without touching either budget.
+Confirm the rates once from Cloud Billing → *Reports*, grouped by SKU, after the
+first real month.
 
 ### 2.4 The Live feed
 
@@ -316,10 +330,11 @@ the files it touches.
 
 ### Phase 2 — Free-lane TTS + Live feed (≈ 4–5 days)
 
-1. `documents-synthesize`: add `lane: "premium" | "free"`; free lane calls Cloud TTS
-   `te-IN-Standard-*` / `Wavenet` with `audioEncoding: MP3`, cached by `text_hash`
-   like today. Default the Live feed, explainers and every non-prewarmed article to
-   the free lane.
+1. `documents-synthesize`: add `lane: "premium" | "free"`. The free lane calls Cloud
+   TTS with `audioEncoding: MP3`, cached by `text_hash` as today, and picks its voice
+   through `pickVoice()` — a cascade over the remaining monthly pools (Chirp 3 HD →
+   WaveNet → Standard → paid WaveNet, §2.3) read from the `model_calls` character
+   totals. Default the Live feed, explainers and every non-prewarmed article to it.
 2. Flutter: `speech_web.dart` already wraps `SpeechRecognition`; add
    `speak_web.dart` for `speechSynthesis` with te‑IN voice detection. Use it for
    headlines/ticker when a Telugu voice exists; fall back to the free lane URL.
@@ -363,8 +378,10 @@ the README, and `structure.ts`; ask for a PR per phase step.
    1 M free chars.
 2. **How much to prewarm:** 3 stories/section ≈ 35 min ≈ ₹15. Every extra story is
    ~₹0.6–1.
-3. **Free-lane voice quality:** Standard vs WaveNet te‑IN — listen to both on 10
-   articles; both are inside the free tier (*verify* WaveNet's free allowance).
+3. **Where each free pool goes.** The cascade order in §2.3 is a default, not a law:
+   Chirp 3 HD's 1 M could go to the day's lead stories instead of section leads.
+   Listen to Chirp 3 HD, WaveNet and Standard te‑IN on the same 10 articles and
+   decide what deserves which pool.
 4. **Queue platform:** Supabase (`pgmq`) unless you already plan to move to Workers.
 5. **Shared daily editions** need publisher permission per title.
 
