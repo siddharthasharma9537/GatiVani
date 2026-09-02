@@ -1,0 +1,74 @@
+name: Warm Live Batch
+
+# Pre-synthesizes the Live feed out of band so playback never waits on Gemini.
+#
+# The schedule is a TICK, not the cadence. Each tick does a bounded slice of
+# work — start a batch, narrate a few chunks, publish when the batch is done —
+# and the actual cadence (how often a new batch starts, how many articles it
+# holds, how fast it may call Gemini) lives in the function's env vars, so it
+# changes with `supabase secrets set` and no redeploy:
+#
+#   supabase secrets set WARM_INTERVAL_MINUTES=120 \
+#     WARM_ARTICLES=12 WARM_RPM=3 WARM_LANGS=te --project-ref jjoxowdvzmlchtfarpbs
+#
+# Ticking every 10 minutes gives the drain roughly 18 slices per 2-hour cycle.
+# Tick more often to finish batches sooner (bounded by WARM_RPM either way);
+# less often to leave more of the shared Gemini budget to live playback.
+#
+# Requires the CRON_SECRET repo secret, matching the same-named secret on the
+# feeds-warm function. Until it exists this workflow skips (does not fail).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Start a new batch now, ignoring the interval"
+        type: boolean
+        default: false
+      intervalMinutes:
+        description: "Override WARM_INTERVAL_MINUTES for this run"
+        type: string
+        default: ""
+      articles:
+        description: "Override WARM_ARTICLES for this run"
+        type: string
+        default: ""
+
+# Ticks must not overlap: two draining the same queue would double-spend the
+# Gemini budget on identical chunks. The function takes a DB lock as well, since
+# a manual dispatch can still land on top of a scheduled run.
+concurrency:
+  group: warm-live-batch
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      FN_URL: https://jjoxowdvzmlchtfarpbs.supabase.co/functions/v1/feeds-warm
+    steps:
+      - name: Invoke feeds-warm
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::warning::CRON_SECRET not set — warm tick skipped"
+            exit 0
+          fi
+          payload='{"force": ${{ inputs.force || false }}'
+          if [ -n "${{ inputs.intervalMinutes }}" ]; then
+            payload="$payload, \"intervalMinutes\": ${{ inputs.intervalMinutes }}"
+          fi
+          if [ -n "${{ inputs.articles }}" ]; then
+            payload="$payload, \"articles\": ${{ inputs.articles }}"
+          fi
+          payload="$payload}"
+          echo "payload: $payload"
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -X POST "$FN_URL" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          cat /tmp/out.json
+          echo
+          [ "$code" = "200" ] || { echo "::error::feeds-warm returned $code"; exit 1; }

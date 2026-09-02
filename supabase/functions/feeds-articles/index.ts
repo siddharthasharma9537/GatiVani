@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 // feeds-articles — aggregates publisher WordPress RSS feeds that carry the FULL
 // article body in <content:encoded>. Unlike Google News (opaque redirect links,
@@ -222,6 +223,33 @@ async function fetchFeed(
   }
 }
 
+// The published pre-synthesized batch for this language, if there is one.
+//
+// feeds-warm stages a batch, narrates every article in it out of band, and only
+// then marks it published — so everything in here is guaranteed to have its
+// audio already cached, and playback never waits on Gemini. Falling back to the
+// live fetch when no batch exists keeps this endpoint working exactly as it did
+// before warming existed (first deploy, a language nobody warms, warming off).
+const supabase = (() => {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  return url && key ? createClient(url, key) : null;
+})();
+
+async function publishedBatch(lang: string): Promise<Article[] | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("live_batches").select("items")
+    .eq("lang", lang).eq("status", "published")
+    .order("published_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) {
+    console.warn("[feeds-articles] batch read failed:", error.message);
+    return null;
+  }
+  const items = data?.items;
+  return Array.isArray(items) && items.length ? items as Article[] : null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -230,12 +258,29 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     let limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
     let lang = url.searchParams.get("lang") ?? "te";
+    // `raw` bypasses the published batch and forces the live publisher fetch.
+    // feeds-warm needs it to build the NEXT batch — without it the warm job
+    // would re-stage the batch it just published, forever.
+    let raw = url.searchParams.get("raw") === "1";
     if (req.method === "POST") {
       const b = await req.json().catch(() => ({})) as Record<string, unknown>;
       if (typeof b.limit === "number") limit = b.limit;
       if (typeof b.lang === "string") lang = b.lang;
+      if (b.raw === true) raw = true;
     }
     limit = Math.min(Math.max(Number.isFinite(limit) ? limit : 20, 1), 40);
+
+    if (!raw) {
+      const batch = await publishedBatch(lang);
+      if (batch) {
+        return json({
+          ok: true,
+          count: batch.length,
+          items: batch.slice(0, limit),
+          source: "batch",
+        });
+      }
+    }
     const feeds = FEEDS_BY_LANG[lang] ?? FEEDS_TE;
 
     const perFeed = Math.ceil(limit / feeds.length) + 5;
@@ -248,7 +293,7 @@ Deno.serve(async (req) => {
       const tb = Date.parse(b.pubDate) || 0;
       return tb - ta;
     });
-    return json({ ok: true, count: merged.length, items: merged.slice(0, limit) });
+    return json({ ok: true, count: merged.length, items: merged.slice(0, limit), source: "live" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[feeds-articles]", err);
