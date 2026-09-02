@@ -94,3 +94,72 @@ Returns the config it ran with plus a per-language action
 (`built` / `draining` / `published` / `discarded` / `idle`). `feeds-articles`
 responses carry `source: "batch" | "live"` so you can see which path served a
 request.
+
+---
+
+# TTS provider: Google Cloud TTS (Standard)
+
+**Status:** built 2026-09-02, not yet exercised against a real key.
+
+## Why
+
+The Gemini Developer API's free tier for `gemini-2.5-flash-preview-tts` is
+**15 requests per day** — about three articles. Past that every call 429s,
+`_advanceChunk` throws, and playback dies at the first chunk boundary. That is
+a second, independent cause of the "stops at ~45s" report, and no amount of
+pacing fixes it.
+
+Cloud TTS is rate-limited **per minute** (1,000 RPM for Standard), with **4M
+free characters a month**. The daily wall disappears.
+
+`te-IN` offers exactly two tiers — confirmed via `voices.list`:
+
+| Tier | Voices | Free/month | After |
+| --- | --- | --- | --- |
+| Standard | A, C (F) · B, D (M) | 4M chars | $4/1M |
+| Chirp 3: HD | 30, incl. Kore & Puck | 1M chars | $30/1M |
+
+Chirp 3: HD carries the same `Kore`/`Puck` voices this app shipped with, so it
+would sound unchanged. **Standard was chosen deliberately for the 4M free
+allowance**, and it is audibly flatter. Switching is a one-string change to
+`googleVoice()`.
+
+## Configuration
+
+```
+supabase secrets set GOOGLE_TTS_API_KEY=... --project-ref jjoxowdvzmlchtfarpbs
+```
+
+Setting that key switches the provider. To roll back, clear it — or set
+`TTS_PROVIDER=gemini`, which wins over the key. No redeploy either way.
+
+## Two things that bite
+
+**Chunk boundaries are part of the cache key.** `article_chunks` stores audio
+per chunk INDEX, and the boundaries are a function of the provider's size
+limits, not of the text. A provider switch therefore repoints every cached
+index at a different slice of the article while the text hash still matches.
+`textHash` folds in the provider name so this is a clean miss and a
+re-synthesis. Any future change to the chunk limits needs the same treatment.
+
+**Cloud TTS caps a request at 5,000 BYTES, not characters.** Telugu is 3 bytes
+per character, so a chunker measuring `String.length` passes every English test
+and ships oversized requests on the only language this app serves. `chunkText`
+takes a `byBytes` flag; the Google path sets it. Verified against real Telugu:
+max chunk 3,885 bytes.
+
+## Not verified
+
+- **API-key auth is assumed.** The code calls `text:synthesize?key=...`. If
+  Cloud TTS rejects API keys for this project it needs a service account and an
+  OAuth token instead — a real change, not a config tweak. Test before deploy:
+  ```
+  curl -s -X POST "https://texttospeech.googleapis.com/v1/text:synthesize?key=$KEY" \
+    -H 'Content-Type: application/json' \
+    -d '{"input":{"text":"పరీక్ష"},"voice":{"languageCode":"te-IN","name":"te-IN-Standard-B"},"audioConfig":{"audioEncoding":"LINEAR16","sampleRateHertz":24000}}' \
+    | head -c 200
+  ```
+- **The free tier still requires billing enabled** on the project.
+- LINEAR16 responses are assumed to carry a 44-byte WAV header, which is what
+  the duration maths divides out. A different header size skews duration by
+  ~1ms — harmless, but it is an assumption.

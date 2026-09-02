@@ -93,6 +93,104 @@ function geminiVoice(speaker: string): string {
   return FEMALE_SARVAM.has(speaker.toLowerCase()) ? "Kore" : "Puck";
 }
 
+// ── Google Cloud TTS ──────────────────────────────────────────────────────────
+// Same synthesis job, different product from Gemini TTS — and the reason to
+// move is quota, not quality. The Gemini Developer API's free tier for
+// gemini-2.5-flash-preview-tts is 15 requests PER DAY, which is roughly three
+// articles; past that every call 429s and playback dies at the first chunk
+// boundary. Cloud TTS is rate-limited per MINUTE (1,000 RPM for Standard) with
+// 4M free characters a month, so the daily wall disappears entirely.
+//
+// Standard voices are the cheap tier: te-IN has exactly four (A/C female,
+// B/D male). They are audibly flatter than Chirp 3: HD (which carries the same
+// Kore/Puck voices this app shipped with) — a deliberate trade for staying
+// inside the free allowance. Switching tiers later is a one-string change to
+// the voice name below; nothing else here cares.
+const GOOGLE_TTS_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize";
+// Cloud TTS caps a request at 5,000 BYTES — not characters. Telugu is 3 bytes
+// per character in UTF-8, so the real ceiling is ~1,660 Telugu characters and
+// any chunker measuring String.length will pass English tests and fail on
+// Telugu. Everything below measures bytes; 4,000 leaves room for the JSON
+// envelope and for a stray 4-byte codepoint.
+const GOOGLE_TTS_BYTE_LIMIT = 4000;
+const GOOGLE_TTS_FIRST_BYTE_LIMIT = 2000; // chunk 0 is on the critical path
+
+function googleVoice(speaker: string, langCode: string): string {
+  const female = FEMALE_SARVAM.has(speaker.toLowerCase());
+  return `${langCode}-Standard-${female ? "A" : "B"}`;
+}
+
+// One Cloud TTS call → a complete WAV. LINEAR16 responses carry a WAV header,
+// and pinning sampleRateHertz to GEMINI_SAMPLE_RATE keeps the byte-length
+// duration maths below identical to the Gemini path's.
+async function googleOneCall(
+  text: string,
+  voiceName: string,
+  langCode: string,
+  apiKey: string,
+): Promise<Uint8Array> {
+  const resp = await fetch(`${GOOGLE_TTS_ENDPOINT}?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: { text },
+      voice: { languageCode: langCode, name: voiceName },
+      audioConfig: {
+        audioEncoding: "LINEAR16",
+        sampleRateHertz: GEMINI_SAMPLE_RATE,
+      },
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Google TTS HTTP ${resp.status}: ${errText.slice(0, 200)}`);
+  }
+  const data = await resp.json() as { audioContent?: string };
+  if (!data.audioContent) throw new Error("Google TTS: no audioContent in response");
+  return base64ToBytes(data.audioContent);
+}
+
+// Which provider serves this deploy. Google Cloud TTS wins whenever its key is
+// present; without it nothing changes and Gemini keeps serving, so this can be
+// rolled back by clearing one secret rather than redeploying.
+function ttsProvider(): "google" | "gemini" {
+  const forced = Deno.env.get("TTS_PROVIDER");
+  if (forced === "gemini") return "gemini";
+  return Deno.env.get("GOOGLE_TTS_API_KEY") ? "google" : "gemini";
+}
+
+// Synthesize ONE chunk with whichever provider is active.
+async function synthesizeOneCall(
+  text: string,
+  speaker: string,
+  langCode: string,
+): Promise<Uint8Array> {
+  if (ttsProvider() === "google") {
+    return await googleOneCall(
+      text,
+      googleVoice(speaker, langCode),
+      langCode,
+      Deno.env.get("GOOGLE_TTS_API_KEY")!,
+    );
+  }
+  return await geminiOneCall(text, geminiVoice(speaker), Deno.env.get("GEMINI_API_KEY")!);
+}
+
+// UTF-8 byte length — what Cloud TTS actually counts, and what Telugu makes
+// diverge sharply from String.length.
+const enc = new TextEncoder();
+function byteLen(s: string): number {
+  return enc.encode(s).length;
+}
+
+// The chunk sizing in force for the active provider, and whether it is measured
+// in bytes or characters.
+function chunkLimits(): { limit: number; firstLimit: number; byBytes: boolean } {
+  return ttsProvider() === "google"
+    ? { limit: GOOGLE_TTS_BYTE_LIMIT, firstLimit: GOOGLE_TTS_FIRST_BYTE_LIMIT, byBytes: true }
+    : { limit: GEMINI_CHUNK_LIMIT, firstLimit: FIRST_CHUNK_LIMIT, byBytes: false };
+}
+
 // ── Sarvam chunking ───────────────────────────────────────────────────────────
 // Sarvam Bulbul:v3 hard limit is 500 chars; stay safely under it.
 
@@ -128,24 +226,30 @@ const FIRST_CHUNK_LIMIT = 700;
 // — the split is still a pure function of (text, limit, firstLimit), so every
 // call (regardless of which chunkIndex is being requested) recomputes the
 // same boundaries and chunk N stays addressable on its own.
+// [byBytes] switches the measure from characters to UTF-8 bytes. Google Cloud
+// TTS enforces a BYTE cap, and Telugu costs 3 bytes per character, so measuring
+// String.length there silently builds chunks ~3x over the wire limit — passing
+// every English test and failing on the only language this app ships.
 function chunkText(
   text: string,
   limit: number = SARVAM_CHUNK_LIMIT,
   firstLimit?: number,
+  byBytes = false,
 ): string[] {
+  const m = byBytes ? byteLen : (s: string) => s.length;
   const cap0 = firstLimit && firstLimit < limit ? firstLimit : limit;
-  if (text.length <= cap0) return [text];
+  if (m(text) <= cap0) return [text];
   const chunks: string[] = [];
   const sentences = text.split(/(?<=[।॥|.!?\n])\s*/u).filter(s => s.trim());
   let current = "";
   let cur = cap0; // active cap: cap0 until the first chunk is pushed, then limit
   for (const sentence of sentences) {
-    if (sentence.length > cur) {
+    if (m(sentence) > cur) {
       if (current.trim()) { chunks.push(current.trim()); current = ""; cur = limit; }
       const words = sentence.split(/\s+/);
       let part = "";
       for (const word of words) {
-        if ((part + " " + word).length > cur) {
+        if (m(part + " " + word) > cur) {
           if (part.trim()) { chunks.push(part.trim()); cur = limit; }
           part = word;
         } else {
@@ -153,7 +257,7 @@ function chunkText(
         }
       }
       if (part.trim()) current = part.trim();
-    } else if ((current + " " + sentence).length > cur) {
+    } else if (m(current + " " + sentence) > cur) {
       if (current.trim()) { chunks.push(current.trim()); cur = limit; }
       current = sentence;
     } else {
@@ -308,18 +412,18 @@ async function geminiOneCall(
   return wavBytes;
 }
 
-async function synthesizeWithGemini(
+async function synthesizeFull(
   text: string,
   speaker: string,
-  geminiKey: string,
+  langCode: string,
   readingStyle?: string,
 ): Promise<{ wavBytes: Uint8Array; durationSec: number; chunks: number }> {
-  const voiceName = geminiVoice(speaker);
   // Gemini works best with natural content — don't inject English instructions
-  // into Telugu text. Style is handled via Sarvam pace instead.
-  const parts = chunkText(text, GEMINI_CHUNK_LIMIT);
+  // into Telugu text. Standard voices ignore style prompts outright.
+  const { limit, byBytes } = chunkLimits();
+  const parts = chunkText(text, limit, undefined, byBytes);
   console.log(
-    `[gemini-tts] ${text.length} chars → ${parts.length} chunk(s), voice=${voiceName}, style=${readingStyle ?? "default"}`,
+    `[tts] provider=${ttsProvider()} ${text.length} chars → ${parts.length} chunk(s), style=${readingStyle ?? "default"}`,
   );
 
   // Chunks still run concurrently (wall time ≈ one chunk, not the sum), but
@@ -331,7 +435,7 @@ async function synthesizeWithGemini(
   const wavs = await Promise.all(
     parts.map(async (p, i) => {
       if (i > 0) await new Promise((r) => setTimeout(r, i * STAGGER_MS));
-      return geminiOneCall(p, voiceName, geminiKey);
+      return synthesizeOneCall(p, speaker, langCode);
     }),
   );
   const wavBytes = concatWavBuffers(wavs);
@@ -354,7 +458,8 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
-  if (!Deno.env.get("GEMINI_API_KEY")) {
+  // Either provider's key satisfies this — ttsProvider() picks between them.
+  if (!Deno.env.get("GOOGLE_TTS_API_KEY") && !Deno.env.get("GEMINI_API_KEY")) {
     return json({ error: "config_missing" }, 500);
   }
 
@@ -365,7 +470,12 @@ Deno.serve(async (req) => {
     }
     const text = body.text.trim();
     if (!text) return json({ error: "empty_text", message: "Text cannot be empty." }, 400);
-    const textHash = await sha256Hex(text);
+    // The cache stores audio for a chunk INDEX, and the chunk boundaries are a
+    // function of the provider's size limits — not of the text alone. So a
+    // provider or limit change silently repoints every cached index at the
+    // wrong slice of the article while the text hash still matches. Folding the
+    // scheme into the hash makes that a clean miss and a re-synthesis instead.
+    const textHash = await sha256Hex(`${ttsProvider()}|${text}`);
 
     const langKey = (body.language || "te-IN").split("-")[0];
     const cfg = LANGUAGE_CONFIG[langKey] ?? LANGUAGE_CONFIG.te;
@@ -463,7 +573,8 @@ Deno.serve(async (req) => {
       ? body.chunkIndex as number
       : null;
     if (chunkIndex !== null) {
-      const parts = chunkText(text, GEMINI_CHUNK_LIMIT, FIRST_CHUNK_LIMIT);
+      const { limit, firstLimit, byBytes } = chunkLimits();
+      const parts = chunkText(text, limit, firstLimit, byBytes);
       if (chunkIndex >= parts.length) {
         return json({
           error: "chunk_out_of_range",
@@ -494,7 +605,6 @@ Deno.serve(async (req) => {
         }
       }
 
-      const geminiKey = Deno.env.get("GEMINI_API_KEY")!;
       if (supabase) {
         const userId = jwtSub(req);
         if (userId && !(await checkUserRateLimit(supabase, userId))) {
@@ -502,7 +612,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const wavBytes = await geminiOneCall(parts[chunkIndex], geminiVoice(speaker), geminiKey);
+      const wavBytes = await synthesizeOneCall(parts[chunkIndex], speaker, cfg.code);
       const durationSec = Math.round((wavBytes.length - 44) / (GEMINI_SAMPLE_RATE * 2));
       console.log(`[synthesize] chunk ${chunkIndex}/${parts.length - 1} for ${articleId || "(no id)"}: ~${durationSec}s`);
 
@@ -539,7 +649,6 @@ Deno.serve(async (req) => {
     // no longer requires each caller to bring their own (BYOK removed; the
     // content check above + the per-user rate limit below are what bound
     // cost now instead). Sarvam TTS remains disabled (cost) with no fallback.
-    const geminiKey = Deno.env.get("GEMINI_API_KEY")!;
     if (supabase) {
       const userId = jwtSub(req);
       if (userId && !(await checkUserRateLimit(supabase, userId))) {
@@ -547,11 +656,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[synthesize] provider=gemini-2.5 chars=${text.length} speaker=${speaker}`);
+    const usedProvider = ttsProvider() === "google" ? "google-tts-standard" : "gemini-2.5";
+    console.log(`[synthesize] provider=${usedProvider} chars=${text.length} speaker=${speaker}`);
 
-    const usedProvider = "gemini-2.5";
     const { wavBytes, durationSec, chunks } =
-      await synthesizeWithGemini(text, speaker, geminiKey, readingStyle);
+      await synthesizeFull(text, speaker, cfg.code, readingStyle);
 
     console.log(`[synthesize] done: ${Math.round(wavBytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
 
