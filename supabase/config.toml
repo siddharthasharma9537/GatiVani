@@ -411,3 +411,8 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # the CRON_SECRET header instead.
 [functions.storage-cleanup]
 verify_jwt = false
+
+# Scheduler-invoked, so there is no user JWT to verify — it authenticates on
+# the CRON_SECRET header instead.
+[functions.feeds-warm]
+verify_jwt = false

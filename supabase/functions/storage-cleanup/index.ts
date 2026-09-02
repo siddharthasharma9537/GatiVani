@@ -84,7 +84,6 @@ Deno.serve(async (req) => {
     // Only clear references once the objects are actually gone, so a failed
     // batch leaves the rows pointing at audio that still exists.
     const urls = batch.map((p) => (usingR2 ? r2.publicUrl(p) : publicPrefix + p));
-    await supabase.from("article_chunks").delete().in("audio_url", urls);
     for (const table of ["articles", "edition_page_items"]) {
       await supabase.from(table).update({ audio_url: null }).in("audio_url", urls);
       await supabase.from(table).update({ summary_audio_url: null }).in("summary_audio_url", urls);
