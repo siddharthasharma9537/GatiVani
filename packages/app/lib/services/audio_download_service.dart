@@ -24,6 +24,8 @@ class AudioDownloadService {
         'text': '${article.title}\n\n${article.content}',
         'language': 'te-IN',
         'speaker': voice,
+        'articleId': article.id,
+        'surface': article.surface,
       }),
     ).timeout(const Duration(seconds: 120));
 

@@ -2,7 +2,13 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import * as r2 from "../_shared/r2.ts";
 import { mp3Enabled, wavDurationSeconds, wavToMp3 } from "../_shared/mp3.ts";
-import { geminiTtsPaise, logCall } from "../_shared/usage.ts";
+import { cloudTtsPaise, geminiTtsPaise, logCall } from "../_shared/usage.ts";
+import {
+  cloudTtsConfigured,
+  estimateMp3Seconds,
+  synthesize as cloudSynthesize,
+  voiceForSurface,
+} from "../_shared/cloud_tts.ts";
 // Sarvam STT forced-alignment (./alignment.ts) is disabled for cost — see the
 // commented-out alignAndStore call in the handler.
 // (touch: retrigger deploy now that the CI loop skips _shared)
@@ -86,6 +92,34 @@ async function encodeForStorage(
   }
   return { bytes: wavBytes, ext: ".wav", contentType: "audio/wav", durationSec };
 }
+
+// ── Lane selection ────────────────────────────────────────────────────────────
+//
+// "free"    → Google Cloud TTS. A monthly free pool per voice tier (~6M
+//             characters across Standard/WaveNet/Chirp 3 HD) covers roughly 30
+//             editions, and it returns MP3 directly so there is no encode cost.
+// "premium" → Gemini TTS, billed per second of speech (~₹1.43/min).
+//
+// Free is the default. Gemini is now the exception, used only where Cloud TTS
+// cannot serve — which is why AUDIO_LANE exists as an escape hatch rather than
+// a routine switch. See docs/ORCHESTRATION_PLAN.md §2.3.
+type Lane = "free" | "premium";
+
+function resolveLane(requested: unknown): Lane {
+  if (requested === "premium" || requested === "free") return requested;
+  const configured = (Deno.env.get("AUDIO_LANE") ?? "free").toLowerCase();
+  return configured === "premium" ? "premium" : "free";
+}
+
+// Surfaces map to voices in _shared/cloud_tts.ts. An unknown value falls back
+// to the edition tail's voice rather than erroring: a caller that has not been
+// updated yet should still get audio.
+const KNOWN_SURFACES = new Set([
+  "live_article",
+  "live_ticker",
+  "edition_tail",
+  "edition_top",
+]);
 
 // deno-lint-ignore no-explicit-any
 async function checkUserRateLimit(supabase: any, userId: string): Promise<boolean> {
@@ -413,6 +447,28 @@ Deno.serve(async (req) => {
     const speaker = (body.speaker as string | undefined) || cfg.speaker;
     const readingStyle = (body.readingStyle as string | undefined) || undefined;
 
+    // Which lane synthesises this, and which voice it speaks in.
+    const surface = KNOWN_SURFACES.has(body.surface) ? body.surface as string : "edition_tail";
+    const lane: Lane = resolveLane(body.lane);
+    // Cloud TTS needs a service account; without one the free lane cannot run
+    // and Gemini remains the only option.
+    const useCloud = lane === "free" && cloudTtsConfigured();
+    if (lane === "free" && !useCloud) {
+      console.warn("[synthesize] free lane requested but GOOGLE_SERVICE_ACCOUNT_JSON is unset — using Gemini");
+    }
+
+    // Live articles are synthesised on tap and cached forever by article id.
+    // Prewarming them is the difference between ₹0 and ~₹2,400/month on that
+    // surface (plan §2.3): 40 stories x 2 languages x 3k chars every day, most
+    // of which nobody opens. The prewarm lane is for editions, where the top
+    // stories are known in advance and the set is small.
+    if (body.prewarm === true && surface.startsWith("live_")) {
+      return json({
+        error: "prewarm_not_allowed",
+        message: "Live articles are synthesised on demand, never prewarmed.",
+      }, 400);
+    }
+
     // Optional audio cache: pass the article's DB uuid ("articleId") and the
     // generated audio is stored once in the public "audio" bucket and reused on
     // every later call — TTS is the dominant pipeline cost (~85%).
@@ -604,27 +660,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[synthesize] provider=${GEMINI_TTS_MODEL} chars=${text.length} speaker=${speaker}`);
+    console.log(
+      `[synthesize] lane=${useCloud ? "free" : "premium"} surface=${surface} chars=${text.length}`,
+    );
 
-    const usedProvider = GEMINI_TTS_MODEL;
-    const ttsStart = Date.now();
-    const { wavBytes, durationSec, chunks } =
-      await synthesizeWithGemini(text, speaker, geminiKey, readingStyle);
-    const encoded = await encodeForStorage(wavBytes, GEMINI_SAMPLE_RATE);
+    const encoded = await renderAudio({
+      text,
+      useCloud,
+      surface,
+      speaker,
+      geminiKey,
+      readingStyle,
+      supabase,
+      articleId,
+      chunked: false,
+    });
+    const { durationSec, chunks } = encoded;
+    const usedProvider = encoded.provider;
 
     console.log(`[synthesize] done: ${Math.round(encoded.bytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
-
-    await logCall(supabase, {
-      fn: "documents-synthesize",
-      kind: "tts",
-      provider: "gemini",
-      model: GEMINI_TTS_MODEL,
-      articleId,
-      chars: text.length,
-      audioSeconds: durationSec,
-      inrPaise: geminiTtsPaise(GEMINI_TTS_MODEL, durationSec),
-      latencyMs: Date.now() - ttsStart,
-    });
 
     // Persist to the public audio bucket + articles.audio_url for reuse.
     // The app accepts both plain URLs and data: URIs in audioUrl.

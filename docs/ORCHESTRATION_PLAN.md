@@ -435,7 +435,27 @@ reliable* · Phase 4 makes it *feel instant*.
    2.5 Flash‑Lite, 3.1 Flash‑Lite, 3.5 Flash‑Lite, 2.5 Flash. Ship the cheapest that
    matches today's quality. **Do this before 16 Oct.**
 
-### Phase 2 — Free-lane TTS + Live feed (≈ 4–5 days)
+### Phase 2 — Free-lane TTS + Live feed (≈ 4–5 days) — **shipped**
+
+> **Setup required before the free lane does anything.** Cloud TTS does *not*
+> accept an API key — it needs a real OAuth token, so the function mints one
+> from a service account (`_shared/gcloud_auth.ts`):
+>
+> ```bash
+> # service account with the "Cloud Text-to-Speech User" role, JSON key downloaded
+> supabase secrets set GOOGLE_SERVICE_ACCOUNT_JSON="$(cat key.json)"
+> ```
+>
+> Until that secret exists the free lane logs a warning and falls through to
+> Gemini, so deploying this changes nothing on its own. `AUDIO_LANE=premium`
+> forces every request back to Gemini if the free lane ever misbehaves.
+>
+> **Two constraints worth remembering**, both discovered building this:
+> Cloud TTS caps a request at **5,000 bytes, not characters** — Telugu measures
+> **2.7 bytes/char**, so that is only ~1,650 characters and a character-based
+> split would pass in English testing and fail on the actual language. And the
+> browser `speechSynthesis` voice for `te-IN` is genuinely absent on iOS Safari,
+> so the ticker must always be able to fall back to the server lane.
 
 > **Why.** Every narration currently runs through Gemini TTS at ~₹1.43/min, so a
 > 3–4 hour edition costs over ₹300. Google Cloud gives ~5 M free characters a month
