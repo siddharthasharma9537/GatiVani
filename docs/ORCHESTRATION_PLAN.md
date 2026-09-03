@@ -394,7 +394,27 @@ reliable* · Phase 4 makes it *feel instant*.
 4. CI honesty: remove `continue-on-error`, delete/rewrite the tests that reference
    removed services. Replace `packages/app/docs/ARCHITECTURE.md` with a pointer.
 
-### Phase 1 — Cheaper structuring + the 2.5 retirement (≈ 1 week)
+### Phase 1 — Cheaper structuring + the 2.5 retirement (≈ 1 week) — **shipped**
+
+> **Migrating on 16 Oct is now an env change, not a deploy.** Every Gemini text
+> call in every function routes through `_shared/gemini.ts`, which resolves a
+> *tier* to a model id from the environment:
+>
+> | Variable | Default (2.5) | Used by |
+> |---|---|---|
+> | `GEMINI_MODEL_FAST` | `gemini-2.5-flash-lite` | page structuring, coherence, printed date, continuation match, explainers, summaries, cricket commentary |
+> | `GEMINI_MODEL_STRONG` | `gemini-2.5-flash` | escalation when `checkAssignment` rejects, vision gap pass, single-doc OCR correction |
+> | `GEMINI_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | narration (**also retires — do not forget this one**) |
+>
+> `documents-ask` stays pinned to `gemini-flash-latest`, an alias that tracks
+> Google's current Flash and so survives the retirement by itself.
+>
+> **Before flipping any of these**, score the candidate:
+> `deno run --allow-net --allow-read --allow-env scripts/eval_structure.ts
+> --fixtures eval/pages --models gemini-2.5-flash-lite,gemini-3.1-flash-lite`.
+> Recall is the number that decides it — a missing article is a story the
+> reader never hears. And when changing `GEMINI_TTS_MODEL`, add the new rate to
+> `GEMINI_TTS_USD_PER_MTOK` in `_shared/usage.ts` or the ledger prices it at zero.
 
 > **Why.** Google retires the Gemini 2.5 models on **16 Oct 2026**, and every AI call
 > in GatiVani is on 2.5 — on that date, newspaper processing stops working. The code

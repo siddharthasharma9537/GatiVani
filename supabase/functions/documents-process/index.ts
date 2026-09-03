@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { SarvamAIClient } from "npm:sarvamai@1.1.7";
 import { extractArticlesStructured, type StructuredResult } from "../_shared/structure.ts";
+import { generate, modelFor } from "../_shared/gemini.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -676,30 +677,19 @@ async function geminiJson(
   geminiKey: string,
   maxOutputTokens: number,
 ): Promise<string> {
-  const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
-          maxOutputTokens,
-        },
-      }),
-      signal: AbortSignal.timeout(45_000),
-    },
-  );
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Gemini HTTP ${resp.status}: ${errText.slice(0, 100)}`);
-  }
-  const data = await resp.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  // "strong" preserves today's behaviour (this helper was pinned to
+  // gemini-2.5-flash); OCR correction and document classification both run
+  // through here. Retiering is a follow-up, not part of the deadline fix.
+  const { status, text } = await generate({
+    tier: "strong",
+    parts,
+    apiKey: geminiKey,
+    temperature: 0.1,
+    maxOutputTokens,
+    timeoutMs: 45_000,
+  });
+  if (status !== 200) throw new Error(`Gemini HTTP ${status}`);
+  return text || "{}";
 }
 
 // Small, cheap classification call (~1K output tokens). Full-text correction is
@@ -1142,8 +1132,8 @@ Deno.serve(async (req) => {
       },
       models: {
         ocr: "sarvam-ocr",
-        refinement: GEMINI_KEY ? "gemini-2.5-flash" : "none",
-        extraction: structuredMeta ? "structured-v1 (gemini-2.5-flash)" : "legacy-html-parser",
+        refinement: GEMINI_KEY ? modelFor("strong") : "none",
+        extraction: structuredMeta ? `structured-v1 (${modelFor("fast")})` : "legacy-html-parser",
         extractionError: structuredError || undefined,
       },
       subscription: { tier, active: true },

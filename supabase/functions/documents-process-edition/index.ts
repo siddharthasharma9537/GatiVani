@@ -17,8 +17,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
-import { callGeminiJson, extractArticlesStructured, type UsageCtx } from "../_shared/structure.ts";
-import { geminiTokens, llmPaise, logCall, ocrPaise } from "../_shared/usage.ts";
+import { extractArticlesStructured, type UsageCtx } from "../_shared/structure.ts";
+import { generate } from "../_shared/gemini.ts";
+import { logCall, ocrPaise } from "../_shared/usage.ts";
 import { rasterFirstPage } from "../_shared/raster.ts";
 
 const corsHeaders = {
@@ -156,55 +157,22 @@ async function detectPrintedDate(
   geminiKey: string,
   ctx?: UsageCtx,
 ): Promise<string> {
-  const startedAt = Date.now();
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`;
     const prompt = 'If a publication/issue date is printed on this newspaper page ' +
       '(masthead or dateline), return it as YYYY-MM-DD. Otherwise return "". ' +
       'Return ONLY JSON: {"publicationDate":""}';
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [
-            { inline_data: { mime_type: "application/pdf", data: bytesToBase64(pageBytes) } },
-            { text: prompt },
-          ],
-        }],
-        generationConfig: {
-          maxOutputTokens: 256,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-      signal: AbortSignal.timeout(20_000),
+    const { status, text } = await generate({
+      tier: "fast",
+      parts: [
+        { inline_data: { mime_type: "application/pdf", data: bytesToBase64(pageBytes) } },
+        { text: prompt },
+      ],
+      apiKey: geminiKey,
+      maxOutputTokens: 256,
+      timeoutMs: 20_000,
+      ctx: ctx ? { ...ctx, page: 1 } : undefined,
     });
-    if (!resp.ok) {
-      await resp.body?.cancel();
-      return "";
-    }
-    const data = await resp.json() as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const text = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
-    if (ctx) {
-      const { inputTokens, outputTokens } = geminiTokens(data);
-      await logCall(ctx.supabase, {
-        fn: ctx.fn,
-        kind: "llm",
-        provider: "gemini",
-        model: "gemini-2.5-flash-lite",
-        jobId: ctx.jobId,
-        newspaperId: ctx.newspaperId,
-        page: 1,
-        inputTokens,
-        outputTokens,
-        inrPaise: llmPaise("gemini-2.5-flash-lite", inputTokens, outputTokens),
-        latencyMs: Date.now() - startedAt,
-      });
-    }
+    if (status !== 200) return "";
     const m = text.match(/"publicationDate"\s*:\s*"(\d{4}-\d{2}-\d{2})"/);
     return m ? m[1] : "";
   } catch (e) {
@@ -430,7 +398,12 @@ async function semanticContinuationMatch(
         )
         .join("\n")
     }`;
-  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey, ctx);
+  const { status, text } = await generate({
+    tier: "fast",
+    parts: [{ text: prompt }],
+    apiKey: geminiKey,
+    ctx,
+  });
   if (status !== 200) return null;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as { match?: number };
   return typeof data.match === "number" && data.match >= 0 && data.match < candidates.length

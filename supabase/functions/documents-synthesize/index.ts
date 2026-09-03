@@ -287,9 +287,14 @@ function styledText(text: string, readingStyle?: string): string {
 const GEMINI_SAMPLE_RATE = 24000;
 // Single source for the billed model id: the request URL and the cost ledger
 // must never disagree about which model was actually charged.
-// NOTE: retires 16 Oct 2026 with the rest of the 2.5 line — see
-// docs/ORCHESTRATION_PLAN.md Phase 1.
-const GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts";
+//
+// Env-configurable for the same reason the text models are (_shared/gemini.ts):
+// gemini-2.5-flash-preview-tts retires on 16 Oct 2026 with the rest of the 2.5
+// line, and swapping it should be `supabase secrets set`, not a redeploy. Add
+// the replacement's rate to GEMINI_TTS_USD_PER_MTOK in _shared/usage.ts at the
+// same time, or the ledger will silently price it at zero.
+const GEMINI_TTS_MODEL = Deno.env.get("GEMINI_TTS_MODEL") ||
+  "gemini-2.5-flash-preview-tts";
 
 // One Gemini TTS call → a complete WAV for the given text. Retries once on
 // 429 (rate limit) after a short backoff — now that there's no Sarvam
@@ -599,9 +604,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[synthesize] provider=gemini-2.5 chars=${text.length} speaker=${speaker}`);
+    console.log(`[synthesize] provider=${GEMINI_TTS_MODEL} chars=${text.length} speaker=${speaker}`);
 
-    const usedProvider = "gemini-2.5";
+    const usedProvider = GEMINI_TTS_MODEL;
     const ttsStart = Date.now();
     const { wavBytes, durationSec, chunks } =
       await synthesizeWithGemini(text, speaker, geminiKey, readingStyle);

@@ -13,21 +13,11 @@
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-import { geminiTokens, llmPaise, logCall, type ModelCall } from "./usage.ts";
+import { generate, generateWithEscalation, parseJson, type UsageCtx } from "./gemini.ts";
 
-/**
- * Optional cost-ledger context. When present, every Gemini call this module
- * makes writes a `model_calls` row (see _shared/usage.ts). Absent, the engine
- * behaves exactly as before — logging is never load-bearing.
- */
-export interface UsageCtx {
-  // deno-lint-ignore no-explicit-any
-  supabase: any;
-  fn: string;
-  jobId?: string | null;
-  newspaperId?: string | null;
-  page?: number | null;
-}
+// UsageCtx is defined once, in the gateway, and re-exported here so callers
+// that import it alongside the engine keep working.
+export type { UsageCtx };
 
 export interface Block {
   id: number;
@@ -193,7 +183,13 @@ export function parseBlocks(html: string): Block[] {
 
 // ── [B] Assignment: Gemini, index-only output ─────────────────────────────────
 
-function manifest(blocks: Block[], head = 72, tail = 32): string {
+// head/tail bound how much of each block's text goes into the manifest. The
+// manifest is the largest input on the structuring call and Telugu tokenises
+// expensively, so these are cost knobs: 72/32 → 48/24 is roughly a third off
+// the manifest with the block still identifiable, since the model is matching
+// blocks against the page image, not reading them for meaning. Re-score with
+// scripts/eval_structure.ts before tightening further.
+function manifest(blocks: Block[], head = 48, tail = 24): string {
   return blocks
     .map((b) => {
       const t = b.text;
@@ -315,76 +311,78 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export async function callGeminiJson(
-  model: string,
-  parts: unknown[],
-  geminiKey: string,
-  ctx?: UsageCtx,
-): Promise<{ status: number; text: string }> {
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
-  const startedAt = Date.now();
-  // Records the attempt whether it succeeded or not — a 429 that cost us a
-  // retry is exactly the kind of thing the ledger exists to make visible.
-  const log = (extra: Partial<ModelCall>) => {
-    if (!ctx) return;
-    void logCall(ctx.supabase, {
-      fn: ctx.fn,
-      kind: "llm",
-      provider: "gemini",
-      model,
-      jobId: ctx.jobId,
-      newspaperId: ctx.newspaperId,
-      page: ctx.page,
-      latencyMs: Date.now() - startedAt,
-      ...extra,
-    });
-  };
-  let resp: Response | null = null;
-  // retry transient 429 (quota window) and 5xx with spaced waits
-  for (const backoff of [0, 15000]) {
-    if (backoff) await new Promise((r) => setTimeout(r, backoff));
-    resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          maxOutputTokens: 32000,
-          responseMimeType: "application/json",
-          // thinking eats the output budget on 2.5 and truncates the JSON
-          thinkingConfig: { thinkingBudget: 0 },
+// Response schema for the assignment call. With this set, Gemini's output is
+// JSON-valid and role/category values are drawn from the allowed sets by
+// construction — which removes the whole class of "model returned prose" and
+// "model invented a role" failures that the retry ladder used to absorb.
+// ROLE_ALIASES below stays as a safety net for the text-only rung and for any
+// model that ignores the schema.
+const ASSIGNMENT_SCHEMA = {
+  type: "object",
+  properties: {
+    articles: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          article_id: { type: "string" },
+          category: { type: "string", enum: [...CATEGORIES] },
+          blocks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "integer" },
+                role: {
+                  type: "string",
+                  enum: ["headline", "subheading", "body", "caption", "table"],
+                },
+                seq: { type: "integer" },
+                continues_block: { type: "integer" },
+              },
+              required: ["id", "role"],
+            },
+          },
         },
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (resp.status !== 429 && resp.status < 500) break;
-  }
-  if (!resp) {
-    log({ ok: false, error: "no response" });
-    return { status: 0, text: "" };
-  }
-  const status = resp.status;
-  if (!resp.ok) {
-    await resp.body?.cancel();
-    log({ ok: false, error: `HTTP ${status}` });
-    return { status, text: "" };
-  }
-  const data = await resp.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const { inputTokens, outputTokens } = geminiTokens(data);
-  log({
-    inputTokens,
-    outputTokens,
-    inrPaise: llmPaise(model, inputTokens, outputTokens),
-  });
-  return {
-    status,
-    text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join(""),
-  };
-}
+        required: ["article_id", "blocks"],
+      },
+    },
+    drop: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          reason: { type: "string", enum: ["ad", "masthead", "noise"] },
+        },
+        required: ["id", "reason"],
+      },
+    },
+    uncertain: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          candidates: { type: "array", items: { type: "string" } },
+          reason: { type: "string" },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  required: ["articles"],
+};
 
+/**
+ * [B] Assign — the one call that decides the page's structure.
+ *
+ * Runs on the cheap tier and escalates only when `checkAssignment` rejects the
+ * result, which is the same deterministic validation the engine already
+ * trusted. The model still never emits Telugu: it returns block ids and roles
+ * over OCR ground truth, so the output cannot contain invented text no matter
+ * which tier answered.
+ */
 async function assignWithGemini(
   blocks: Block[],
   fileBuffer: Uint8Array,
@@ -395,50 +393,30 @@ async function assignWithGemini(
   const manifestText = ASSIGN_PROMPT + manifest(blocks);
   const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
     fileBuffer.length < 15 * 1024 * 1024;
-  const docPart = visual
-    ? { inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }
-    : null;
 
-  // Quota-resilient ladder. Stage 2 (refineWithGemini) consumes flash quota with
-  // the same document seconds earlier, so a 429 here is common — flash-lite has a
-  // SEPARATE per-model quota bucket, and the text-only call is tiny.
-  const configs: Array<{ model: string; parts: unknown[]; label: string }> = [];
-  if (docPart) {
-    configs.push({ model: "gemini-2.5-flash", parts: [docPart, { text: manifestText }], label: "flash+doc" });
-    configs.push({ model: "gemini-2.5-flash-lite", parts: [docPart, { text: manifestText }], label: "flash-lite+doc" });
-  }
-  configs.push({ model: "gemini-2.5-flash", parts: [{ text: manifestText }], label: "flash text-only" });
-  configs.push({ model: "gemini-2.5-flash-lite", parts: [{ text: manifestText }], label: "flash-lite text-only" });
+  // Document first, prompt second — generateWithEscalation drops parts[0] for
+  // its text-only rung, so the order here is load-bearing.
+  const parts: unknown[] = visual
+    ? [
+      { inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } },
+      { text: manifestText },
+    ]
+    : [{ text: manifestText }];
 
-  let lastErr = "";
-  for (const cfg of configs) {
-    let correction = "";
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const parts = correction
-        ? [...cfg.parts, { text: `Your previous answer was invalid: ${correction}. Return corrected JSON only.` }]
-        : cfg.parts;
-      const { status, text } = await callGeminiJson(cfg.model, parts, geminiKey, ctx);
-      if (status !== 200) {
-        lastErr = `${cfg.label}: HTTP ${status}`;
-        break;  // try next config (different model/payload → different quota)
-      }
-      try {
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text) as Assignment;
-        const err = checkAssignment(blocks, parsed);
-        if (!err) {
-          console.log(`[structure] assignment via ${cfg.label}`);
-          return parsed;
-        }
-        correction = err;
-        lastErr = `${cfg.label}: ${err}`;
-      } catch (e) {
-        correction = `JSON parse error: ${(e as Error).message}`;
-        lastErr = `${cfg.label}: ${correction}`;
-      }
-    }
-  }
-  throw new Error(`assignment failed: ${lastErr}`);
+  const { value, lastError } = await generateWithEscalation<Assignment>({
+    label: "assignment",
+    parts,
+    apiKey: geminiKey,
+    schema: ASSIGNMENT_SCHEMA,
+    ctx,
+    // checkAssignment both validates and normalises in place (roles via
+    // ROLE_ALIASES, strays routed to review), so an accepted value is already
+    // canonical.
+    check: (data) => checkAssignment(blocks, data),
+  });
+
+  if (!value) throw new Error(`assignment failed: ${lastError}`);
+  return value;
 }
 
 // ── [C] Assemble: deterministic grouping + fragment stitching ────────────────
@@ -602,14 +580,20 @@ RULES:
   NOT the same as being misplaced. Omit or leave empty when everything fits.
 
 ${lines.join("\n")}`;
-  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey, ctx);
+  const { status, text } = await generate({
+    tier: "fast",
+    parts: [{ text: prompt }],
+    apiKey: geminiKey,
+    ctx,
+  });
   if (status !== 200) return;
-  const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
+  const data = parseJson<{
     articles?: Array<{
       i: number; order?: number[]; gap?: boolean;
       paragraph_breaks?: number[]; misplaced?: number[];
     }>;
-  };
+  }>(text);
+  if (!data) return;
   for (const r of data.articles ?? []) {
     const d = drafts[r.i];
     if (!d) continue;
@@ -663,16 +647,25 @@ RULES:
 - If nothing is missing and order is fine, return empty arrays.
 
 ${lines.join("\n")}`;
-  const { status, text } = await callGeminiJson(
-    "gemini-2.5-flash-lite",
-    [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }, { text: prompt }],
-    geminiKey,
+  // Escalated on purpose: this only runs for articles Layer 2 flagged as
+  // gapped, it reads the page image rather than a manifest, and its output is
+  // model-transcribed text (the one place the no-Telugu invariant is relaxed,
+  // which is why the article is flagged for review afterwards). Rare enough
+  // that the stronger tier costs little across an edition.
+  const { status, text } = await generate({
+    tier: "strong",
+    parts: [
+      { inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } },
+      { text: prompt },
+    ],
+    apiKey: geminiKey,
     ctx,
-  );
+  });
   if (status !== 200) return;
-  const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
+  const data = parseJson<{
     articles?: Array<{ i: number; order?: number[]; inserts?: Array<{ after: number; text: string }> }>;
-  };
+  }>(text);
+  if (!data) return;
   for (const r of data.articles ?? []) {
     const d = drafts[r.i];
     if (!d) continue;

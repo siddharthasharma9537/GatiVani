@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { generate } from "../_shared/gemini.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,34 +41,20 @@ Rules:
 Article:
 ${text}`;
 
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-            maxOutputTokens: 512,
-          },
-        }),
-      },
-    );
+    // Three-fact extraction is a cheap-tier job; see the plan's §2.5 routing.
+    const gen = await generate({
+      tier: "fast",
+      parts: [{ text: prompt }],
+      apiKey: GEMINI_KEY,
+      temperature: 0.1,
+      maxOutputTokens: 512,
+    });
 
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`Gemini HTTP ${resp.status}: ${errText.slice(0, 200)}`);
+    if (gen.status !== 200) {
+      throw new Error(`Gemini HTTP ${gen.status}`);
     }
 
-    const data = await resp.json() as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-      }>;
-    };
-
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
+    const raw = gen.text || "[]";
     console.log(`[summarize] raw response: ${raw.slice(0, 200)}`);
 
     let bullets: string[] = [];
