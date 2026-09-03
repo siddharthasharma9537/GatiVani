@@ -30,17 +30,27 @@ export interface ClaimedPage {
  * Only the service role may drive the pipeline. The page worker is a public
  * HTTP endpoint like any other function, so without this anyone could POST a
  * job id and make us process pages on demand.
+ *
+ * Compares the bearer token to our own SUPABASE_SERVICE_ROLE_KEY directly,
+ * rather than decoding it as a JWT and checking a `role` claim. The two are
+ * not equivalent on this project: SUPABASE_SERVICE_ROLE_KEY is one of
+ * Supabase's newer opaque `sb_secret_...` keys (see SUPABASE_SECRET_KEYS /
+ * SUPABASE_JWKS among the project's other secrets), which has no dots to
+ * split on — token.split(".")[1] is undefined, atob throws, and the JWT
+ * version of this check silently returned false for every legitimate
+ * service-role call. Found when the very first edition upload sat at
+ * ingest_pages.status='processing' forever: every pipeline-page call from
+ * pipeline-start got HTTP 403 {"error":"forbidden"}, and the function's own
+ * logs showed it booted and ran this check before rejecting the request —
+ * so it was never a network or gateway problem, just this comparison.
+ *
+ * Equality rather than a timing-safe compare: this guards an internal
+ * function-to-function call, not a login, and the token is 40+ random bytes.
  */
 export function isServiceRole(req: Request): boolean {
-  try {
-    const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-    const payload = JSON.parse(
-      atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
-    );
-    return payload.role === "service_role";
-  } catch {
-    return false;
-  }
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  return token.length > 0 && serviceKey.length > 0 && token === serviceKey;
 }
 
 export function functionsBase(): string {
