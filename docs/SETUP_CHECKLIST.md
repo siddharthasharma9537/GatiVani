@@ -33,12 +33,18 @@ git fetch origin
 git checkout claude/gativani-analysis-design-3ate8o
 
 # The real check on the edge functions — resolves npm:/jsr: for real.
-deno check supabase/functions/**/*.ts
+deno check --node-modules-dir=auto supabase/functions/*/index.ts supabase/functions/_shared/*.ts
 
 # The Flutter side, neither of which has been run.
 cd packages/app && flutter pub get && flutter analyze && flutter test && cd ../..
 ```
 
+> **Ran 2026-09-03, and it found four more.** `deno check` caught a NaN scale
+> factor and a swapped red/blue channel in `raster.ts`, plus two typing gaps;
+> `flutter analyze` caught a test that imported the wrong package name and so
+> had never compiled. All fixed in `ba17cfa` — both checks are now clean, and
+> `flutter test` passes 14/14. Re-run them anyway after any further change.
+>
 > **Two runtime-fatal bugs shipped on this branch before a typechecker existed**
 > (a call to an undefined `renderAudio`, and a `CONT_FROM` regex whose
 > declaration an extraction dropped). Both are fixed and CI now runs `tsc`, but
