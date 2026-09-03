@@ -453,7 +453,7 @@ async function renderAudio(opts: {
     const res = await cloudSynthesize(opts.text, voice);
     // Cloud TTS returns no duration; estimated from the MP3 size. Used for
     // progress display and the ledger, not for seeking.
-    const durationSec = estimateMp3Seconds(res.bytes.length);
+    const durationSec = estimateMp3Seconds(res.bytes.length, voice);
     await logCall(opts.supabase, {
       fn: "documents-synthesize",
       kind: "tts",

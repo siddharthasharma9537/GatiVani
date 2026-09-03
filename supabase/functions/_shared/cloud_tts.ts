@@ -217,14 +217,33 @@ export async function synthesize(
 }
 
 /**
+ * The MP3 bitrate Cloud TTS actually encodes at, by voice tier — measured
+ * with ffprobe against real output on 2026-09-03, not documented anywhere:
+ * te-IN-Standard-A came back 64kbps, te-IN-Chirp3-HD-Achernar 32kbps. A
+ * single assumed constant (32, the old default) was exactly right for one
+ * tier and exactly double the truth for the other — which doesn't just
+ * mis-report a number: the player's chunk-advance logic
+ * (playback_service.dart) treats a completed chunk as genuine only when the
+ * real audio element's duration is within 3s of this estimate, to reject
+ * stale `completed` events left over from the previous chunk. Get the
+ * bitrate wrong by 2x either direction and every real chunk fails that
+ * check and is treated as stale — multi-chunk narration silently stopped at
+ * the first chunk's real length (~40-55s) with the player still reporting
+ * "playing". A player-side fix wasn't needed; this was the only wrong value,
+ * and it needs to vary with the voice rather than default to either number.
+ */
+function mp3Kbps(voice: string): number {
+  return voice.includes("Chirp3-HD") ? 32 : 64;
+}
+
+/**
  * Rough duration of an MP3, in seconds.
  *
  * Cloud TTS does not return a duration and parsing every frame header to get an
  * exact one is not worth it here: the value is used for progress display and
- * for the ledger, not for seeking. Assumes the constant bitrate the API
- * produces. Callers wanting precision should measure client-side once the
- * audio element has loaded.
+ * for the ledger, not for seeking. Callers wanting precision should measure
+ * client-side once the audio element has loaded.
  */
-export function estimateMp3Seconds(bytes: number, kbps = 32): number {
-  return Math.max(1, Math.round((bytes * 8) / (kbps * 1000)));
+export function estimateMp3Seconds(bytes: number, voice: string): number {
+  return Math.max(1, Math.round((bytes * 8) / (mp3Kbps(voice) * 1000)));
 }
