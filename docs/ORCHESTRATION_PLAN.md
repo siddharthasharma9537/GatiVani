@@ -324,10 +324,22 @@ sentence marks on the Free lane.
 
 ## 4. Implementation plan
 
-Phases are independently shippable, ordered by ₹ saved per day of work. Each names
-the files it touches.
+Phases are independently shippable, ordered by ₹ saved per day of work. Each opens
+with the problem it solves and closes with the files it touches.
+
+**The through-line:** Phase 0 lets you *see* costs · Phase 1 keeps the app *alive*
+past October · Phase 2 makes narration *cheap* · Phase 3 makes ingestion *fast and
+reliable* · Phase 4 makes it *feel instant*.
 
 ### Phase 0 — Measure and stop the bleeding (2–3 days)
+
+> **Why.** Today you cannot tell whether an edition cost ₹5 or ₹500 — nothing records
+> it. Two things also waste money silently: the full-size PDF page is sent to Gemini
+> (a 15 MB image where 300 KB would do), and narration is stored as uncompressed WAV,
+> 12× larger than needed — which is what filled Supabase storage and took the whole
+> project down, feeds included.
+> **After this phase:** a real ₹ figure per edition, a smaller Gemini bill, and
+> storage that stops growing ~600 MB/month.
 
 1. Migration `model_calls(fn, model, kind: llm|tts|ocr, job_id, page, input_tokens,
    output_tokens, chars, audio_seconds, inr_estimate, latency_ms, ok, created_at)`,
@@ -342,6 +354,14 @@ the files it touches.
 
 ### Phase 1 — Cheaper structuring + the 2.5 retirement (≈ 1 week)
 
+> **Why.** Google retires the Gemini 2.5 models on **16 Oct 2026**, and every AI call
+> in GatiVani is on 2.5 — on that date, newspaper processing stops working. The code
+> also tries four model/payload combinations in sequence because free-tier keys keep
+> hitting rate limits.
+> **After this phase:** the app survives October, the model is a one-line change,
+> structuring is cheaper, and the fallback ladder is gone.
+> **This is the only phase with a hard external deadline.**
+
 1. `_shared/gemini.ts`: one client for all Gemini calls — model tier map (with the
    post-October IDs behind an env switch), `responseSchema`, thinking config, 429
    backoff, `model_calls` logging, and `escalate()` (T1 → T2 on a failed check).
@@ -354,6 +374,14 @@ the files it touches.
    matches today's quality. **Do this before 16 Oct.**
 
 ### Phase 2 — Free-lane TTS + Live feed (≈ 4–5 days)
+
+> **Why.** Every narration currently runs through Gemini TTS at ~₹1.43/min, so a
+> 3–4 hour edition costs over ₹300. Google Cloud gives ~5 M free characters a month
+> — about 30 editions' worth — and its WaveNet voice bills at the same rate as
+> Standard once that pool is spent.
+> **After this phase:** narration is effectively free, Live feed articles get the
+> better WaveNet voice, headlines are read by the phone itself at ₹0, and an edition
+> lands under ₹50.
 
 1. `documents-synthesize`: add `lane: "premium" | "free"` and a `surface` argument
    (`live_article` | `live_ticker` | `edition_tail`). The free lane calls Cloud TTS
@@ -369,6 +397,12 @@ the files it touches.
 
 ### Phase 3 — Durable, parallel, shared editions (1–2 weeks)
 
+> **Why.** A 20-page edition takes ~14 minutes because pages run strictly one after
+> another, and if any single page dies the job sits at "processing" forever with no
+> error surfaced. Two people uploading the same newspaper pay to process it twice.
+> **After this phase:** ~4 minutes instead of 14, failed pages retry instead of
+> stranding the job, and an edition already processed is reused for free.
+
 1. Migrations: `ingest_jobs`, `ingest_pages` (`ocr_hash`, `step`, `attempts`,
    `last_error`); enable `pgmq`, `pg_cron`, `pg_net`; owner-scoped RLS.
 2. Functions `pipeline-start`, `pipeline-dispatch`, `pipeline-page`,
@@ -377,6 +411,11 @@ the files it touches.
 4. Client `pollEdition` reads `ingest_jobs`.
 
 ### Phase 4 — Prewarm lane on Gemini Batch (≈ 3–4 days)
+
+> **Why.** Tapping a story means waiting while its audio is generated, and new users
+> hit an "enter your Gemini API key" wall before they can use the Paper tab at all.
+> **After this phase:** the stories people actually tap play instantly, and the key
+> gate disappears from first launch.
 
 1. `pipeline-finalize` picks top 3 stories per section (position on page 1, headline
    size class, section weight) and submits one Gemini **Batch** TTS job per edition.
