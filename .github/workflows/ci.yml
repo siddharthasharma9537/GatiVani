@@ -30,15 +30,14 @@ jobs:
         run: flutter pub get
       - name: Analyze
         working-directory: packages/app
-        # Informational for now — flip to blocking once the existing
-        # analyzer findings are cleaned up.
-        continue-on-error: true
-        run: flutter analyze
+        # Blocking on errors (code that cannot compile), informational on
+        # lints and style. Tighten by dropping the two flags once the
+        # existing warning backlog is cleared.
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Test
         working-directory: packages/app
-        # Informational: the suite currently references services that do not
-        # exist in lib/ (firebase_service, gemini_service, news_service) and
-        # cannot compile — a pre-rewrite holdover that needs a rewrite of its
-        # own against the current services.
-        continue-on-error: true
+        # Blocking. Was `continue-on-error: true` while the suite consisted
+        # entirely of tests importing services deleted from lib/ — it could
+        # not compile, so CI reported green no matter what broke. That suite
+        # is gone; what remains must pass.
         run: flutter test

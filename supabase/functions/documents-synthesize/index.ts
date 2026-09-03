@@ -1,6 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import * as r2 from "../_shared/r2.ts";
+import { mp3Enabled, wavDurationSeconds, wavToMp3 } from "../_shared/mp3.ts";
+import { geminiTtsPaise, logCall } from "../_shared/usage.ts";
 // Sarvam STT forced-alignment (./alignment.ts) is disabled for cost — see the
 // commented-out alignAndStore call in the handler.
 // (touch: retrigger deploy now that the CI loop skips _shared)
@@ -35,10 +37,15 @@ function jwtSub(req: Request): string {
 // writing audio there — see docs/R2_AUDIO_MIGRATION.md. Until the credentials
 // are set, this keeps using Supabase Storage exactly as before.
 // deno-lint-ignore no-explicit-any
-async function storeAudio(supabase: any, path: string, bytes: Uint8Array): Promise<string> {
+async function storeAudio(
+  supabase: any,
+  path: string,
+  bytes: Uint8Array,
+  contentType = "audio/wav",
+): Promise<string> {
   if (r2.configured()) {
     try {
-      await r2.put(path, bytes, "audio/wav");
+      await r2.put(path, bytes, contentType);
       return r2.publicUrl(path);
     } catch (e) {
       console.warn("[synthesize] r2 upload failed:", e);
@@ -48,12 +55,36 @@ async function storeAudio(supabase: any, path: string, bytes: Uint8Array): Promi
   if (!supabase) return "";
   const { error } = await supabase.storage
     .from("audio")
-    .upload(path, bytes, { contentType: "audio/wav", upsert: true });
+    .upload(path, bytes, { contentType, upsert: true });
   if (error) {
     console.warn("[synthesize] audio upload failed:", error.message);
     return "";
   }
   return supabase.storage.from("audio").getPublicUrl(path).data.publicUrl;
+}
+
+// Chooses the stored audio format for one synthesis result.
+//
+// Duration is always measured on the PCM, never on the encoded bytes — an MP3's
+// size says nothing about its length. Encoding is best-effort: if it fails, or
+// AUDIO_FORMAT is not "mp3", the original WAV is stored unchanged, so this can
+// only ever change the file's size, never whether playback works.
+// Measured ratio and CPU cost: _shared/mp3.ts.
+async function encodeForStorage(
+  wavBytes: Uint8Array,
+  sampleRate: number,
+): Promise<{ bytes: Uint8Array; ext: string; contentType: string; durationSec: number }> {
+  const durationSec = wavDurationSeconds(wavBytes, sampleRate);
+  if (mp3Enabled()) {
+    const mp3 = await wavToMp3(wavBytes, sampleRate);
+    if (mp3) {
+      console.log(
+        `[synthesize] mp3 ${Math.round(wavBytes.length / 1024)} KB -> ${Math.round(mp3.length / 1024)} KB`,
+      );
+      return { bytes: mp3, ext: ".mp3", contentType: "audio/mpeg", durationSec };
+    }
+  }
+  return { bytes: wavBytes, ext: ".wav", contentType: "audio/wav", durationSec };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -254,6 +285,11 @@ function styledText(text: string, readingStyle?: string): string {
 // Returns raw PCM int16 LE at 24 kHz mono — no chunking needed.
 
 const GEMINI_SAMPLE_RATE = 24000;
+// Single source for the billed model id: the request URL and the cost ledger
+// must never disagree about which model was actually charged.
+// NOTE: retires 16 Oct 2026 with the rest of the 2.5 line — see
+// docs/ORCHESTRATION_PLAN.md Phase 1.
+const GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts";
 
 // One Gemini TTS call → a complete WAV for the given text. Retries once on
 // 429 (rate limit) after a short backoff — now that there's no Sarvam
@@ -265,7 +301,7 @@ async function geminiOneCall(
   geminiKey: string,
 ): Promise<Uint8Array> {
   const doFetch = () => fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${geminiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${geminiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -412,7 +448,7 @@ Deno.serve(async (req) => {
           audioUrl: cachedUrl,
           // word-level timings live next to the audio; the app falls back to
           // estimation if this 404s (alignment may still be running)
-          timingsUrl: cachedUrl.replace(/\.wav$/, ".timings.json"),
+          timingsUrl: cachedUrl.replace(/\.(wav|mp3)$/, ".timings.json"),
           provider: "cache",
           language: langKey,
           speaker,
@@ -502,15 +538,29 @@ Deno.serve(async (req) => {
         }
       }
 
+      const ttsStart = Date.now();
       const wavBytes = await geminiOneCall(parts[chunkIndex], geminiVoice(speaker), geminiKey);
-      const durationSec = Math.round((wavBytes.length - 44) / (GEMINI_SAMPLE_RATE * 2));
+      const encoded = await encodeForStorage(wavBytes, GEMINI_SAMPLE_RATE);
+      const durationSec = encoded.durationSec;
       console.log(`[synthesize] chunk ${chunkIndex}/${parts.length - 1} for ${articleId || "(no id)"}: ~${durationSec}s`);
+
+      await logCall(supabase, {
+        fn: "documents-synthesize",
+        kind: "tts",
+        provider: "gemini",
+        model: GEMINI_TTS_MODEL,
+        articleId,
+        chars: parts[chunkIndex].length,
+        audioSeconds: durationSec,
+        inrPaise: geminiTtsPaise(GEMINI_TTS_MODEL, durationSec),
+        latencyMs: Date.now() - ttsStart,
+      });
 
       let audioUrl = "";
       if (supabase && articleId) {
         const base = fileSuffix.replace(/\.wav$/, ""); // "" or ".brief"
-        const path = `articles/${articleId}${base}.chunk${chunkIndex}.wav`;
-        audioUrl = await storeAudio(supabase, path, wavBytes);
+        const path = `articles/${articleId}${base}.chunk${chunkIndex}${encoded.ext}`;
+        audioUrl = await storeAudio(supabase, path, encoded.bytes, encoded.contentType);
         if (audioUrl) {
           const { error: cacheErr } = await supabase.from("article_chunks").upsert({
             article_id: articleId,
@@ -523,7 +573,9 @@ Deno.serve(async (req) => {
           if (cacheErr) console.warn("[synthesize] chunk cache write failed:", cacheErr.message);
         }
       }
-      if (!audioUrl) audioUrl = `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
+      if (!audioUrl) {
+        audioUrl = `data:${encoded.contentType};base64,${bytesToBase64(encoded.bytes)}`;
+      }
 
       return json({
         ok: true,
@@ -550,20 +602,34 @@ Deno.serve(async (req) => {
     console.log(`[synthesize] provider=gemini-2.5 chars=${text.length} speaker=${speaker}`);
 
     const usedProvider = "gemini-2.5";
+    const ttsStart = Date.now();
     const { wavBytes, durationSec, chunks } =
       await synthesizeWithGemini(text, speaker, geminiKey, readingStyle);
+    const encoded = await encodeForStorage(wavBytes, GEMINI_SAMPLE_RATE);
 
-    console.log(`[synthesize] done: ${Math.round(wavBytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
+    console.log(`[synthesize] done: ${Math.round(encoded.bytes.length / 1024)} KB ~${durationSec}s via ${usedProvider}`);
+
+    await logCall(supabase, {
+      fn: "documents-synthesize",
+      kind: "tts",
+      provider: "gemini",
+      model: GEMINI_TTS_MODEL,
+      articleId,
+      chars: text.length,
+      audioSeconds: durationSec,
+      inrPaise: geminiTtsPaise(GEMINI_TTS_MODEL, durationSec),
+      latencyMs: Date.now() - ttsStart,
+    });
 
     // Persist to the public audio bucket + articles.audio_url for reuse.
     // The app accepts both plain URLs and data: URIs in audioUrl.
     let audioUrl = "";
     let timingsUrl = "";
     if (supabase) {
-      const path = `articles/${articleId}${fileSuffix}`;
-      audioUrl = await storeAudio(supabase, path, wavBytes);
+      const path = `articles/${articleId}${fileSuffix.replace(/\.wav$/, encoded.ext)}`;
+      audioUrl = await storeAudio(supabase, path, encoded.bytes, encoded.contentType);
       if (audioUrl) {
-        timingsUrl = audioUrl.replace(/\.wav$/, ".timings.json");
+        timingsUrl = audioUrl.replace(/\.(wav|mp3)$/, ".timings.json");
         const { error: updErr } = await supabase
           .from("articles").update({ [target]: audioUrl, [hashCol]: textHash }).eq("id", articleId);
         if (updErr) console.warn(`[synthesize] ${target} update failed:`, updErr.message);
@@ -581,7 +647,9 @@ Deno.serve(async (req) => {
         // }
       }
     }
-    if (!audioUrl) audioUrl = `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
+    if (!audioUrl) {
+      audioUrl = `data:${encoded.contentType};base64,${bytesToBase64(encoded.bytes)}`;
+    }
 
     return json({
       ok: true,

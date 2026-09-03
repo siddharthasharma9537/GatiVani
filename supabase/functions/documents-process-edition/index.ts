@@ -17,7 +17,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
-import { callGeminiJson, extractArticlesStructured } from "../_shared/structure.ts";
+import { callGeminiJson, extractArticlesStructured, type UsageCtx } from "../_shared/structure.ts";
+import { geminiTokens, llmPaise, logCall, ocrPaise } from "../_shared/usage.ts";
+import { rasterFirstPage } from "../_shared/raster.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -149,7 +151,12 @@ function bytesToBase64(bytes: Uint8Array): string {
 // dated filename, and would otherwise all collide on today's date. Cheap
 // flash-lite vision call; failures are non-fatal (caller falls back to the
 // filename, then today).
-async function detectPrintedDate(pageBytes: Uint8Array, geminiKey: string): Promise<string> {
+async function detectPrintedDate(
+  pageBytes: Uint8Array,
+  geminiKey: string,
+  ctx?: UsageCtx,
+): Promise<string> {
+  const startedAt = Date.now();
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`;
     const prompt = 'If a publication/issue date is printed on this newspaper page ' +
@@ -182,6 +189,22 @@ async function detectPrintedDate(pageBytes: Uint8Array, geminiKey: string): Prom
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
     };
     const text = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+    if (ctx) {
+      const { inputTokens, outputTokens } = geminiTokens(data);
+      await logCall(ctx.supabase, {
+        fn: ctx.fn,
+        kind: "llm",
+        provider: "gemini",
+        model: "gemini-2.5-flash-lite",
+        jobId: ctx.jobId,
+        newspaperId: ctx.newspaperId,
+        page: 1,
+        inputTokens,
+        outputTokens,
+        inrPaise: llmPaise("gemini-2.5-flash-lite", inputTokens, outputTokens),
+        latencyMs: Date.now() - startedAt,
+      });
+    }
     const m = text.match(/"publicationDate"\s*:\s*"(\d{4}-\d{2}-\d{2})"/);
     return m ? m[1] : "";
   } catch (e) {
@@ -235,9 +258,46 @@ async function processPage(
     single.addPage(pg);
     const pageBytes = await single.save();
 
+    // Cost ledger context: every Gemini call made below this point is
+    // attributed to this job/page/edition. See _shared/usage.ts.
+    const usage: UsageCtx = {
+      supabase,
+      fn: "documents-process-edition",
+      jobId,
+      newspaperId: job.newspaper_id,
+      page,
+    };
+
+    const ocrStart = Date.now();
     const html = await ocrPageToHtml(new Uint8Array(pageBytes), SARVAM);
+    await logCall(supabase, {
+      fn: "documents-process-edition",
+      kind: "ocr",
+      provider: "sarvam",
+      model: "sarvam-doc-digitization-v1",
+      jobId,
+      newspaperId: job.newspaper_id,
+      page,
+      pages: 1,
+      inrPaise: ocrPaise(1),
+      latencyMs: Date.now() - ocrStart,
+    });
+
+    // Optionally hand Gemini a downscaled JPEG instead of the raw page PDF —
+    // image input is billed by pixel area. Off unless RASTER_PAGES=true, and
+    // null on any failure, in which case this is exactly the old behaviour.
+    // See _shared/raster.ts for why it ships disabled.
+    const raster = await rasterFirstPage(new Uint8Array(pageBytes));
+    if (raster) {
+      console.log(`[edition] page ${page} rastered ${raster.width}x${raster.height}`);
+    }
     const result = await extractArticlesStructured(
-      html, new Uint8Array(pageBytes), "application/pdf", GEMINI);
+      html,
+      raster ? raster.bytes : new Uint8Array(pageBytes),
+      raster ? raster.mimeType : "application/pdf",
+      GEMINI,
+      usage,
+    );
 
     const rows = result.articles.map((a, i) => ({
       newspaper_id: job.newspaper_id,
@@ -301,7 +361,7 @@ async function processPage(
     fireContinuation(jobId, page + 1, geminiKey);
   } else {
     // All pages done — stitch cross-page article continuations, then clean up.
-    await finalizeContinuations(supabase, job.newspaper_id, geminiKey);
+    await finalizeContinuations(supabase, job.newspaper_id, geminiKey, usage);
     await supabase.storage.from("uploads").remove([sourcePath])
       .then(() => {}, () => {});
     console.log(`[edition] job ${jobId} completed; source ${sourcePath} deleted`);
@@ -350,6 +410,7 @@ async function semanticContinuationMatch(
   sourceBody: string,
   candidates: Array<{ title: string; body: string }>,
   geminiKey: string,
+  ctx?: UsageCtx,
 ): Promise<number | null> {
   if (!geminiKey || !candidates.length) return null;
   const prompt =
@@ -369,7 +430,7 @@ async function semanticContinuationMatch(
         )
         .join("\n")
     }`;
-  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
+  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey, ctx);
   if (status !== 200) return null;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as { match?: number };
   return typeof data.match === "number" && data.match >= 0 && data.match < candidates.length
@@ -379,7 +440,7 @@ async function semanticContinuationMatch(
 
 // deno-lint-ignore no-explicit-any
 async function finalizeContinuations(
-  supabase: any, newspaperId: string, geminiKey: string,
+  supabase: any, newspaperId: string, geminiKey: string, ctx?: UsageCtx,
 ): Promise<void> {
   if (!newspaperId) return;
   const { data: arts } = await supabase.from("articles")
@@ -450,6 +511,7 @@ async function finalizeContinuations(
           body: (c.full_content as string) ?? "",
         })),
         geminiKey,
+        ctx,
       ).catch(() => null);
       if (idx !== null) {
         best = cands[idx];
@@ -613,7 +675,10 @@ async function runStart(
     const single = await PDFDocument.create();
     const [pg] = await single.copyPages(pdf, [0]);
     single.addPage(pg);
-    const printedDate = await detectPrintedDate(await single.save(), userGeminiKey);
+    const printedDate = await detectPrintedDate(await single.save(), userGeminiKey, {
+      supabase,
+      fn: "documents-process-edition",
+    });
     const pubDate = printedDate || parseDateFromFilename(originalName) || todayIST();
     const title = originalName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 

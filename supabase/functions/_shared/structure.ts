@@ -13,6 +13,22 @@
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+import { geminiTokens, llmPaise, logCall, type ModelCall } from "./usage.ts";
+
+/**
+ * Optional cost-ledger context. When present, every Gemini call this module
+ * makes writes a `model_calls` row (see _shared/usage.ts). Absent, the engine
+ * behaves exactly as before — logging is never load-bearing.
+ */
+export interface UsageCtx {
+  // deno-lint-ignore no-explicit-any
+  supabase: any;
+  fn: string;
+  jobId?: string | null;
+  newspaperId?: string | null;
+  page?: number | null;
+}
+
 export interface Block {
   id: number;
   row: number;   // index of multi-column-row in document order; -1 = outside rows
@@ -303,9 +319,27 @@ export async function callGeminiJson(
   model: string,
   parts: unknown[],
   geminiKey: string,
+  ctx?: UsageCtx,
 ): Promise<{ status: number; text: string }> {
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+  const startedAt = Date.now();
+  // Records the attempt whether it succeeded or not — a 429 that cost us a
+  // retry is exactly the kind of thing the ledger exists to make visible.
+  const log = (extra: Partial<ModelCall>) => {
+    if (!ctx) return;
+    void logCall(ctx.supabase, {
+      fn: ctx.fn,
+      kind: "llm",
+      provider: "gemini",
+      model,
+      jobId: ctx.jobId,
+      newspaperId: ctx.newspaperId,
+      page: ctx.page,
+      latencyMs: Date.now() - startedAt,
+      ...extra,
+    });
+  };
   let resp: Response | null = null;
   // retry transient 429 (quota window) and 5xx with spaced waits
   for (const backoff of [0, 15000]) {
@@ -326,15 +360,25 @@ export async function callGeminiJson(
     });
     if (resp.status !== 429 && resp.status < 500) break;
   }
-  if (!resp) return { status: 0, text: "" };
+  if (!resp) {
+    log({ ok: false, error: "no response" });
+    return { status: 0, text: "" };
+  }
   const status = resp.status;
   if (!resp.ok) {
     await resp.body?.cancel();
+    log({ ok: false, error: `HTTP ${status}` });
     return { status, text: "" };
   }
   const data = await resp.json() as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
+  const { inputTokens, outputTokens } = geminiTokens(data);
+  log({
+    inputTokens,
+    outputTokens,
+    inrPaise: llmPaise(model, inputTokens, outputTokens),
+  });
   return {
     status,
     text: (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join(""),
@@ -346,6 +390,7 @@ async function assignWithGemini(
   fileBuffer: Uint8Array,
   mimeType: string,
   geminiKey: string,
+  ctx?: UsageCtx,
 ): Promise<Assignment> {
   const manifestText = ASSIGN_PROMPT + manifest(blocks);
   const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
@@ -372,7 +417,7 @@ async function assignWithGemini(
       const parts = correction
         ? [...cfg.parts, { text: `Your previous answer was invalid: ${correction}. Return corrected JSON only.` }]
         : cfg.parts;
-      const { status, text } = await callGeminiJson(cfg.model, parts, geminiKey);
+      const { status, text } = await callGeminiJson(cfg.model, parts, geminiKey, ctx);
       if (status !== 200) {
         lastErr = `${cfg.label}: HTTP ${status}`;
         break;  // try next config (different model/payload → different quota)
@@ -515,7 +560,7 @@ function applyOrder(d: Draft, order: unknown): boolean {
 // One cheap text call per page. Reorders body fragments by MEANING (catches the
 // within-column semantic mis-orders that string heuristics miss) and flags
 // narrative gaps. Index-only: it permutes existing fragments, never edits text.
-async function coherencePass(drafts: Draft[], geminiKey: string): Promise<void> {
+async function coherencePass(drafts: Draft[], geminiKey: string, ctx?: UsageCtx): Promise<void> {
   const lines: string[] = [];
   drafts.forEach((d, i) => {
     if (d.blocks.length < 2) return;
@@ -557,7 +602,7 @@ RULES:
   NOT the same as being misplaced. Omit or leave empty when everything fits.
 
 ${lines.join("\n")}`;
-  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey);
+  const { status, text } = await callGeminiJson("gemini-2.5-flash-lite", [{ text: prompt }], geminiKey, ctx);
   if (status !== 200) return;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
     articles?: Array<{
@@ -592,6 +637,7 @@ ${lines.join("\n")}`;
 // `vision_recovered` for review.
 async function visionPass(
   drafts: Draft[], fileBuffer: Uint8Array, mimeType: string, geminiKey: string,
+  ctx?: UsageCtx,
 ): Promise<void> {
   const targets = drafts
     .map((d, i) => ({ d, i }))
@@ -621,6 +667,7 @@ ${lines.join("\n")}`;
     "gemini-2.5-flash-lite",
     [{ inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } }, { text: prompt }],
     geminiKey,
+    ctx,
   );
   if (status !== 200) return;
   const data = JSON.parse((text.match(/\{[\s\S]*\}/) ?? ["{}"])[0]) as {
@@ -661,12 +708,13 @@ export async function extractArticlesStructured(
   fileBuffer: Uint8Array,
   mimeType: string,
   geminiKey: string,
+  ctx?: UsageCtx,
 ): Promise<StructuredResult> {
   const blocks = parseBlocks(rawOcrHtml);
   if (blocks.length < 5) throw new Error(`too few blocks (${blocks.length})`);
   console.log(`[structure] atomized ${blocks.length} blocks`);
 
-  const assignment = await assignWithGemini(blocks, fileBuffer, mimeType, geminiKey);
+  const assignment = await assignWithGemini(blocks, fileBuffer, mimeType, geminiKey, ctx);
   const byId = new Map(blocks.map((b) => [b.id, b]));
 
   // Build drafts (body kept as ordered fragments — stitching deferred until
@@ -699,10 +747,10 @@ export async function extractArticlesStructured(
   // Layer 2 (text coherence) → Layer 3 (vision, only for flagged gaps). Both
   // non-fatal: any failure leaves the structure-engine order untouched.
   if (geminiKey) {
-    try { await coherencePass(drafts, geminiKey); }
+    try { await coherencePass(drafts, geminiKey, ctx); }
     catch (e) { console.warn("[structure] L2 coherence failed:", (e as Error).message); }
     if (drafts.some((d) => d.review.includes("gap_suspected"))) {
-      try { await visionPass(drafts, fileBuffer, mimeType, geminiKey); }
+      try { await visionPass(drafts, fileBuffer, mimeType, geminiKey, ctx); }
       catch (e) { console.warn("[structure] L3 vision failed:", (e as Error).message); }
     }
   }
