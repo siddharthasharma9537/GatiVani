@@ -477,7 +477,33 @@ reliable* · Phase 4 makes it *feel instant*.
 3. Second free pool (Azure te‑IN neural) behind the same interface, only if the
    Google pool is exhausted mid-month.
 
-### Phase 3 — Durable, parallel, shared editions (1–2 weeks)
+### Phase 3 — Durable, parallel, shared editions (1–2 weeks) — **shipped**
+
+> **Built on a table, not pgmq.** Per-page state (attempts, `ocr_hash`,
+> `last_error`, step) has to exist regardless; with pgmq it would live in two
+> places that can disagree. `FOR UPDATE SKIP LOCKED` is the primitive a work
+> queue needs, volume is a few editions a day, and a queue you can
+> `select * from` is far easier to operate. Revisit pgmq if ingestion ever
+> becomes high-throughput.
+>
+> | Piece | What it does |
+> |---|---|
+> | `pipeline-start` | counts pages, writes one `ingest_pages` row each, starts the first `INGEST_CONCURRENCY` (default 4) workers |
+> | `pipeline-page` | processes one page, then claims the next; the last one to finish fires finalize |
+> | `pipeline-finalize` | stitches cross-page continuations, deletes the source PDF, marks the job ready |
+> | `pipeline-status` | progress by job id, for the client |
+> | cron sweep | `requeue_stale_ingest_pages()` every minute — the durability guarantee |
+>
+> Normal flow never waits on cron: each worker pulls the next page itself. Cron
+> exists **only** to rescue a page whose worker died, which is the exact failure
+> the old self-fetch chain could not survive.
+>
+> **Dedupe:** after OCR, a page is hashed. An identical page from a different
+> edition copies its articles instead of re-running OCR and structuring — the
+> second upload of the same paper costs ₹0.
+>
+> `documents-process-edition` is now an 85-line shim forwarding to
+> `pipeline-start` (was 693 lines). Delete it once old app builds are gone.
 
 > **Why.** A 20-page edition takes ~14 minutes because pages run strictly one after
 > another, and if any single page dies the job sits at "processing" forever with no
