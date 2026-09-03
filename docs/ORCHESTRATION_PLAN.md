@@ -7,9 +7,10 @@ the **Live feed on free-tier TTS**. Runtime stack stays **Sarvam Vision (OCR) +
 Gemini (vision/structure) + Gemini TTS** — this plan does not move inference to
 Claude. Prices below were looked up on 2026-09-02; ₹ figures use **₹95 / $1**.
 Sources at the end. Anything marked *verify* could not be read from the vendor's
-own page (blocked from this session) and was taken from secondary sources. The
-`te-IN` Cloud TTS voice list and rates in §2.1/§2.3 were supplied by the project
-owner on 2026-09-02; confirm them once from Cloud Billing after the first month.
+own page (blocked from this session) and was taken from secondary sources — those
+are the Gemini model and TTS rates only. **The Cloud TTS rates and free tiers in
+§2.1/§2.3 are confirmed**, read off the Google Cloud console pricing page by the
+project owner on 2026-09-02.
 
 ---
 
@@ -164,8 +165,13 @@ call. A view summing this month's characters per voice tier is the routing input
 `pickVoice()` reads it and returns the first tier with pool remaining. No guessing,
 and the cascade self-corrects on the 1st of each month.
 
-**One check still worth running once**, because voice *names* must be exact and this
-pricing came from a secondary summary rather than the vendor page:
+**The rates and free tiers above are confirmed** — read off the Google Cloud console
+pricing page on 2026-09-02, not inferred from a third party. Treat them as the
+budget's foundation.
+
+The one thing still worth a command, at build time rather than as a check, is the
+**exact voice-name strings** the code must send — a pricing page states rates, not
+per-locale voice inventories, and `pickVoice()` needs literals that exist:
 
 ```bash
 curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
@@ -173,8 +179,8 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   | jq -r '.voices[] | "\(.name)\t\(.ssmlGender)"' | sort
 ```
 
-Confirm the rates once from Cloud Billing → *Reports*, grouped by SKU, after the
-first real month.
+Pin that output into the `pickVoice()` tier table so a renamed or withdrawn voice
+fails loudly at deploy rather than silently at synthesis time.
 
 ### 2.4 The Live feed
 
@@ -395,6 +401,6 @@ the README, and `structure.ts`; ask for a PR per phase step.
 - Gemini 3.1 / 3.5 Flash‑Lite prices: [pricepertoken](https://pricepertoken.com/pricing-page/model/google-gemini-3.1-flash-lite-preview), [OpenRouter](https://openrouter.ai/google/gemini-3.5-flash-lite)
 - Gemini image tiling (258 tokens / 768 px tile, PDF page = image): [puter](https://developer.puter.com/tutorials/gemini-api-pricing/), [geotoolbox](https://geotoolbox.ai/blog/gemini-api-pricing)
 - Gemini TTS 25 tokens/s, 2.5 Flash TTS $0.50/$10, 3.1 Flash TTS $1/$20, 3.5 Flash TTS $6, free tier 3 RPM / 15 RPD, Batch 50 %: [invideo](https://invideo.io/blog/gemini-tts-ai-voice/), [Bifrost calculator](https://www.getmaxim.ai/bifrost/llm-cost-calculator/provider/gemini/model/gemini-2.5-flash-preview-tts), [aifreeapi](https://www.aifreeapi.com/en/posts/gemini-api-free-tier-complete-guide), [apidog batch](https://apidog.com/blog/gemini-api-batch-mode/), [Rogue Marketing](https://the-rogue-marketing.github.io/google-gemini-tts-speech-audio-api-pricing-may-2026/)
-- Google Cloud TTS free tier and $/1M: [costbench](https://costbench.com/software/ai-voice-tools/google-cloud-text-to-speech/free-plan/), [TextToLab](https://texttolab.com/blog/google-cloud-tts-pricing), [voice list](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types)
+- Google Cloud TTS te‑IN rates and free tiers: **the Google Cloud console pricing page**, read by the project owner 2026-09-02 (authoritative). Background: [voice list docs](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types)
 - Azure Neural TTS F0 0.5 M chars, $16/1M, Telugu: [TextToLab](https://texttolab.com/blog/azure-text-to-speech-pricing), [Microsoft Learn quotas](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-services-quotas-and-limits)
 - USD/INR ≈ 94.9 on 2026-09-01: [Trading Economics](https://tradingeconomics.com/india/currency), [Wise](https://wise.com/in/currency-converter/usd-to-inr-rate/history)
