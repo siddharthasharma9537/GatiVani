@@ -12,8 +12,12 @@ import { generate, type UsageCtx } from "./gemini.ts";
 export const SARVAM_BASE = "https://api.sarvam.ai";
 
 
-// "continued TO page N" — captures the page number.
-const CONT_TO = /(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*(\d{1,2})\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)[^)]*\)?/;
+// "continued TO page N" — captures the page number. `>` alongside the three
+// words: a real front page ("...దానికి >7వ పేజీలో") printed the jump as a bare
+// arrow glyph with no qualifying word at all, which this regex missed
+// entirely on the first edition run — those articles never even reached the
+// candidate-matching below, let alone the semantic fallback.
+const CONT_TO = /(?:మిగతా|సశేషం|తరువాయి|>)\s*\(?\s*(\d{1,2})\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)[^)]*\)?/;
 // "continued FROM" header at the start of the destination article.
 const CONT_FROM = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
 
@@ -227,7 +231,7 @@ export async function finalizeContinuations(
 ): Promise<void> {
   if (!newspaperId) return;
   const { data: arts } = await supabase.from("articles")
-    .select("id,title,full_content,content_preview,page_number")
+    .select("id,title,full_content,content_preview,page_number,processing_status,position_json")
     .eq("newspaper_id", newspaperId)
     .order("page_number");
   if (!arts || arts.length < 2) return;
@@ -237,11 +241,16 @@ export async function finalizeContinuations(
   // echoed by the full article elsewhere. Rather than drop them, prepend the
   // teaser's headline (the front-page kicker) to the full article's headline so
   // the listener knows this was the front-page lead — then remove the blurb.
+  //
+  // 260 was calibrated before any real edition ran through this. The first one
+  // showed genuine front-page kickers running 600-3000+ chars (a paragraph,
+  // not a one-line blurb) — 500 stays conservative against stitching two
+  // merely-similar articles together, but reaches more of what's real.
   const longs = (arts as Array<{ id: string; title: string; full_content: string }>)
     .filter((x) => (x.full_content?.length ?? 0) > 500);
   for (const a of arts as Array<{ id: string; title: string; full_content: string }>) {
     const body = a.full_content ?? "";
-    if (body.length >= 260 || body.length < 30) continue;
+    if (body.length >= 500 || body.length < 30) continue;
     let match: { id: string; title: string; full_content: string } | undefined;
     for (const off of [0, 12, 24, 40, 60]) {
       const probe = body.slice(off, off + 18).trim();
@@ -313,9 +322,33 @@ export async function finalizeContinuations(
         .replace(/\s{2,}/g, " ")
         .trim();
       const merged = `${head} ${contBody}`.trim();
-      await supabase.from("articles")
-        .update({ full_content: merged, content_preview: merged.slice(0, 200) })
-        .eq("id", a.id);
+
+      // A successful merge is the fix for exactly what put this article in
+      // review in the first place — it was truncated (ends_mid_sentence),
+      // and reordered/gap_suspected/low_coverage are page-extraction
+      // artifacts a merge doesn't change either way. Drop those; anything
+      // else (headline_missing, fused_articles, topic_mismatch, caption_leak,
+      // vision_recovered) is an independent concern the merge didn't touch,
+      // so it keeps gating. Without this a stitch "succeeds" in the logs and
+      // the article stays invisible on its stale pre-merge flags regardless.
+      const resolvedByMerge = new Set([
+        "ends_mid_sentence", "reordered", "gap_suspected",
+      ]);
+      const priorFlags = ((a.position_json as { review_flags?: string[] } | null)
+        ?.review_flags ?? []) as string[];
+      const remainingFlags = priorFlags.filter((f) =>
+        !resolvedByMerge.has(f) && !f.startsWith("low_coverage:"));
+
+      await supabase.from("articles").update({
+        full_content: merged,
+        content_preview: merged.slice(0, 200),
+        processing_status: remainingFlags.length ? "review" : "ready",
+        quality_score: remainingFlags.length ? 0.7 : 0.95,
+        position_json: {
+          ...(a.position_json as Record<string, unknown> ?? {}),
+          review_flags: remainingFlags.length ? remainingFlags : undefined,
+        },
+      }).eq("id", a.id);
       await supabase.from("articles").delete().eq("id", best.id);
       console.log(`[edition] merged continuation p→${targetPage}: "${(a.title as string).slice(0, 24)}"`);
     } else if (head !== body) {

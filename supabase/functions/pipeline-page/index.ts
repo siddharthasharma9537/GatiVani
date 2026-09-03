@@ -170,15 +170,26 @@ Deno.serve(async (req) => {
     await markPage(supabase, jobId, page, { step: "structure" });
 
     // ── Insert ───────────────────────────────────────────────────────────
-    const rows = result.articles.map((a, i) => ({
+    // `reordered` records that Layer 2 successfully fixed a multi-column read
+    // order — informational, not a defect, and gating on it hid clean articles
+    // for no reason (most of a real edition's page 4 was `reordered`-only).
+    // `low_coverage:*` is a whole-PAGE aggregate (how much of the page's OCR'd
+    // text survived into ANY article), not a property of this one article; on
+    // a dense real page it sits at 0.8-0.85 from ads and captions alone, which
+    // then flagged every article on the page regardless of that article's own
+    // completeness. An article this loose still hides for a real defect below.
+    const isHardFlag = (f: string) => f !== "reordered" && !f.startsWith("low_coverage:");
+    const rows = result.articles.map((a, i) => {
+      const hardFlags = a.review.filter(isHardFlag);
+      return {
       newspaper_id: newspaperId,
       title: a.title,
       content_preview: a.content.replace(/\n/g, " ").slice(0, 200),
       full_content: a.content,
       section: a.category || "News",
       page_number: result.printedPage ?? page,
-      processing_status: a.review.length ? "review" : "ready",
-      quality_score: a.review.length ? 0.7 : 0.95,
+      processing_status: hardFlags.length ? "review" : "ready",
+      quality_score: hardFlags.length ? 0.7 : 0.95,
       position_json: {
         article_index: i + 1,
         page: result.printedPage ?? page,
@@ -189,7 +200,8 @@ Deno.serve(async (req) => {
         estimated_duration_seconds: estimateDurationSeconds(a.content),
         extraction_engine: "structured-v1",
       },
-    }));
+      };
+    });
 
     if (rows.length) {
       const { error: insErr } = await supabase.from("articles").insert(rows);
