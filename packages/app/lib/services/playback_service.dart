@@ -95,32 +95,6 @@ class PlaybackService extends ChangeNotifier {
       _maybePrefetchNext();
       _maybeFetchNextChunk(pos);
     });
-    // The gapless mid-article transition: just_audio advances to the next
-    // item in the player's own playlist on its own (no app-level setUrl/play
-    // call), so this is bookkeeping-only — advancing
-    // _loadedChunkIndex/_priorChunksElapsed to match where the player
-    // already is. This is what makes chunk transitions silent instead of
-    // requiring a manual tap: there's no async setUrl()/play() at the
-    // boundary for the browser to treat as non-gesture-initiated and block.
-    // See _advanceChunk for the fallback used when the next chunk hasn't
-    // been appended in time.
-    player.positionDiscontinuityStream.listen((d) {
-      if (d.reason != PositionDiscontinuityReason.autoAdvance) return;
-      final total = _totalChunks;
-      if (total == null) return;
-      final newIndex = player.sequenceState.currentIndex ?? _loadedChunkIndex;
-      if (newIndex <= _loadedChunkIndex) return;
-      for (var i = _loadedChunkIndex; i < newIndex && i < _chunkDurations.length; i++) {
-        _priorChunksElapsed += _chunkDurations[i];
-      }
-      _loadedChunkIndex = newIndex;
-      // Completion is still detected by the playerStateStream listener above
-      // (ProcessingState.completed with nothing left queued) — this only
-      // means "moved to the next chunk", never "finished the last one".
-      _saveProgress();
-      _updateMedia();
-      notifyListeners();
-    });
   }
   static final PlaybackService i = PlaybackService._();
 
@@ -163,16 +137,11 @@ class PlaybackService extends ChangeNotifier {
   // track isn't in chunked mode (briefs, or an already-fully-cached URL).
   int? _totalChunks;
   int _loadedChunkIndex = 0;
-  // Durations of every chunk APPENDED to the player's playlist so far (not
-  // just played — a prefetched chunk is appended, and therefore has an
-  // entry here, before the player ever reaches it). Kept in the same index
-  // space as the player's own sequence, which is what lets the autoAdvance
-  // listener above turn a player-reported index into an elapsed-time sum.
   final List<Duration> _chunkDurations = [];
   Duration _priorChunksElapsed = Duration.zero;
-  // Set right before a chunk swap and cleared right after
+  // Set right before a chunk swap's setUrl() and cleared right after
   // _priorChunksElapsed/_loadedChunkIndex commit for it. just_audio's
-  // position resets to zero the moment a new source loads — BEFORE our own
+  // position resets to zero the moment the new source loads — BEFORE our own
   // bookkeeping has caught up — and position's stream listener can observe
   // that transient zero in between (article-level `position` would briefly
   // read as 0 instead of "just finished the previous chunk"). That's a real,
@@ -181,20 +150,21 @@ class PlaybackService extends ChangeNotifier {
   // wasn't a genuine restart, just this transient reflected into a periodic
   // save) and, for the same reason, could show the seek bar/highlight
   // snapping back to the start for a frame. Holding `position` at its
-  // last-known-correct value for this narrow window closes both. The
-  // gapless autoAdvance path doesn't need this (no swap it's racing), only
-  // the fallback path (_advanceChunk) and seeks still do.
+  // last-known-correct value for this narrow window closes both.
   Duration? _frozenPosition;
   // The background prefetch's own in-flight request, keyed by which chunk
-  // it's for — so a fallback advance can AWAIT this instead of firing a
-  // second, redundant fetch for the same chunk when playback catches up
-  // before the prefetch resolves. Two concurrent requests for one chunk each
-  // burn a full call against a rate-limited key for no benefit (same
-  // target, same cache row) — that duplication was silently doubling Gemini
-  // usage on exactly the transitions that were already running late.
+  // it's for — so _advanceChunk can AWAIT this instead of firing a second,
+  // redundant fetch for the same chunk when playback catches up before the
+  // prefetch resolves. Two concurrent requests for one chunk each burn a
+  // full call against a rate-limited key for no benefit (same target,
+  // same cache row) — that duplication was silently doubling Gemini usage
+  // on exactly the transitions that were already running late.
   Future<({String audioUrl, Duration duration, int totalChunks})?>?
       _inFlightChunkFuture;
   int? _inFlightChunkIndex;
+  int? _pendingChunkIndex;
+  String? _pendingChunkUrl;
+  Duration? _pendingChunkDuration;
   // When true, this session narrates the short briefing (headline + lede) and
   // caches it separately. The lyrics view reads this to show matching text.
   bool brief = false;
@@ -407,6 +377,9 @@ class PlaybackService extends ChangeNotifier {
     // result since _playEpoch will have moved on.
     _inFlightChunkFuture = null;
     _inFlightChunkIndex = null;
+    _pendingChunkIndex = null;
+    _pendingChunkUrl = null;
+    _pendingChunkDuration = null;
     // Guaranteed cleared by try/finally in _advanceChunk/_seekChunked
     // already — this is just a clean-slate safety net on track change.
     _frozenPosition = null;
@@ -462,25 +435,20 @@ class PlaybackService extends ChangeNotifier {
   }
 
   /// Within the CURRENT article's chunks: once the buffered time left in the
-  /// loaded chunk drops under [_prefetchLookahead], fetch the next chunk and
-  /// APPEND it to the player's playlist — so by the time the player reaches
-  /// the end of the current chunk, the next one is already part of the live
-  /// sequence and just_audio advances onto it on its own, gaplessly, with no
-  /// app-level setUrl/play() call at the boundary at all. That's the actual
-  /// fix for chunk transitions needing a manual tap: there's no async resume
-  /// call for the browser to treat as non-gesture-initiated and block,
-  /// because there isn't one — see the positionDiscontinuityStream listener
-  /// in the constructor, which does bookkeeping-only once the player has
-  /// already moved on.
+  /// loaded chunk drops under [_prefetchLookahead], fetch the next chunk in
+  /// the background so _advanceChunk() finds it already waiting — same
+  /// pacing idea as _maybePrefetchNext, just scoped to one article's chunks
+  /// instead of queued tracks.
   void _maybeFetchNextChunk(Duration pos) {
     final total = _totalChunks;
     if (total == null || _loadedChunkIndex + 1 >= total) return;
     if (!player.playing) return;
-    if (_activeSeeks > 0) return;
+    // A swap is mid-flight — indices are about to shift, and firing a fetch
+    // against the old _loadedChunkIndex here re-requests the very chunk the
+    // swap is loading.
+    if (_advancing || _activeSeeks > 0) return;
     final nextIndex = _loadedChunkIndex + 1;
-    // Already appended (this ran already, or a seek's resolution walk
-    // appended it) or already being fetched.
-    if (nextIndex < _chunkDurations.length || _inFlightChunkIndex == nextIndex) {
+    if (_pendingChunkIndex == nextIndex || _inFlightChunkIndex == nextIndex) {
       return;
     }
     final dur = player.duration;
@@ -492,77 +460,77 @@ class PlaybackService extends ChangeNotifier {
     final future = _fetchChunk(a, nextIndex);
     _inFlightChunkIndex = nextIndex;
     _inFlightChunkFuture = future;
-    unawaited(future.then((res) async {
+    unawaited(future.then((res) {
       if (identical(_inFlightChunkFuture, future)) {
         _inFlightChunkIndex = null;
         _inFlightChunkFuture = null;
       }
       if (epoch != _playEpoch || res == null) return; // stale, or retry next tick
-      // A concurrent path (the _advanceChunk fallback, or a seek) may have
-      // already appended this index while this fetch was in flight.
-      if (nextIndex < _chunkDurations.length) return;
-      _chunkDurations.add(res.duration);
-      await player.addAudioSource(AudioSource.uri(Uri.parse(res.audioUrl)));
+      _pendingChunkIndex = nextIndex;
+      _pendingChunkUrl = res.audioUrl;
+      _pendingChunkDuration = res.duration;
     }));
   }
 
-  /// Fallback for whenever the completed-listener sees the current chunk
-  /// genuinely end without the bookkeeping having already advanced (either
-  /// the next chunk wasn't appended in time, or — reproduced live
-  /// 2026-09-04 — just_audio's native gapless advance simply didn't happen:
-  /// second-chunk-onward transitions on web reached ProcessingState.completed
-  /// on the OLD item with the next one already appended and ready, and
-  /// calling play() alone just replayed the old item from position zero
-  /// rather than moving to the next index — a bare play() resumes whatever
-  /// item the player still thinks is current, it doesn't advance a queue.
-  /// So this always forces the move explicitly via seek(index:), the same
-  /// mechanism _seekChunked already uses, rather than trusting that the
-  /// native engine already did it or will do it off a bare play().
+  /// Move from the chunk that just finished to the next one — either the
+  /// already-prefetched clip (the common case), the background prefetch's
+  /// own request if it's still running (waited on rather than duplicated),
+  /// or — if nothing was prefetched at all — synthesize it now with a brief
+  /// stall (same idea as today's cold-start wait, just scoped to one chunk).
   Future<void> _advanceChunk() async {
     final epoch = _playEpoch;
     final op = ++_chunkOpId;
     bool live() => epoch == _playEpoch && op == _chunkOpId;
     try {
       final nextIndex = _loadedChunkIndex + 1;
-      if (_totalChunks == null) return;
-      if (nextIndex >= _chunkDurations.length) {
-        Duration? dur;
-        if (_inFlightChunkIndex == nextIndex && _inFlightChunkFuture != null) {
-          loading = true;
-          notifyListeners();
-          final res = await _inFlightChunkFuture!;
-          if (!live()) return;
-          if (res != null && nextIndex >= _chunkDurations.length) {
-            dur = res.duration;
-            _chunkDurations.add(dur);
-            await player.addAudioSource(AudioSource.uri(Uri.parse(res.audioUrl)));
-          }
-          // res == null: the prefetch failed silently — fall through to a
-          // fresh, error-surfacing attempt below.
-        }
-        if (dur == null) {
-          final a = current;
-          if (a == null) return;
-          loading = true;
-          notifyListeners();
-          final res = (await _fetchChunk(a, nextIndex, throwOnError: true))!;
-          if (!live()) return;
-          if (nextIndex >= _chunkDurations.length) {
-            _chunkDurations.add(res.duration);
-            await player.addAudioSource(AudioSource.uri(Uri.parse(res.audioUrl)));
-          }
-        }
+      String? url;
+      Duration? dur;
+      if (_pendingChunkIndex == nextIndex) {
+        url = _pendingChunkUrl;
+        dur = _pendingChunkDuration;
+      } else if (_inFlightChunkIndex == nextIndex &&
+          _inFlightChunkFuture != null) {
+        loading = true;
+        notifyListeners();
+        final res = await _inFlightChunkFuture!;
         if (!live()) return;
+        if (res != null) {
+          url = res.audioUrl;
+          dur = res.duration;
+        }
+        // res == null: the prefetch failed silently (it doesn't throw) —
+        // fall through to a fresh, error-surfacing attempt below rather
+        // than leaving the player stuck with no signal.
       }
-      // Force the player onto the next item — don't assume it's already
-      // there. Same freeze-across-the-jump reasoning as _seekChunked: a
-      // positionStream tick landing between this seek and the bookkeeping
-      // commit below would otherwise read (and could persist) position 0.
+      if (url == null) {
+        final a = current;
+        if (a == null) return;
+        loading = true;
+        notifyListeners();
+        final res = (await _fetchChunk(a, nextIndex, throwOnError: true))!;
+        if (!live()) return;
+        url = res.audioUrl;
+        dur = res.duration;
+      }
+      _pendingChunkIndex = null;
+      _pendingChunkUrl = null;
+      _pendingChunkDuration = null;
+      // Load — and VERIFY — the new source before committing "we've
+      // advanced" bookkeeping. Committing first left the article-level
+      // position claiming the next chunk was playing while the player was
+      // still on (and could replay) the old one whenever the swap failed,
+      // which is exactly the "seek bar far ahead of the audio" symptom.
+      // Freeze the reported position across the swap: player.position
+      // resets to 0 the instant the new source loads, before the
+      // _priorChunksElapsed commit below catches up, and a positionStream
+      // tick landing in that gap would read (and could even persist) the
+      // article as being back at 0 — see _frozenPosition's own doc comment.
       _frozenPosition = position;
       try {
-        await player.seek(Duration.zero, index: nextIndex);
+        await _loadChunkUrl(url, dur!, epoch);
         if (!live()) return;
         _priorChunksElapsed += _chunkDurations[_loadedChunkIndex];
+        _chunkDurations.add(dur);
         _loadedChunkIndex = nextIndex;
       } finally {
         _frozenPosition = null;
@@ -582,43 +550,56 @@ class PlaybackService extends ChangeNotifier {
     }
   }
 
-  /// Load the article's initial playlist (chunk 0 through wherever a resume
-  /// lands) and verify it actually took. This runs from inside _playIndex,
-  /// itself only ever reached via a genuine user tap (playOne/playAt/next/
-  /// etc. all funnel through it) — so unlike the mid-article chunk advance,
-  /// there's no autoplay-gesture concern here; this guards against plain
-  /// network/loading failures instead, same idea the old per-chunk setUrl
-  /// verify used, adapted for setAudioSources' returned duration.
-  Future<void> _setInitialPlaylist(
-    List<String> urls, {
-    required Duration expectedDuration,
-    required int initialIndex,
-    Duration? initialPosition,
-    required int epoch,
-  }) async {
-    // Fresh AudioSource objects each attempt: just_audio attaches a source to
-    // whichever player loaded it, so reusing the same instances across a
-    // retry (after a failed first attempt may have partially attached them)
-    // risks a different failure than the one being retried for.
-    Future<bool> loaded() async {
-      final sources = urls.map((u) => AudioSource.uri(Uri.parse(u))).toList();
-      final d = await player.setAudioSources(sources,
-          initialIndex: initialIndex, initialPosition: initialPosition);
-      return d == null || (d - expectedDuration).abs() < const Duration(seconds: 3);
+  /// Load [url] and verify the player actually swapped to it. On iOS Safari
+  /// a setUrl over an ended source can fail SILENTLY — the call returns but
+  /// the old audio stays loaded, so the old chunk replays while the
+  /// bookkeeping says the next one is playing. The loaded duration is the
+  /// tell: [expected] was measured server-side from the very same file, so
+  /// they match to rounding; a real mismatch means the swap didn't take.
+  ///
+  /// Reproduced live 2026-09-03 on desktop web (not just iOS Safari, as
+  /// first suspected): a multi-chunk article would play ~30s (chunk 0's real
+  /// length) then the position visibly regressed instead of advancing —
+  /// `setUrl` for chunk 1 was rejected as a "stale source", and because the
+  /// retry called `setUrl` again on the SAME player without resetting it
+  /// first, it hit the identical bad state and rejected again. That fed
+  /// straight back into the completed-listener, which retried the whole
+  /// thing — an audible loop bouncing around the chunk-0/chunk-1 boundary
+  /// instead of a single surfaced error. `stop()` before the retry forces a
+  /// genuinely clean slate rather than repeating the same failed call.
+  ///
+  /// If it's STILL not within tolerance after that, the swap check has done
+  /// its job (ruled out a truly stuck source) and continuing to reject would
+  /// only resume the loop — proceed rather than throw. `expected` is a sanity
+  /// check on load, not what actually drives playback timing.
+  Future<void> _loadChunkUrl(String url, Duration expected, int epoch) async {
+    Future<bool> swapped() async {
+      final d = await player.setUrl(url);
+      return d == null || (d - expected).abs() < const Duration(seconds: 3);
     }
     try {
-      if (await loaded()) return;
+      if (await swapped()) return;
     } catch (_) {
-      // fall through to the single retry below
+      // fall through to the reset-and-retry below
     }
     if (epoch != _playEpoch) return;
+    try {
+      await player.stop();
+    } catch (_) {
+      // best-effort reset; setUrl below still gets a real attempt either way
+    }
     await Future.delayed(const Duration(milliseconds: 500));
     if (epoch != _playEpoch) return;
-    if (!await loaded()) {
+    try {
+      if (await swapped()) return;
+      debugPrint(
+          '[playback] chunk swap duration mismatch after reset+retry — '
+          'proceeding anyway rather than looping (url=$url, expected=$expected)');
+    } catch (e) {
+      if (epoch != _playEpoch) return;
       throw Exception('Audio failed to load — tap retry.');
     }
   }
-
 
   /// Some browsers — notably iOS Safari, especially a PWA opened via "Add to
   /// Home Screen" — can silently fail to actually resume playback after the
@@ -869,26 +850,21 @@ class PlaybackService extends ChangeNotifier {
   Future<void> _seekChunked(Duration d) async {
     final a = current;
     if (a == null) return;
-    if (_totalChunks == null) return;
     final epoch = _playEpoch;
-    // Take the chunk-op token: any in-flight fallback advance abandons
-    // itself at its next checkpoint, so a seek dragged during a slow
-    // transition can't interleave with it and corrupt the position
-    // bookkeeping.
+    // Take the chunk-op token: any in-flight _advanceChunk abandons itself
+    // at its next checkpoint, so a seek dragged during a slow transition
+    // can't interleave with it and corrupt the position bookkeeping.
     final op = ++_chunkOpId;
     bool live() => epoch == _playEpoch && op == _chunkOpId;
     final total = _totalChunks!;
     final target = d < Duration.zero ? Duration.zero : d;
     _activeSeeks++;
     try {
-      // Resolve which chunk the target falls in, fetching+appending forward
-      // as needed so the player's index space stays a contiguous match for
-      // _chunkDurations. Anything already synthesized earlier this session
-      // (or in a past one, since the server caches per chunk) is a fast
-      // cache hit for _fetchChunk; only genuinely new territory pays a real
-      // synthesis cost. Already-appended chunks (idx already <
-      // _chunkDurations.length when this starts) are also cheap — no fetch
-      // or append needed for those, just seek(index:) at the end.
+      // Resolve which chunk the target falls in, fetching forward as needed.
+      // Anything already synthesized earlier this session (or in a past
+      // session, since the server caches per chunk) is a fast cache hit;
+      // only genuinely new territory past everything fetched so far pays a
+      // real synthesis cost.
       var idx = 0;
       var remaining = target;
       while (true) {
@@ -897,11 +873,7 @@ class PlaybackService extends ChangeNotifier {
           notifyListeners();
           final res = (await _fetchChunk(a, idx, throwOnError: true))!;
           if (!live()) return;
-          if (idx >= _chunkDurations.length) {
-            _chunkDurations.add(res.duration);
-            await player.addAudioSource(AudioSource.uri(Uri.parse(res.audioUrl)));
-            if (!live()) return;
-          }
+          _chunkDurations.add(res.duration);
         }
         if (idx + 1 >= total || remaining < _chunkDurations[idx]) break;
         remaining -= _chunkDurations[idx];
@@ -910,29 +882,41 @@ class PlaybackService extends ChangeNotifier {
       final chunkDur = _chunkDurations[idx];
       final offset = remaining < chunkDur ? remaining : chunkDur;
 
-      // Freeze position at the seek TARGET (not the pre-seek spot — the user
-      // is deliberately leaving that) across the jump: player.position can
-      // still read transiently stale/zero for a moment while the index
-      // change resolves, before _priorChunksElapsed below has committed —
-      // the same confirmed bug _frozenPosition exists for elsewhere in this
-      // file (see its doc comment), just now covering a plain seek(index:)
-      // instead of a setUrl.
+      if (idx == _loadedChunkIndex) {
+        // Already the loaded chunk — no reload needed. (Also clears a
+        // `loading` left behind by an advance this seek superseded.)
+        loading = false;
+        player.seek(offset);
+        notifyListeners();
+        return;
+      }
+      // Jumping to a different chunk — (re)fetch its URL, almost always a
+      // cache hit, since we only keep durations (not URLs) for past chunks.
+      final targetChunk = (await _fetchChunk(a, idx, throwOnError: true))!;
+      if (!live()) return;
+      final wasPlaying = player.playing;
+      // Same verified-load as _advanceChunk, and same ordering rule: only
+      // commit the position bookkeeping once the player really holds the
+      // target chunk. Freeze position at the seek TARGET (not the pre-seek
+      // spot — the user is deliberately leaving that) across the swap, same
+      // reasoning as _advanceChunk: player.position resets to 0 the instant
+      // the new chunk loads, before _priorChunksElapsed/the actual seek()
+      // below catch up, and a positionStream tick in that gap would
+      // otherwise report the article as sitting at 0.
       _frozenPosition = target;
       try {
+        await _loadChunkUrl(targetChunk.audioUrl, targetChunk.duration, epoch);
+        if (!live()) return;
         _priorChunksElapsed = _chunkDurations
             .sublist(0, idx)
             .fold(Duration.zero, (x, y) => x + y);
         _loadedChunkIndex = idx;
-        loading = false;
-        // A single call: just_audio jumps to the target item AND the offset
-        // within it (a no-op index-wise when idx is already playing). No
-        // setUrl/reload at all when the target was already appended, so no
-        // swap-verification is needed here the way chunk advancing once did.
-        await player.seek(offset, index: idx);
-        if (!live()) return;
       } finally {
         _frozenPosition = null;
       }
+      loading = false;
+      if (offset > Duration.zero) player.seek(offset);
+      if (wasPlaying) unawaited(player.play());
       notifyListeners();
     } catch (e) {
       if (!live()) return;
@@ -1093,26 +1077,23 @@ class PlaybackService extends ChangeNotifier {
         return;
       }
       // Full article, not yet synthesized: play chunk 0 the instant it's
-      // ready, then fetch the rest in the background (_maybeFetchNextChunk),
-      // appending each to the player as it arrives so the player advances
-      // through them on its own — paced by how far the listener actually
-      // gets, so closing the app or skipping around doesn't burn quota
-      // synthesizing audio nobody heard.
+      // ready, then fetch the rest in the background (_maybeFetchNextChunk /
+      // _advanceChunk), paced by how far the listener actually gets — so
+      // closing the app or skipping around doesn't burn quota synthesizing
+      // audio nobody heard.
       var chunk = (await _fetchChunk(a, 0, throwOnError: true))!;
       if (epoch != _playEpoch) return; // superseded while synthesizing
       _totalChunks = chunk.totalChunks;
       _chunkDurations.add(chunk.duration);
       _loadedChunkIndex = 0;
-      final urls = <String>[chunk.audioUrl];
 
       // Resuming partway through (e.g. "Continue listening")? Walk forward
       // through chunks — sequentially, since each one's duration is only
-      // known once fetched — until the target position falls within one,
-      // appending each along the way so the index space matches
-      // _chunkDurations from the start. These are almost always cache hits
-      // in practice: a resume target only exists because the article was
-      // already played up to roughly that point, so the leading chunks were
-      // already synthesized (and cached) during that earlier listen.
+      // known once fetched — until the target position falls within one.
+      // These are almost always cache hits in practice: a resume target
+      // only exists because the article was already played up to roughly
+      // that point, so the leading chunks were already synthesized (and
+      // cached) during that earlier listen.
       final resumeTarget = _pendingSeek;
       var offsetInChunk = Duration.zero;
       if (resumeTarget != null && resumeTarget > Duration.zero) {
@@ -1125,23 +1106,19 @@ class PlaybackService extends ChangeNotifier {
           final next = (await _fetchChunk(a, _loadedChunkIndex, throwOnError: true))!;
           if (epoch != _playEpoch) return;
           _chunkDurations.add(next.duration);
-          urls.add(next.audioUrl);
           chunk = next;
         }
         final currentChunkDur = _chunkDurations[_loadedChunkIndex];
         offsetInChunk = remaining < currentChunkDur ? remaining : currentChunkDur;
       }
 
-      // Verified load — same reasoning as elsewhere in chunked mode: a
-      // resume can land several chunks in, and a silent load failure here
+      // Verified load — same reasoning as _advanceChunk/_seekChunked: a
+      // resume can land several chunks in, and a silent setUrl failure here
       // would leave the bookkeeping claiming that position while nothing
       // actually plays.
-      await _setInitialPlaylist(urls,
-          expectedDuration: chunk.duration,
-          initialIndex: _loadedChunkIndex,
-          initialPosition: offsetInChunk > Duration.zero ? offsetInChunk : null,
-          epoch: epoch);
+      await _loadChunkUrl(chunk.audioUrl, chunk.duration, epoch);
       if (epoch != _playEpoch) return;
+      if (offsetInChunk > Duration.zero) player.seek(offsetInChunk);
       _finishStartingPlayback(seek: false);
     } catch (e) {
       if (epoch != _playEpoch) return;
