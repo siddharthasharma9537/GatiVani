@@ -24,8 +24,11 @@ whole edition on Gemini for under ₹50" is not achievable at any orchestration.
 
 1. **Process every edition once, share it** (page-hash dedupe) so the ₹20 of OCR +
    structure is paid once per edition, not per user.
-2. **Prewarm only the top stories on Gemini TTS via Batch mode** (50 % off) —
-   ~35 min of premium audio for **₹13–26**. Edition total lands at **₹35–50**.
+2. **Prewarm the top stories the moment the edition finishes processing**, on
+   Cloud TTS **Chirp 3 HD** inside its free pool — ~30 min of Google's best voice
+   for **₹0**, ready ~1 minute after ingest. Gemini's cheaper Batch mode is
+   deliberately *not* used: the paper lands at 5–6 am and is listened to by 7–9 am,
+   and Batch guarantees only "within 24 hours" (§2.5). Edition total: **₹13–23**.
 3. **Pin a voice per surface across ~6 M free characters/month.** Live feed
    articles get **WaveNet** (1 M pool) — same $4/1M rate as Standard past the pool,
    so the better voice is free in every sense; the edition tail gets **Standard**
@@ -124,8 +127,8 @@ statistic in `structure.ts`), 800–1,200 Telugu chars per article, **700 chars/
 | Everything on Gemini 3.5 Flash TTS, Batch | 168–252 min | ₹72–108 | No |
 | Everything on Cloud TTS, past every free pool | 118–176k chars | ₹45–67 | Borderline |
 | Everything on **Cloud TTS inside the free pools** (§2.3) | ~28–42 editions/month | **₹0** | **Yes** |
-| **Top 24 stories prewarmed on Gemini 3.5 Flash TTS Batch (~35 min), tail on Cloud Standard free** | 35 min premium + rest lazy | **₹15 + ₹0** | **Yes: ₹29 now, ₹39 after Oct** |
-| Same, prewarm on Gemini 2.5 Flash TTS Batch | | ₹25 + ₹0 | Yes: ₹39 / ₹49 |
+| **Top ~30 stories prewarmed on Chirp 3 HD at ingest, tail on Standard — both free (§2.5)** | ~30 min premium + rest lazy | **₹0** | **Yes: ₹13 now, ₹23 after Oct** |
+| Top stories prewarmed on Gemini Batch overnight | 35 min premium | ₹15–25 | ~~Yes~~ — **rejected: Batch can miss the 5–9 am window (§2.5)** |
 | Tail synthesised lazily on Gemini per play | ~₹0.86–1.43 per listened minute | user-driven | Only if listening is short |
 
 The hybrid row is the recommendation. Premium voice where most taps land, free
@@ -153,8 +156,8 @@ surface, not chosen dynamically:
 | **Live feed articles + explainers** | **`te-IN-Wavenet-A`** | WaveNet 1 M | $4/1M ≈ ₹0.27/min | the most-heard surface; better voice at no extra rate |
 | Live ticker / headlines | browser `speechSynthesis`, else the same WaveNet voice | — / WaveNet | — | ₹0 and no round trip; falls back to the *same* voice so the feed never changes mid-session |
 | Edition tail (on first play) | `te-IN-Standard-A` | Standard 4 M | $4/1M | the long tail; volume lives here, and this pool is 4× larger |
-| Edition top stories | Gemini Flash TTS, Batch | — | ₹15–25/edition | §2.2 prewarm lane |
-| Optional lift | `te-IN-Chirp3-HD-*` | Chirp 3 HD 1 M | $30/1M — never pay | spend the free pool on the day's lead story, then stop |
+| **Edition top stories** (prewarmed at ingest) | **`te-IN-Chirp3-HD-*`** | Chirp 3 HD 1 M | $30/1M — **hard-capped, never pay** | Google's best voice, free inside a daily allowance; see §2.5 |
+| Anything Cloud TTS cannot serve | Gemini Flash TTS | — | ₹0.86–1.43/min | fallback only; not on the daily path |
 
 **Why pinned rather than a cascade.** An earlier draft of this plan spent the best
 pool first and fell through as each drained. That is equally cheap but wrong for
@@ -219,6 +222,44 @@ Azure Neural te‑IN (0.5 M free/month) is available as a second free pool if th
 Google one is ever exhausted, but it is a different voice, so switching mid-month
 costs the consistency this section exists to protect.
 
+### 2.5 Prewarm timing: why Batch mode is wrong here
+
+The paper lands at **5–6 am** and commuters listen between **7 and 9 am**. Gemini's
+Batch mode is 50 % cheaper but its "results within 24 hours" is an **expiry, not a
+delivery time** — a job submitted at 6 am may return at 6:15 or at 5 am tomorrow.
+Nothing on a daily newspaper's critical path can be scheduled against that, so
+**Batch is out of the edition pipeline entirely.** (It remains valid for one thing
+only: a one-off backfill of archive issues, where nobody is waiting.)
+
+Removing Batch forces the prewarm off Gemini — and that turns out to be an
+improvement, not a compromise:
+
+| | Old plan (Gemini Batch, overnight) | New plan (Chirp 3 HD, at ingest) |
+|---|---|---|
+| When | overnight, unpredictable | **inline, ~1 min after the pages finish** |
+| Ready by | maybe never in time | 5:40 am for a 5:30 am edition |
+| Cost/edition | ₹15–25 | **₹0** (inside the free pool) |
+| Voice | Gemini Flash TTS | **Chirp 3 HD** — Google's most natural tier |
+
+**Why it fits the free pool.** Top 3 stories per section ≈ 24–32 articles ≈ **~30k
+characters per edition**. Chirp 3 HD's pool is 1 M/month, so budget **32k
+characters per day** and a daily edition never touches a paid character. Enforce it
+as a *daily* allowance rather than a monthly one, so there is no cliff on the 25th
+where the voice suddenly changes.
+
+**The guard that matters.** Chirp 3 HD costs $30/1M past the pool — 7.5× WaveNet.
+The prewarm must therefore be hard-capped: when the day's Chirp allowance is spent
+(an unusually large edition, or several editions uploaded the same day), the
+remaining stories fall back to **WaveNet**, not to paid Chirp. Prewarm is also
+**per shared edition, not per upload** — otherwise 50 users uploading 50 different
+papers would multiply the allowance by 50.
+
+**What this does to the edition budget:** the prewarm line goes from ₹15–25 to ₹0,
+so an edition is **₹13 today and ₹23 after October** — OCR and structuring only,
+comfortably under ₹50 with room for the post-retirement price rise.
+
+---
+
 ## 3. Target design
 
 ### 3.1 Principles
@@ -230,8 +271,9 @@ costs the consistency this section exists to protect.
 3. **Cheap tier by default, escalate on a deterministic signal.** Flash‑Lite for every
    page; re-run on Flash only pages that fail `checkAssignment` or carry > N review
    flags. The flags already exist.
-4. **Two TTS lanes.** Premium (Gemini, Batch, prewarmed top stories) and Free (Cloud
-   Standard / browser) for the tail and Live. Both cached forever as Opus/MP3.
+4. **Two TTS lanes.** Prewarmed (Chirp 3 HD, top stories, inline at ingest) and
+   on-demand (WaveNet for Live, Standard for the edition tail; browser voice for the
+   ticker). Both cached forever as MP3. No Gemini TTS on the daily path — see §2.5.
 5. **Durable, parallel orchestration.** A queue + per-page state row replaces the
    self-fetch chain.
 6. **Measure.** Every model and TTS call logs its units (tokens, chars, seconds) and ₹.
@@ -243,7 +285,7 @@ costs the consistency this section exists to protect.
 | T0 | none | — | atomize, assemble, validate, regex continuation, feed parse, caches |
 | T1 | 2.5 Flash‑Lite → 3.1/3.5 Flash‑Lite | thinking off | **structure assignment** (default), coherence, printed date, category, 3-fact summary, explainers |
 | T2 | 2.5 Flash → 3.5 Flash | thinking low | escalation only (failed/heavily flagged pages), vision gap pass, continuation semantic match, Vāni Q&A |
-| TTS‑P | 2.5 Flash TTS → 3.5 Flash TTS, **Batch** | — | prewarmed top stories per section |
+| TTS‑P | Cloud TTS **Chirp 3 HD** te‑IN, inline at ingest | — | prewarmed top stories per section (§2.5) |
 | TTS‑F | Cloud TTS Standard/WaveNet te‑IN (MP3), browser speechSynthesis | — | everything else, Live feed |
 
 Rules that keep it cheap:
@@ -259,8 +301,8 @@ Rules that keep it cheap:
   worth it only on a paid key with steady volume; skip on BYOK free tier.
 - **Thinking off on Flash‑Lite for structure**; thinking tokens are billed as output
   and the task is classification over a manifest, not reasoning.
-- **Batch mode for the shared-edition lane** (processing *and* TTS): 50 % off, and
-  nobody is waiting overnight.
+- **Batch mode only where nothing waits.** The daily edition is on a 5 am–9 am
+  clock, so Batch is excluded from it (§2.5). Keep it for an archive backfill.
 
 ### 3.3 Orchestration
 
@@ -277,7 +319,7 @@ uploads/editions/<id>.pdf
    ▼ when all pages terminal
  stitch (T0 regex → T2 once) → ready
    ▼
- prewarm lane: top 3 stories/section → Gemini TTS Batch → Opus → R2
+ prewarm lane: top 3 stories/section → Chirp 3 HD (inline, ~1 min) → MP3 → R2
  tail lane:    on first play → Cloud TTS Standard (MP3) → R2, or browser TTS
 ```
 
@@ -410,18 +452,28 @@ reliable* · Phase 4 makes it *feel instant*.
 3. Page dedupe on `ocr_hash` → copy prior articles, skip all model calls.
 4. Client `pollEdition` reads `ingest_jobs`.
 
-### Phase 4 — Prewarm lane on Gemini Batch (≈ 3–4 days)
+### Phase 4 — Prewarm lane at ingest (≈ 3 days)
 
 > **Why.** Tapping a story means waiting while its audio is generated, and new users
 > hit an "enter your Gemini API key" wall before they can use the Paper tab at all.
-> **After this phase:** the stories people actually tap play instantly, and the key
-> gate disappears from first launch.
+> The paper arrives at 5–6 am and is heard by 7–9 am, so the prewarm has to complete
+> *minutes* after ingest — which rules out Gemini's cheaper Batch mode (§2.5) and
+> puts it on Chirp 3 HD's free pool instead, at ₹0 and better quality.
+> **After this phase:** the stories people actually tap play instantly, the key gate
+> disappears from first launch, and the prewarm costs nothing.
 
-1. `pipeline-finalize` picks top 3 stories per section (position on page 1, headline
-   size class, section weight) and submits one Gemini **Batch** TTS job per edition.
-2. A `pg_cron` poller collects results, encodes MP3, writes `article_chunks`.
+1. `pipeline-finalize` picks the top ~3 stories per section (position on page 1,
+   headline size class, section weight) and synthesises them **inline, in parallel**
+   on `te-IN-Chirp3-HD-*` — ~30k chars, roughly a minute at 10 concurrent requests.
+   No queue, no polling, no 24-hour window.
+2. **Daily Chirp allowance** (~32k chars/day, from the 1 M monthly pool) enforced
+   from the `model_calls` totals. Past it, prewarm falls back to `te-IN-Wavenet-A`,
+   never to paid Chirp 3 HD. Prewarm runs **once per shared edition**, not per
+   upload.
 3. First-launch UX: the Paper tab no longer needs a BYOK key for shared editions;
    keep BYOK only for personal uploads if you want that lane to stay ₹0 to you.
+4. Gemini Batch survives in one place only: an optional `scripts/backfill_audio.ts`
+   for archive issues, where nothing is waiting.
 
 ---
 
