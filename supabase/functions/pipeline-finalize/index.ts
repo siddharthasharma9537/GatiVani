@@ -11,6 +11,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { finalizeContinuations } from "../_shared/edition.ts";
 import { isServiceRole, jobCounts, markJob } from "../_shared/pipeline.ts";
+import { prewarmEdition } from "../_shared/prewarm.ts";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -60,6 +61,25 @@ Deno.serve(async (req) => {
         jobId,
         newspaperId,
       });
+    }
+
+    // Prewarm the stories people actually tap, inline, before the job is
+    // reported ready. A daily paper lands at 5–6 am and is listened to by
+    // 7–9, which is why this does not go through Gemini's cheaper Batch mode:
+    // "within 24 hours" is an expiry, not a delivery time (plan §2.5).
+    //
+    // Best-effort. Prewarming is a latency optimisation — every article is
+    // still synthesised on first play if it was missed — so a failure here
+    // must never turn a good edition into a failed one.
+    if (newspaperId && counts.articles > 0) {
+      try {
+        const pre = await prewarmEdition(supabase, newspaperId, jobId);
+        console.log(
+          `[pipeline-finalize] prewarmed ${pre.succeeded}/${pre.attempted} stories`,
+        );
+      } catch (e) {
+        console.warn("[pipeline-finalize] prewarm failed:", (e as Error).message);
+      }
     }
 
     // The source PDF has served its purpose — articles and audio are the

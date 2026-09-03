@@ -518,7 +518,26 @@ reliable* · Phase 4 makes it *feel instant*.
 3. Page dedupe on `ocr_hash` → copy prior articles, skip all model calls.
 4. Client `pollEdition` reads `ingest_jobs`.
 
-### Phase 4 — Prewarm lane at ingest (≈ 3 days)
+### Phase 4 — Prewarm lane at ingest (≈ 3 days) — **shipped**
+
+> Runs inline at the end of `pipeline-finalize`, before the job reports ready.
+> Top ~3 stories per section (front page first, review-flagged articles
+> skipped) synthesised 5-at-a-time on Chirp 3 HD, through
+> `documents-synthesize` so there is one path that writes cached audio.
+>
+> **The allowance is daily, not monthly**: 1M ÷ 31 ≈ 32k characters
+> (`DAILY_CHIRP_CHARS`). A monthly budget would let a few large editions drain
+> the pool by the 10th and leave the rest of the month on a different voice
+> mid-way. Past the day's allowance the remaining stories fall back to
+> **WaveNet, never to paid Chirp** ($30/1M). Voices are decided up front,
+> single-threaded, so concurrent workers cannot race the allowance.
+>
+> A caller-supplied `voice` is honoured **only for the service role** — letting
+> an app client name its own voice would hand anyone the ability to drain the
+> Chirp pool.
+>
+> Gemini Batch survives in exactly one place: `scripts/backfill_audio.ts`, for
+> archive issues where a day's latency costs nothing.
 
 > **Why.** Tapping a story means waiting while its audio is generated, and new users
 > hit an "enter your Gemini API key" wall before they can use the Paper tab at all.

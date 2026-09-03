@@ -16,6 +16,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Typecheck the Deno edge functions.
+  #
+  # esbuild only parses — it happily accepts a call to a function that does not
+  # exist. Two such bugs shipped before this job existed (a renderAudio() with
+  # no definition, and a CONT_FROM regex referenced after an extraction dropped
+  # its declaration), both of which would have thrown at runtime on the first
+  # real request. tsc resolves identifiers, so it catches them.
+  #
+  # Deno specifiers (npm:, jsr:, https:) are stubbed to `any`: the point is to
+  # check OUR wiring, not to typecheck third-party packages.
+  edge-functions-typecheck:
+    name: Typecheck edge functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install TypeScript
+        run: npm i -g typescript@5.6.3
+      - name: Typecheck
+        run: |
+          cat > /tmp/deno-stubs.d.ts <<'EOF'
+          declare module "npm:*";
+          declare module "jsr:*";
+          declare module "https://*";
+          declare const Deno: any;
+          declare const EdgeRuntime: any;
+          EOF
+          cat > /tmp/tsconfig.check.json <<EOF
+          {
+            "compilerOptions": {
+              "noEmit": true,
+              "target": "ES2022",
+              "lib": ["ES2022", "DOM"],
+              "module": "ESNext",
+              "moduleResolution": "bundler",
+              "allowImportingTsExtensions": true,
+              "skipLibCheck": true,
+              "strict": false,
+              "types": []
+            },
+            "include": ["/tmp/deno-stubs.d.ts", "$GITHUB_WORKSPACE/supabase/functions/**/*.ts"]
+          }
+          EOF
+          # Two pre-existing findings are Deno-specific and not real errors:
+          # r2.ts uses AwsClient as a type (a namespace under the stub), and
+          # two feeds functions pass Deno's `client` fetch option.
+          tsc -p /tmp/tsconfig.check.json 2>&1 | tee /tmp/tsc.log || true
+          if grep -vE "r2\.ts.*AwsClient|feeds-(mkb-playlist|podcasts)/index\.ts.*RequestInit" /tmp/tsc.log | grep -q "error TS"; then
+            echo "::error::Edge function typecheck failed"
+            grep -vE "r2\.ts.*AwsClient|feeds-(mkb-playlist|podcasts)/index\.ts.*RequestInit" /tmp/tsc.log
+            exit 1
+          fi
+          echo "Edge functions typecheck clean."
+
   flutter-analyze:
     name: Flutter analyze (packages/app)
     runs-on: ubuntu-latest

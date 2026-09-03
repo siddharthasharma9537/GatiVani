@@ -15,6 +15,7 @@ export const SARVAM_BASE = "https://api.sarvam.ai";
 // "continued TO page N" — captures the page number.
 const CONT_TO = /(?:మిగతా|సశేషం|తరువాయి)\s*\(?\s*(\d{1,2})\s*(?:వ\s*)?(?:పేజీలో|పేజీ|లో)[^)]*\)?/;
 // "continued FROM" header at the start of the destination article.
+const CONT_FROM = /(?:\d{1,2}\s*(?:వ\s*)?పేజీ|మొదటి\s*పేజీ)\s*తరువాయి/;
 
 async function sarvamPost(path: string, key: string, body: unknown): Promise<Record<string, unknown>> {
   const r = await fetch(`${SARVAM_BASE}${path}`, {

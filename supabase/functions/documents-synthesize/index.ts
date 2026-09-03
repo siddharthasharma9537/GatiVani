@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import * as r2 from "../_shared/r2.ts";
 import { mp3Enabled, wavDurationSeconds, wavToMp3 } from "../_shared/mp3.ts";
 import { cloudTtsPaise, geminiTtsPaise, logCall } from "../_shared/usage.ts";
+import { isServiceRole } from "../_shared/pipeline.ts";
 import {
   cloudTtsConfigured,
   estimateMp3Seconds,
@@ -414,6 +415,99 @@ async function synthesizeWithGemini(
   return { wavBytes, durationSec, chunks: parts.length };
 }
 
+// Synthesise one piece of text on whichever lane applies, store-ready.
+//
+// Both lanes return bytes plus a duration measured the right way for that lane,
+// and both write their own ledger row, so `edition_cost` and `tts_pool_usage`
+// stay accurate regardless of which one ran.
+async function renderAudio(opts: {
+  text: string;
+  useCloud: boolean;
+  surface: string;
+  speaker: string;
+  geminiKey: string;
+  readingStyle?: string;
+  // deno-lint-ignore no-explicit-any
+  supabase: any;
+  articleId: string;
+  /** Chunk mode sends one chunk; full mode sends the whole article. */
+  chunked: boolean;
+  /**
+   * Overrides the surface's voice. Set only by the prewarm lane, which meters
+   * Chirp 3 HD against a daily allowance and downgrades to WaveNet when it is
+   * spent. Never accepted from an app client — see the handler.
+   */
+  voiceOverride?: string;
+}): Promise<{
+  bytes: Uint8Array;
+  ext: string;
+  contentType: string;
+  durationSec: number;
+  provider: string;
+  chunks: number;
+}> {
+  const startedAt = Date.now();
+
+  if (opts.useCloud) {
+    const voice = opts.voiceOverride || voiceForSurface(opts.surface);
+    const res = await cloudSynthesize(opts.text, voice);
+    // Cloud TTS returns no duration; estimated from the MP3 size. Used for
+    // progress display and the ledger, not for seeking.
+    const durationSec = estimateMp3Seconds(res.bytes.length);
+    await logCall(opts.supabase, {
+      fn: "documents-synthesize",
+      kind: "tts",
+      provider: "google-tts",
+      model: voice,
+      articleId: opts.articleId,
+      chars: res.chars,
+      audioSeconds: durationSec,
+      inrPaise: cloudTtsPaise(voice, res.chars),
+      latencyMs: Date.now() - startedAt,
+    });
+    console.log(
+      `[synthesize] cloud ${voice} chars=${res.chars} reqs=${res.requests} ~${durationSec}s`,
+    );
+    return {
+      bytes: res.bytes,
+      ext: ".mp3",
+      contentType: "audio/mpeg",
+      durationSec,
+      provider: voice,
+      chunks: res.requests,
+    };
+  }
+
+  // Gemini lane. Chunk mode is a single call; full mode fans out internally.
+  let wavBytes: Uint8Array;
+  let chunks = 1;
+  if (opts.chunked) {
+    wavBytes = await geminiOneCall(opts.text, geminiVoice(opts.speaker), opts.geminiKey);
+  } else {
+    const r = await synthesizeWithGemini(
+      opts.text,
+      opts.speaker,
+      opts.geminiKey,
+      opts.readingStyle,
+    );
+    wavBytes = r.wavBytes;
+    chunks = r.chunks;
+  }
+  const encoded = await encodeForStorage(wavBytes, GEMINI_SAMPLE_RATE);
+  await logCall(opts.supabase, {
+    fn: "documents-synthesize",
+    kind: "tts",
+    provider: "gemini",
+    model: GEMINI_TTS_MODEL,
+    articleId: opts.articleId,
+    chars: opts.text.length,
+    audioSeconds: encoded.durationSec,
+    inrPaise: geminiTtsPaise(GEMINI_TTS_MODEL, encoded.durationSec),
+    latencyMs: Date.now() - startedAt,
+  });
+  return { ...encoded, provider: GEMINI_TTS_MODEL, chunks };
+}
+
 // ── Response helper ───────────────────────────────────────────────────────────
 
 function json(body: unknown, status = 200) {
@@ -450,6 +544,14 @@ Deno.serve(async (req) => {
     // Which lane synthesises this, and which voice it speaks in.
     const surface = KNOWN_SURFACES.has(body.surface) ? body.surface as string : "edition_tail";
     const lane: Lane = resolveLane(body.lane);
+    // A caller-chosen voice is honoured only for the service role. Chirp 3 HD
+    // costs $30/1M past its free pool — 7.5x WaveNet — so letting an app
+    // client name its own voice would hand anyone the ability to drain it.
+    // The prewarm lane is the only legitimate user, and it picks the voice
+    // from a metered daily allowance (_shared/prewarm.ts).
+    const voiceOverride = (isServiceRole(req) && typeof body.voice === "string")
+      ? body.voice as string
+      : undefined;
     // Cloud TTS needs a service account; without one the free lane cannot run
     // and Gemini remains the only option.
     const useCloud = lane === "free" && cloudTtsConfigured();
@@ -599,23 +701,20 @@ Deno.serve(async (req) => {
         }
       }
 
-      const ttsStart = Date.now();
-      const wavBytes = await geminiOneCall(parts[chunkIndex], geminiVoice(speaker), geminiKey);
-      const encoded = await encodeForStorage(wavBytes, GEMINI_SAMPLE_RATE);
+      const encoded = await renderAudio({
+        text: parts[chunkIndex],
+        useCloud,
+        surface,
+        speaker,
+        geminiKey,
+        readingStyle,
+        supabase,
+        articleId,
+        chunked: true,
+        voiceOverride,
+      });
       const durationSec = encoded.durationSec;
       console.log(`[synthesize] chunk ${chunkIndex}/${parts.length - 1} for ${articleId || "(no id)"}: ~${durationSec}s`);
-
-      await logCall(supabase, {
-        fn: "documents-synthesize",
-        kind: "tts",
-        provider: "gemini",
-        model: GEMINI_TTS_MODEL,
-        articleId,
-        chars: parts[chunkIndex].length,
-        audioSeconds: durationSec,
-        inrPaise: geminiTtsPaise(GEMINI_TTS_MODEL, durationSec),
-        latencyMs: Date.now() - ttsStart,
-      });
 
       let audioUrl = "";
       if (supabase && articleId) {
@@ -674,6 +773,7 @@ Deno.serve(async (req) => {
       supabase,
       articleId,
       chunked: false,
+      voiceOverride,
     });
     const { durationSec, chunks } = encoded;
     const usedProvider = encoded.provider;
