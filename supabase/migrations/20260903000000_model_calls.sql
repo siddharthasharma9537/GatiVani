@@ -75,13 +75,20 @@ left join public.newspapers n on n.id = c.newspaper_id
 where c.newspaper_id is not null
 group by c.newspaper_id, n.title, n.publication_date;
 
+-- model_calls has RLS on and no policies, but a view runs as its owner unless
+-- told otherwise — so without this, /rest/v1/edition_cost would hand the whole
+-- cost ledger to anon and undo the line above. Same guard ingest_job_progress
+-- uses in the next migration.
+alter view public.edition_cost set (security_invoker = on);
+
 comment on view public.edition_cost is
   'Rupee cost per processed edition, split by OCR / LLM / TTS. This is the '
   'ledger the under-₹50-per-edition goal is checked against.';
 
 -- ── How much of each monthly free pool is spent? ─────────────────────────────
--- Google Cloud TTS free tiers are per voice type per calendar month (Standard
--- 4M chars, WaveNet 1M, Chirp 3 HD 1M). Narration is only free while usage
+-- Google Cloud TTS free tiers are per voice type per calendar month. For te-IN
+-- that is Standard 4M chars and Chirp 3 HD 1M; there is no WaveNet voice for
+-- Telugu at all. Narration is only free while usage
 -- stays inside them, so this is the number the prewarm allowance and the 80%
 -- alert in the plan are driven from.
 create or replace view public.tts_pool_usage as
@@ -94,6 +101,8 @@ from public.model_calls
 where kind = 'tts' and chars is not null
 group by 1, 2;
 
+alter view public.tts_pool_usage set (security_invoker = on);
+
 comment on view public.tts_pool_usage is
   'Characters synthesised per voice per calendar month — compare against each '
-  'voice type''s free pool (Standard 4M, WaveNet 1M, Chirp 3 HD 1M).';
+  'voice type''s free pool (te-IN: Standard 4M, Chirp 3 HD 1M).';
