@@ -556,7 +556,7 @@ Deno.serve(async (req) => {
     // and Gemini remains the only option.
     const useCloud = lane === "free" && cloudTtsConfigured();
     if (lane === "free" && !useCloud) {
-      console.warn("[synthesize] free lane requested but GOOGLE_SERVICE_ACCOUNT_JSON is unset — using Gemini");
+      console.warn("[synthesize] free lane requested but GOOGLE_TTS_API_KEY is unset — using Gemini");
     }
 
     // Live articles are synthesised on tap and cached forever by article id.

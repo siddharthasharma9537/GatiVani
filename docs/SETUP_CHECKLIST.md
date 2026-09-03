@@ -52,33 +52,51 @@ cd packages/app && flutter pub get && flutter analyze && flutter test && cd ../.
 
 ---
 
-## 2 · Google Cloud (one time, console + shell)
+## 2 · Google Cloud — already done, nothing to do
 
-The free narration lane needs Cloud TTS, and Cloud TTS needs **OAuth, not an API
-key** — which is why the function signs a service-account JWT.
+~~The free narration lane needs Cloud TTS, and Cloud TTS needs **OAuth, not an
+API key** — which is why the function signs a service-account JWT.~~
 
-1. Pick or create a GCP project, then **enable the Cloud Text-to-Speech API**
-   (APIs & Services → Library → "Cloud Text-to-Speech API" → Enable).
-2. IAM → Service Accounts → Create. Give it the **Cloud Text-to-Speech User**
-   role. Nothing else.
-3. Keys → Add key → JSON. Download it. Treat it like a password.
+**That was wrong, and this whole section is now obsolete.** Cloud TTS accepts
+API-key auth on both `voices.list` and `text:synthesize`. The project already
+has the `GatiVani Cloud TTS` key, restricted to the Cloud Text-to-Speech API and
+stored as the `GOOGLE_TTS_API_KEY` secret, so there is no service account to
+create, no JSON key to download, and no `GOOGLE_SERVICE_ACCOUNT_JSON` to set.
+`_shared/gcloud_auth.ts` was deleted.
 
-### 2a · Confirm the Telugu voice names — do this before deploying
+### 2a · Telugu voice names — verified 2026-09-03
 
-`_shared/cloud_tts.ts` hardcodes `te-IN-Wavenet-A`, `te-IN-Standard-A` and
-`te-IN-Chirp3-HD-Achernar`. Those came from a pricing page, not from the API. A
-voice name that does not exist is a 400 on every request.
+Done, and it found a bug. The API's actual te-IN inventory:
 
-```bash
-gcloud auth activate-service-account --key-file=key.json
-gcloud auth print-access-token | xargs -I{} curl -s -H "Authorization: Bearer {}" \
-  "https://texttospeech.googleapis.com/v1/voices?languageCode=te-IN" \
-  | jq -r '.voices[] | "\(.name)\t\(.ssmlGender)"' | sort
+| Tier | Voices | Rate | Free pool |
+|---|---|---|---|
+| Standard | `te-IN-Standard-A` … `-D` | $4/1M chars | 4M/month |
+| Chirp3-HD | `te-IN-Chirp3-HD-*`, 30 of them | $30/1M chars | 1M/month |
+
+**There is no WaveNet and no Neural2 for Telugu.** `te-IN-Wavenet-A` — which
+`VOICE_BY_SURFACE` pinned to `live_article` *and* `live_ticker`, the two
+most-heard surfaces — does not exist:
+
+```
+te-IN-Wavenet-A            HTTP 400  Voice 'te-IN-Wavenet-A' does not exist. Is it misspelled?
+te-IN-Standard-A           HTTP 200  17152 bytes
+te-IN-Chirp3-HD-Achernar   HTTP 200   8832 bytes
 ```
 
-Paste the output into `VOICE_BY_SURFACE` in `supabase/functions/_shared/cloud_tts.ts`
-if any name differs. **This is the single highest-risk unverified assumption in
-the branch.**
+Both live surfaces moved to `te-IN-Standard-A`. The comment justifying WaveNet
+("better voice at the same paid rate as Standard") was wrong twice over —
+WaveNet bills $16/1M, not $4/1M, and for Telugu it is not offered at all. With
+no mid tier to promote to, the only upgrade is Chirp3-HD at 7.5x the rate and a
+quarter of the free headroom, so that stays reserved for `edition_top`. Whether
+the live surfaces are worth it is a question for `edition_cost` once it has real
+numbers.
+
+To re-check after any voice change:
+
+```bash
+curl -s "https://texttospeech.googleapis.com/v1/voices?languageCode=te-IN&key=$GOOGLE_TTS_API_KEY" \
+  | jq -r '.voices[] | "\(.name)\t\(.ssmlGender)"' | sort
+```
 
 ---
 
@@ -104,14 +122,19 @@ supabase secrets list
 
 Expect `GEMINI_API_KEY`, `SARVAM_API_KEY`, `CRON_SECRET`, and the `R2_*` group.
 
-### New — required for the free narration lane
+### Required for the free narration lane — already done
 
-```bash
-supabase secrets set GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ~/Downloads/key.json)"
-```
+Nothing to set. `GOOGLE_TTS_API_KEY` is present on the project and holds the
+console's `GatiVani Cloud TTS` key, restricted to the Cloud Text-to-Speech API.
 
-Without it the free lane logs a warning and falls back to Gemini TTS, so
-deploying without this is safe — just not cheaper.
+There is **no service account and no `GOOGLE_SERVICE_ACCOUNT_JSON`**. An
+earlier draft of this checklist said Cloud TTS needs OAuth and that an API key
+would not work; that was wrong. Both `voices.list` and `text:synthesize` accept
+`?key=`, verified against the live API on 2026-09-03, so `_shared/gcloud_auth.ts`
+and its JWT signing were deleted rather than configured.
+
+Without the key the free lane logs a warning and falls back to Gemini TTS, so
+deploying is safe either way — just not cheaper.
 
 ### New — optional, all have working defaults
 

@@ -193,10 +193,20 @@ strings** — a pricing page states rates, not per-locale inventories, and the m
 needs literals that exist:
 
 ```bash
-curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  "https://texttospeech.googleapis.com/v1/voices?languageCode=te-IN" \
+curl -s "https://texttospeech.googleapis.com/v1/voices?languageCode=te-IN&key=$GOOGLE_TTS_API_KEY" \
   | jq -r '.voices[] | "\(.name)\t\(.ssmlGender)"' | sort
 ```
+
+**Run 2026-09-03, and this is exactly why it was worth running.** Telugu offers
+only Standard (A–D) and Chirp3-HD — **no WaveNet, no Neural2**. `te-IN-Wavenet-A`,
+taken from the pricing page and pinned to the two most-heard surfaces, returns
+`400 Voice 'te-IN-Wavenet-A' does not exist`. Both moved to `te-IN-Standard-A`.
+
+That also invalidates the reasoning behind the assignment, not just the string:
+"better voice at the same paid rate as Standard" was wrong twice — WaveNet bills
+$16/1M rather than $4/1M, and for te-IN it is not sold at all. With no mid tier,
+the only upgrade is Chirp3-HD at $30/1M against a 1M pool, so it stays reserved
+for `edition_top`.
 
 Pin that output into `VOICE_BY_SURFACE` so a renamed or withdrawn voice fails
 loudly at deploy rather than silently at synthesis time.
@@ -443,14 +453,13 @@ reliable* · Phase 4 makes it *feel instant*.
 
 ### Phase 2 — Free-lane TTS + Live feed (≈ 4–5 days) — **shipped**
 
-> **Setup required before the free lane does anything.** Cloud TTS does *not*
+> **Setup required before the free lane does anything.** ~~Cloud TTS does *not*
 > accept an API key — it needs a real OAuth token, so the function mints one
-> from a service account (`_shared/gcloud_auth.ts`):
->
-> ```bash
-> # service account with the "Cloud Text-to-Speech User" role, JSON key downloaded
-> supabase secrets set GOOGLE_SERVICE_ACCOUNT_JSON="$(cat key.json)"
-> ```
+> from a service account.~~ **Wrong — corrected 2026-09-03.** Cloud TTS accepts
+> `?key=` on both `voices.list` and `text:synthesize`, verified against the live
+> API. The project's existing `GOOGLE_TTS_API_KEY` is all it needs;
+> `_shared/gcloud_auth.ts` and its JWT signing were deleted, and no service
+> account exists or is required.
 >
 > Until that secret exists the free lane logs a warning and falls through to
 > Gemini, so deploying this changes nothing on its own. `AUDIO_LANE=premium`

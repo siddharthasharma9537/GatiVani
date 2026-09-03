@@ -2,33 +2,49 @@
 //
 // Why this exists: Gemini TTS bills every second of speech (~₹1.43/min), so a
 // 3–4 hour edition costs more than ₹300 to narrate. Cloud TTS gives a monthly
-// free pool per voice tier — Standard 4M characters, WaveNet 1M, Chirp 3 HD 1M
-// — which is roughly 6M free characters a month, or ~30 editions. Narration
-// stops being the dominant cost line and becomes, in practice, free.
+// free pool per voice tier. For te-IN that is Standard 4M characters and
+// Chirp 3 HD 1M — 5M free characters a month, or ~25 editions. Narration stops
+// being the dominant cost line and becomes, in practice, free.
 // See docs/ORCHESTRATION_PLAN.md §2.3.
 //
 // It also returns MP3 directly, so the free lane skips the CPU cost of the
 // lamejs encode that the Gemini path needs (_shared/mp3.ts).
 
-import { accessToken } from "./gcloud_auth.ts";
-
 const ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize";
+
+// Cloud TTS accepts API-key auth, so this needs no service account and no
+// signed JWT — just the key, restricted to the Text-to-Speech API in the
+// console. Verified end to end on 2026-09-03: voices.list and text:synthesize
+// both return 200 with `?key=`.
+function apiKey(): string {
+  const k = Deno.env.get("GOOGLE_TTS_API_KEY");
+  if (!k) throw new Error("GOOGLE_TTS_API_KEY is not set");
+  return k;
+}
 
 /**
  * Which voice each surface speaks in.
  *
- * Pinned per surface rather than chosen dynamically. Past the free pools
- * Standard and WaveNet bill identically ($4/1M), so the assignment costs
- * nothing either way and can be made on quality and consistency instead —
- * and a pool draining mid-month must never silently change the voice of a
- * feed people hear every day. Reasoning in full: plan §2.3.
+ * Pinned per surface rather than chosen dynamically: a pool draining mid-month
+ * must never silently change the voice of a feed people hear every day.
+ *
+ * Telugu has exactly two tiers — Standard (A–D) and Chirp3-HD. There is no
+ * WaveNet and no Neural2 for te-IN, confirmed against the voices API on
+ * 2026-09-03, so the three-tier assignment this started as collapses to two.
+ * Standard is $4/1M characters against a 4M free pool; Chirp3-HD is $30/1M
+ * against a 1M pool, which is 7.5x the rate and a quarter of the headroom.
+ *
+ * So the heard-every-day surfaces sit on Standard, and Chirp3-HD is spent only
+ * on the prewarmed top stories, where the volume is bounded. Whether the live
+ * surfaces are worth upgrading is a question for `edition_cost` once it has
+ * real numbers — the same discipline RASTER_PAGES is under.
  */
 export const VOICE_BY_SURFACE: Record<string, string> = {
-  // Most-heard surface. Better voice at the same paid rate as Standard.
-  live_article: "te-IN-Wavenet-A",
+  // Most-heard surface. Standard because te-IN has no mid tier to promote to.
+  live_article: "te-IN-Standard-A",
   // Falls back to the same voice as live_article so the ticker and the story
   // it opens never sound like two different narrators.
-  live_ticker: "te-IN-Wavenet-A",
+  live_ticker: "te-IN-Standard-A",
   // The long tail: the largest pool (4M) for the largest volume.
   edition_tail: "te-IN-Standard-A",
   // Prewarmed top stories (Phase 4). Best Cloud tier, strictly inside its
@@ -42,14 +58,14 @@ export function voiceForSurface(surface: string): string {
   return VOICE_BY_SURFACE[surface] ?? VOICE_BY_SURFACE.edition_tail;
 }
 
-/** Language code is the voice-name prefix: "te-IN-Wavenet-A" → "te-IN". */
+/** Language code is the voice-name prefix: "te-IN-Standard-A" → "te-IN". */
 export function languageOfVoice(voice: string): string {
   const parts = voice.split("-");
   return parts.length >= 2 ? `${parts[0]}-${parts[1]}` : "te-IN";
 }
 
 export function cloudTtsConfigured(): boolean {
-  return !!Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
+  return !!Deno.env.get("GOOGLE_TTS_API_KEY");
 }
 
 // The API rejects anything over 5000 BYTES per request — not characters, which
@@ -138,13 +154,9 @@ async function synthesizeOne(
   voice: string,
   speakingRate: number,
 ): Promise<Uint8Array> {
-  const token = await accessToken();
-  const resp = await fetch(ENDPOINT, {
+  const resp = await fetch(`${ENDPOINT}?key=${apiKey()}`, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       input: { text },
       voice: { languageCode: languageOfVoice(voice), name: voice },
