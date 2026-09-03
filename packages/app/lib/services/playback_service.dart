@@ -506,12 +506,18 @@ class PlaybackService extends ChangeNotifier {
     }));
   }
 
-  /// Fallback for when playback catches up to synthesis before the next
-  /// chunk was appended: the player has genuinely reached
-  /// ProcessingState.completed with nothing queued after it (unlike the
-  /// gapless common case above, this is a real stop, not a live transition),
-  /// so getting it moving again needs an explicit play() — same as resuming
-  /// after any other stall, with the same retry.
+  /// Fallback for whenever the completed-listener sees the current chunk
+  /// genuinely end without the bookkeeping having already advanced (either
+  /// the next chunk wasn't appended in time, or — reproduced live
+  /// 2026-09-04 — just_audio's native gapless advance simply didn't happen:
+  /// second-chunk-onward transitions on web reached ProcessingState.completed
+  /// on the OLD item with the next one already appended and ready, and
+  /// calling play() alone just replayed the old item from position zero
+  /// rather than moving to the next index — a bare play() resumes whatever
+  /// item the player still thinks is current, it doesn't advance a queue.
+  /// So this always forces the move explicitly via seek(index:), the same
+  /// mechanism _seekChunked already uses, rather than trusting that the
+  /// native engine already did it or will do it off a bare play().
   Future<void> _advanceChunk() async {
     final epoch = _playEpoch;
     final op = ++_chunkOpId;
@@ -547,6 +553,19 @@ class PlaybackService extends ChangeNotifier {
           }
         }
         if (!live()) return;
+      }
+      // Force the player onto the next item — don't assume it's already
+      // there. Same freeze-across-the-jump reasoning as _seekChunked: a
+      // positionStream tick landing between this seek and the bookkeeping
+      // commit below would otherwise read (and could persist) position 0.
+      _frozenPosition = position;
+      try {
+        await player.seek(Duration.zero, index: nextIndex);
+        if (!live()) return;
+        _priorChunksElapsed += _chunkDurations[_loadedChunkIndex];
+        _loadedChunkIndex = nextIndex;
+      } finally {
+        _frozenPosition = null;
       }
       loading = false;
       notifyListeners();
