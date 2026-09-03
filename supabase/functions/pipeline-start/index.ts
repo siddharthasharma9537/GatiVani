@@ -139,13 +139,24 @@ Deno.serve(async (req) => {
       if (upErr) throw new Error(`pdf store: ${upErr.message}`);
     } else {
       const body = await req.json().catch(() => null) as
-        { sourcePath?: string; filename?: string } | null;
-      sourcePath = body?.sourcePath ?? "";
+        { sourcePath?: string; storagePath?: string; filename?: string } | null;
+      // `storagePath` is what documents-process-edition was always called with.
+      // The field was renamed here, which silently broke every already-deployed
+      // client: the shim forwards the body untouched, so an old build sends
+      // storagePath, this read sourcePath, and the upload died as a bare 400.
+      // Accept both for as long as the shim exists.
+      sourcePath = body?.sourcePath ?? body?.storagePath ?? "";
       filename = body?.filename ?? "edition.pdf";
-      if (!sourcePath) return json({ error: "missing_source_path" }, 400);
+      if (!sourcePath) {
+        console.error("[pipeline-start] no source path in body:", Object.keys(body ?? {}));
+        return json({ error: "missing_source_path" }, 400);
+      }
       const { data: blob, error: dlErr } = await supabase.storage
         .from("uploads").download(sourcePath);
-      if (dlErr) return json({ error: "download_failed", message: dlErr.message }, 400);
+      if (dlErr || !blob) {
+        console.error(`[pipeline-start] download ${sourcePath} failed:`, dlErr?.message);
+        return json({ error: "download_failed", message: dlErr?.message }, 400);
+      }
       srcBytes = await normalizeToPdf(new Uint8Array(await blob.arrayBuffer()));
     }
     const pdf = await PDFDocument.load(srcBytes);
