@@ -57,21 +57,25 @@ export async function rasterFirstPage(pdfBytes: Uint8Array): Promise<Raster | nu
 
       // pdfium renders at 72 dpi by default; scale so the output lands near
       // TARGET_HEIGHT rather than at whatever the page's natural size is.
-      const scale = Math.min(4, Math.max(1, TARGET_HEIGHT / page.height));
-      const rendered = await page.render({
-        scale,
-        render: "bitmap",
-      }) as { data: Uint8Array; width: number; height: number };
+      const scale = Math.min(4, Math.max(1, TARGET_HEIGHT / page.getSize().height));
+      const rendered = await page.render({ scale, render: "bitmap" });
 
-      const { encode } = await import("https://deno.land/x/jpegts@1.1/mod.ts");
-      const jpeg = encode(
-        {
-          width: rendered.width,
-          height: rendered.height,
-          data: rendered.data, // BGRA from pdfium
-        },
-        JPEG_QUALITY,
-      );
+      // pdfium hands back BGRA; jpegts reads the buffer as RGBA. Swap the two
+      // outer channels in place, or every rendered page comes out with red and
+      // blue exchanged.
+      const data = rendered.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const b = data[i];
+        data[i] = data[i + 2];
+        data[i + 2] = b;
+      }
+
+      const { encode, Image } = await import("https://deno.land/x/jpegts@1.1/mod.ts");
+      const image = new Image();
+      image.width = rendered.width;
+      image.height = rendered.height;
+      image.data = data;
+      const jpeg = encode(image, JPEG_QUALITY);
 
       doc.destroy();
       return {

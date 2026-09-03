@@ -73,7 +73,7 @@ function b64url(bytes: Uint8Array | ArrayBuffer): string {
  * is pasted into a shell or an env var: without this the key body is one long
  * line containing backslash-n and the import fails with an opaque error.
  */
-function pemToDer(pem: string): Uint8Array {
+function pemToDer(pem: string): Uint8Array<ArrayBuffer> {
   const body = pem
     .replace(/\\n/g, "\n")
     .replace(/-----BEGIN [^-]+-----/, "")

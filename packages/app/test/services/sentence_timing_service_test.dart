@@ -13,7 +13,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gativani/services/sentence_timing_service.dart';
+import 'package:gativani_app/services/sentence_timing_service.dart';
 
 void main() {
   group('SentenceTiming', () {
