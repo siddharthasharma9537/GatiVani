@@ -148,9 +148,15 @@ class DocumentService {
     );
   }
 
+  /// `jobId` is now an `ingest_jobs.id` (the parallel-pipeline rewrite), so
+  /// this polls `ingest_job_progress` — the view built for exactly this —
+  /// rather than `processing_jobs`, which the new pipeline never writes to.
+  /// Polling the wrong table used to throw `Job not found` on every tick,
+  /// silently, forever: the progress card never appeared and the finished
+  /// edition never rendered until the user reloaded the page by hand.
   Future<EditionJobStatus> pollEdition(String jobId) async {
     final r = await http.get(
-      Uri.parse('${ApiConfig.restUrl}/processing_jobs?id=eq.$jobId'
+      Uri.parse('${ApiConfig.restUrl}/ingest_job_progress?id=eq.$jobId'
           '&select=status,done_pages,total_pages,article_count,failed_pages,error'),
       headers: ApiConfig.authHeaders,
     );
@@ -162,7 +168,11 @@ class DocumentService {
       donePages: j['done_pages'] as int,
       totalPages: j['total_pages'] as int,
       articleCount: j['article_count'] as int,
-      failedPages: (j['failed_pages'] as List<dynamic>).length,
+      // ingest_job_progress.failed_pages is already a COUNT(*) — an int, not
+      // the array processing_jobs stored (that's what the old `.length` was
+      // unwrapping). Reading this straight rather than as a List avoids a
+      // second silent throw that this fix would otherwise have introduced.
+      failedPages: j['failed_pages'] as int,
       error: j['error'] as String?,
     );
   }
@@ -416,7 +426,8 @@ class EditionJob {
 }
 
 class EditionJobStatus {
-  final String status; // pending | processing | completed | failed
+  // ingest_jobs.status: queued | splitting | pages | stitching | ready | failed
+  final String status;
   final int donePages;
   final int totalPages;
   final int articleCount;
@@ -430,8 +441,19 @@ class EditionJobStatus {
     required this.failedPages,
     this.error,
   });
-  bool get isDone => status == 'completed' || status == 'failed';
+  bool get isDone => status == 'ready' || status == 'failed';
   double get progress => totalPages == 0 ? 0 : donePages / totalPages;
+
+  /// A short label for what the pipeline is doing right now, since "page 3/21"
+  /// alone doesn't say much during the split/stitch phases that aren't page
+  /// work at all.
+  String get stageLabel => switch (status) {
+        'queued' => 'Queued…',
+        'splitting' => 'Reading the PDF…',
+        'pages' => 'Extracting articles — page $donePages of $totalPages',
+        'stitching' => 'Joining continued stories…',
+        _ => 'Processing…',
+      };
 }
 
 /// Small bag of fields common to both shapes callers need a played article
