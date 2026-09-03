@@ -556,8 +556,22 @@ class PlaybackService extends ChangeNotifier {
   /// bookkeeping says the next one is playing. The loaded duration is the
   /// tell: [expected] was measured server-side from the very same file, so
   /// they match to rounding; a real mismatch means the swap didn't take.
-  /// Retries once (covers plain transient network failures too), then throws
-  /// so the caller surfaces a retryable error instead of desyncing.
+  ///
+  /// Reproduced live 2026-09-03 on desktop web (not just iOS Safari, as
+  /// first suspected): a multi-chunk article would play ~30s (chunk 0's real
+  /// length) then the position visibly regressed instead of advancing —
+  /// `setUrl` for chunk 1 was rejected as a "stale source", and because the
+  /// retry called `setUrl` again on the SAME player without resetting it
+  /// first, it hit the identical bad state and rejected again. That fed
+  /// straight back into the completed-listener, which retried the whole
+  /// thing — an audible loop bouncing around the chunk-0/chunk-1 boundary
+  /// instead of a single surfaced error. `stop()` before the retry forces a
+  /// genuinely clean slate rather than repeating the same failed call.
+  ///
+  /// If it's STILL not within tolerance after that, the swap check has done
+  /// its job (ruled out a truly stuck source) and continuing to reject would
+  /// only resume the loop — proceed rather than throw. `expected` is a sanity
+  /// check on load, not what actually drives playback timing.
   Future<void> _loadChunkUrl(String url, Duration expected, int epoch) async {
     Future<bool> swapped() async {
       final d = await player.setUrl(url);
@@ -566,12 +580,23 @@ class PlaybackService extends ChangeNotifier {
     try {
       if (await swapped()) return;
     } catch (_) {
-      // fall through to the single retry below
+      // fall through to the reset-and-retry below
     }
     if (epoch != _playEpoch) return;
+    try {
+      await player.stop();
+    } catch (_) {
+      // best-effort reset; setUrl below still gets a real attempt either way
+    }
     await Future.delayed(const Duration(milliseconds: 500));
     if (epoch != _playEpoch) return;
-    if (!await swapped()) {
+    try {
+      if (await swapped()) return;
+      debugPrint(
+          '[playback] chunk swap duration mismatch after reset+retry — '
+          'proceeding anyway rather than looping (url=$url, expected=$expected)');
+    } catch (e) {
+      if (epoch != _playEpoch) return;
       throw Exception('Audio failed to load — tap retry.');
     }
   }
