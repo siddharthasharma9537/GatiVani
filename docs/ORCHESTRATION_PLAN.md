@@ -366,6 +366,12 @@ sentence marks on the Free lane.
 
 ## 4. Implementation plan
 
+> All five phases are implemented on `claude/gativani-analysis-design-3ate8o`.
+> **Nothing changes behaviour until the secrets and flags are set** — see
+> [`docs/SETUP_CHECKLIST.md`](SETUP_CHECKLIST.md) for what to do on your own
+> machine, in order.
+
+
 Phases are independently shippable, ordered by ₹ saved per day of work. Each opens
 with the problem it solves and closes with the files it touches.
 
