@@ -65,7 +65,10 @@ export async function put(
 ): Promise<void> {
   const res = await client().fetch(objectUrl(key), {
     method: "PUT",
-    body,
+    // Cast: BodyInit only accepts a view backed by a plain ArrayBuffer, and a
+    // bare Uint8Array is typed as possibly SharedArrayBuffer-backed. Nothing
+    // here ever produces a shared buffer.
+    body: body as BodyInit,
     headers: { "content-type": contentType },
   });
   if (!res.ok) {

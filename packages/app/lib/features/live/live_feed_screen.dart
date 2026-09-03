@@ -153,6 +153,9 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
         estimatedDurationSeconds: NewspaperArticle.estimateDuration(a.body),
         readingStyle: 'news_anchor',
         language: a.language,
+        // Live stories get the WaveNet voice and are only ever synthesised
+        // when someone actually taps one — never prewarmed (plan §2.3).
+        surface: 'live_article',
       );
 
   // Latest stories, honoring the filter dropdown / Vāni: with a district

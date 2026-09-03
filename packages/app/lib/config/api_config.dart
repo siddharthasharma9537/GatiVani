@@ -24,8 +24,16 @@ class ApiConfig {
   );
 
   static String get documentsProcessUrl => '$functionsUrl/documents-process';
+  /// Deprecated: kept only so older builds keep working. New code starts an
+  /// edition through [pipelineStartUrl].
   static String get documentsProcessEditionUrl =>
       '$functionsUrl/documents-process-edition';
+
+  /// Edition ingest: start a job, then poll it. The pipeline runs pages in
+  /// parallel and recovers ones whose worker died — see
+  /// docs/ORCHESTRATION_PLAN.md Phase 3.
+  static String get pipelineStartUrl => '$functionsUrl/pipeline-start';
+  static String get pipelineStatusUrl => '$functionsUrl/pipeline-status';
 
   /// Supabase project origin, e.g. https://<ref>.supabase.co
   static String get projectUrl =>
