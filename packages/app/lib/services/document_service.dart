@@ -112,7 +112,7 @@ class DocumentService {
         },
         contentType: mime,
         sendTimeout: const Duration(minutes: 10),
-        receiveTimeout: const Duration(minutes: 2),
+        receiveTimeout: const Duration(minutes: 10),
         validateStatus: (s) => s != null && s < 500,
       ),
       onSendProgress: (sent, total) {
