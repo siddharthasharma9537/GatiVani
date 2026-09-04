@@ -696,6 +696,97 @@ ${lines.join("\n")}`;
   }
 }
 
+// ── Layer H: headline gap detection (review-only) ────────────────────────────
+// Sarvam's OCR can undersegment a dense page enough that a headline never
+// becomes its own block at all — the story's BODY text still comes through
+// (attached to whichever neighbouring headline OCR did keep), but the real
+// headline is simply absent from the manifest, so [B] assign has nothing to
+// give it. That failure is silent by construction: nothing else here can
+// notice a block that was never produced.
+//
+// This asks Gemini to independently list every headline-sized text visible on
+// the page IMAGE, then checks each one against the OCR block manifest. A
+// vision-read headline with no matching block is a strong signal something
+// was lost at OCR time.
+//
+// Deliberately review-only: the vision-read text is model-transcribed, not OCR
+// ground truth, so it is surfaced as a flag + suggested text for a human to
+// confirm — never silently written in as the real title. Auto-substituting it
+// would reintroduce exactly the hallucination risk [B]'s index-only design
+// exists to avoid. Can't localise the gap to one specific article either (no
+// position info from a page-level headline list), so every article on the
+// page is flagged rather than guessing — a false positive here just means an
+// extra human look, a false negative means the existing silent loss continues.
+async function headlineVerificationPass(
+  drafts: Draft[], blocks: Block[], fileBuffer: Uint8Array, mimeType: string,
+  geminiKey: string, ctx?: UsageCtx,
+): Promise<void> {
+  const visual = (mimeType.startsWith("image/") || mimeType === "application/pdf") &&
+    fileBuffer.length < 15 * 1024 * 1024;
+  if (!visual || !drafts.length) return;
+
+  const prompt =
+`The page IMAGE is provided. List EVERY distinct headline or section-title-sized
+text visible on the page — the bold/large text that introduces a news item or a
+named section, top to bottom. Include short kicker-style headlines, not just the
+single biggest one. Do NOT include body paragraphs, captions, ads, or the
+newspaper's own masthead/logo.
+
+Return ONLY JSON:
+{"headlines":["<verbatim headline text 1>","<verbatim headline text 2>"]}`;
+  const { status, text } = await generate({
+    tier: "fast",
+    parts: [
+      { inline_data: { mime_type: mimeType, data: bytesToBase64(fileBuffer) } },
+      { text: prompt },
+    ],
+    apiKey: geminiKey,
+    ctx,
+  });
+  if (status !== 200) return;
+  const data = parseJson<{ headlines?: string[] }>(text);
+  const seen = (data?.headlines ?? [])
+    .filter((h) => typeof h === "string" && h.trim().length >= 4);
+  if (!seen.length) return;
+
+  const known = blocks
+    .filter((b) => b.cls === "headline" || b.cls === "section-title")
+    .map((b) => normalizeHeadline(b.text));
+
+  const orphans = seen.filter((h) => {
+    const n = normalizeHeadline(h);
+    return !known.some((k) => headlineSimilar(n, k));
+  });
+  if (!orphans.length) return;
+
+  console.log(`[structure] ${orphans.length} headline(s) seen on page but not in OCR blocks`);
+  for (const d of drafts) {
+    for (const h of orphans) d.review.push(`headline_ocr_gap:${h.slice(0, 60)}`);
+  }
+}
+
+function normalizeHeadline(s: string): string {
+  return s.replace(/[\s.,:;!?'"()\-–—•]+/g, "").toLowerCase();
+}
+
+// Cheap bigram-overlap (Dice coefficient) similarity — enough to tell "same
+// headline, minor OCR/vision transcription noise" from "different text"
+// without a full string-distance library for one comparison.
+function headlineSimilar(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  const bigrams = (s: string) => {
+    const set = new Set<string>();
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+    return set;
+  };
+  const A = bigrams(a), B = bigrams(b);
+  if (!A.size || !B.size) return false;
+  let hits = 0;
+  for (const g of A) if (B.has(g)) hits++;
+  return (2 * hits) / (A.size + B.size) > 0.5;
+}
+
 export async function extractArticlesStructured(
   rawOcrHtml: string,
   fileBuffer: Uint8Array,
@@ -746,6 +837,8 @@ export async function extractArticlesStructured(
       try { await visionPass(drafts, fileBuffer, mimeType, geminiKey, ctx); }
       catch (e) { console.warn("[structure] L3 vision failed:", (e as Error).message); }
     }
+    try { await headlineVerificationPass(drafts, blocks, fileBuffer, mimeType, geminiKey, ctx); }
+    catch (e) { console.warn("[structure] headline verification failed:", (e as Error).message); }
   }
 
   const articles: StructuredArticle[] = [];
