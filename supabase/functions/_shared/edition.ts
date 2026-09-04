@@ -51,7 +51,11 @@ export async function ocrPageToHtml(pageBytes: Uint8Array, sarvamKey: string): P
 
   await sarvamPost(`/doc-digitization/job/v1/${job.job_id}/start`, sarvamKey, {});
   let state = "";
-  for (let i = 0; i < 18; i++) {
+  // 24x5s = 120s. Bounded by pipeline-page's own wall-clock budget: the whole
+  // invocation (this poll + the Gemini structure-extraction call that runs
+  // after OCR completes) must fit inside Supabase's 150s Edge Function limit,
+  // so this can't just be raised arbitrarily — 120s leaves ~30s for the rest.
+  for (let i = 0; i < 24; i++) {
     await new Promise((r) => setTimeout(r, 5000));
     const st = await fetch(`${SARVAM_BASE}/doc-digitization/job/v1/${job.job_id}/status`, {
       headers: { "api-subscription-key": sarvamKey },
