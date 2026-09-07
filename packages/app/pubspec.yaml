@@ -39,7 +39,7 @@ dependencies:
 
   # UI & Design
   google_fonts: ^8.1.0
-  cached_network_image: ^3.3.0
+  cached_network_image: ^4.0.0
 
   # Localization
   intl: ^0.20.2
