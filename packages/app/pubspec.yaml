@@ -13,7 +13,7 @@ dependencies:
 
   # Core State Management & Navigation
   provider: ^6.0.0
-  go_router: ^17.2.3
+  go_router: ^18.0.1
 
   # Audio Playback & Media
   just_audio: ^0.10.5
