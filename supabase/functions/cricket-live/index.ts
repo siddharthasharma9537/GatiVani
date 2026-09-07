@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { generate } from "../_shared/gemini.ts";
 
 // cricket-live — turns free, factual live-score data into original Telugu radio
 // commentary. Score facts (runs/wickets/overs) are not copyrightable; the
@@ -53,28 +54,17 @@ async function commentary(facts: MatchFacts, geminiKey: string): Promise<string>
     `not invent events not implied by the facts.\n\n` +
     `Match: ${facts.name}\nType: ${facts.matchType}\nStatus: ${facts.status}\n` +
     `Score: ${facts.scoreText}\n\nOutput only the Telugu commentary.`;
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.9,
-          maxOutputTokens: 300,
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-      signal: AbortSignal.timeout(40_000),
-    },
-  );
-  if (!r.ok) throw new Error(`Gemini HTTP ${r.status}`);
-  const data = await r.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  return (data.candidates?.[0]?.content?.parts ?? [])
-    .map((p) => p.text ?? "").join("").trim();
+  const { status, text } = await generate({
+    tier: "fast",
+    parts: [{ text: prompt }],
+    apiKey: geminiKey,
+    json: false, // free-text Telugu commentary, not JSON
+    temperature: 0.9,
+    maxOutputTokens: 300,
+    timeoutMs: 40_000,
+  });
+  if (status !== 200) throw new Error(`Gemini HTTP ${status}`);
+  return text.trim();
 }
 
 const MOCK: MatchFacts = {

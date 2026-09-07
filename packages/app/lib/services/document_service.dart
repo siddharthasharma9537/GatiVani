@@ -76,7 +76,7 @@ class DocumentService {
 
   // ── Multi-page edition flow (async job) ────────────────────────────────────
   // POST the full PDF → job starts server-side, one page per invocation.
-  // Poll processing_jobs until completed, then fetch articles via REST.
+  // Start the ingest pipeline, then poll it until the edition is ready.
 
   Future<EditionJob> startEdition({
     required String filePath,
@@ -125,13 +125,16 @@ class DocumentService {
     }
 
     // 2. Light leg: start the job from the stored path (returns in seconds).
+    // Signed-in callers send their own JWT so the job is attributed to them
+    // and shows up under their uploads; anonymous ones fall back to the anon
+    // key and rely on the job id as their handle.
     final r = await http
-        .post(Uri.parse(ApiConfig.documentsProcessEditionUrl),
+        .post(Uri.parse(ApiConfig.pipelineStartUrl),
             headers: {
-              ...ApiConfig.authHeaders,
+              ...ApiConfig.userAuthHeaders,
               'Content-Type': 'application/json',
             },
-            body: json.encode({'storagePath': path, 'filename': filename}))
+            body: json.encode({'sourcePath': path, 'filename': filename}))
         .timeout(const Duration(seconds: 120));
     final data = json.decode(r.body) as Map<String, dynamic>;
     if (r.statusCode != 200 || data['ok'] != true) {
@@ -148,31 +151,34 @@ class DocumentService {
     );
   }
 
-  /// `jobId` is now an `ingest_jobs.id` (the parallel-pipeline rewrite), so
-  /// this polls `ingest_job_progress` — the view built for exactly this —
-  /// rather than `processing_jobs`, which the new pipeline never writes to.
-  /// Polling the wrong table used to throw `Job not found` on every tick,
-  /// silently, forever: the progress card never appeared and the finished
-  /// edition never rendered until the user reloaded the page by hand.
+  /// Progress for a running edition.
+  ///
+  /// Read through the pipeline-status function rather than straight from the
+  /// table: the ingest tables are RLS-scoped to their owner, and an edition can
+  /// be uploaded without signing in. The job id is the capability — an
+  /// unguessable uuid handed only to whoever started the job.
+  ///
+  /// `jobId` is an `ingest_jobs.id` (the parallel-pipeline rewrite) — polling
+  /// the old `processing_jobs` table (which this pipeline never writes to)
+  /// used to throw `Job not found` on every tick, silently, forever: the
+  /// progress card never appeared and the finished edition never rendered
+  /// until the user reloaded the page by hand.
   Future<EditionJobStatus> pollEdition(String jobId) async {
     final r = await http.get(
-      Uri.parse('${ApiConfig.restUrl}/ingest_job_progress?id=eq.$jobId'
-          '&select=status,done_pages,total_pages,article_count,failed_pages,error'),
-      headers: ApiConfig.authHeaders,
-    );
-    final rows = json.decode(r.body) as List<dynamic>;
-    if (rows.isEmpty) throw Exception('Job not found');
-    final j = rows.first as Map<String, dynamic>;
+      Uri.parse('${ApiConfig.pipelineStatusUrl}?jobId=$jobId'),
+      headers: ApiConfig.userAuthHeaders,
+    ).timeout(const Duration(seconds: 20));
+    final j = json.decode(r.body) as Map<String, dynamic>;
+    if (j['ok'] != true) {
+      throw Exception(j['message'] ?? j['error'] ?? 'Job not found');
+    }
     return EditionJobStatus(
-      status: j['status'] as String,
-      donePages: j['done_pages'] as int,
-      totalPages: j['total_pages'] as int,
-      articleCount: j['article_count'] as int,
-      // ingest_job_progress.failed_pages is already a COUNT(*) — an int, not
-      // the array processing_jobs stored (that's what the old `.length` was
-      // unwrapping). Reading this straight rather than as a List avoids a
-      // second silent throw that this fix would otherwise have introduced.
-      failedPages: j['failed_pages'] as int,
+      status: j['status'] as String? ?? 'queued',
+      donePages: (j['donePages'] as num?)?.toInt() ?? 0,
+      totalPages: (j['totalPages'] as num?)?.toInt() ?? 0,
+      articleCount: (j['articleCount'] as num?)?.toInt() ?? 0,
+      failedPages: (j['failedPages'] as num?)?.toInt() ?? 0,
+      dedupedPages: (j['dedupedPages'] as num?)?.toInt() ?? 0,
       error: j['error'] as String?,
     );
   }
@@ -426,22 +432,30 @@ class EditionJob {
 }
 
 class EditionJobStatus {
-  // ingest_jobs.status: queued | splitting | pages | stitching | ready | failed
+  /// ingest_jobs.status: queued | splitting | pages | stitching | ready | failed
   final String status;
   final int donePages;
   final int totalPages;
   final int articleCount;
   final int failedPages;
+
+  /// Pages served from an earlier upload of the same physical page, costing
+  /// no OCR and no model calls.
+  final int dedupedPages;
   final String? error;
+
   EditionJobStatus({
     required this.status,
     required this.donePages,
     required this.totalPages,
     required this.articleCount,
     required this.failedPages,
+    this.dedupedPages = 0,
     this.error,
   });
+
   bool get isDone => status == 'ready' || status == 'failed';
+  bool get failed => status == 'failed';
   double get progress => totalPages == 0 ? 0 : donePages / totalPages;
 
   /// A short label for what the pipeline is doing right now, since "page 3/21"

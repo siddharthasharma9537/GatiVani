@@ -1,0 +1,29 @@
+# Paths here are relative to the REPOSITORY ROOT, not to packages/app/.
+# This file used to live at packages/app/.github/CODEOWNERS, where GitHub never
+# read it, so its paths were written as if the Flutter app were the whole repo.
+# They are rewritten below; a path that matches nothing is silently ignored, so
+# a wrong one fails quietly rather than loudly.
+
+# Default owners for everything
+*                                   @siddharthasharma9537
+
+# CI/CD & deployment
+/.github/                           @siddharthasharma9537
+/vercel.json                        @siddharthasharma9537
+
+# Backend: schema, RLS and the edge functions that hold the API keys
+/supabase/                          @siddharthasharma9537
+
+# App config & release
+/packages/app/firebase.json         @siddharthasharma9537
+/packages/app/firestore.rules       @siddharthasharma9537
+/packages/app/storage.rules         @siddharthasharma9537
+/packages/app/distribution/         @siddharthasharma9537
+
+# Native
+/packages/app/android/              @siddharthasharma9537
+/packages/app/ios/                  @siddharthasharma9537
+
+# Core Flutter code
+/packages/app/lib/services/         @siddharthasharma9537
+/packages/app/lib/config/           @siddharthasharma9537

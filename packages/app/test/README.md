@@ -1,165 +1,53 @@
-# GatiVani Test Suite
+# Tests
 
-This directory contains the full test suite for the GatiVani Flutter
-application, organized by test scope.
+## State of play
 
-## Layout
+This suite was rebuilt in Phase 0 of [`docs/ORCHESTRATION_PLAN.md`](../../../docs/ORCHESTRATION_PLAN.md).
 
-```
-test/
-  fixtures/        Reusable test data (articles, Gemini responses, service constants)
-  mocks/           Mockito + hand-written fakes for every service
-  services/        Unit tests for the 5 core services
-  widgets/         Widget tests for atomic UI components
-  screens/         Widget tests for full-screen widgets (Settings, Bookmarks)
-  integration/     End-to-end flow tests that compose multiple services
-```
+What was here before did not compile. Every file imported services that had
+been deleted (`firebase_service.dart`, `gemini_service.dart`,
+`news_service.dart`, `SarvamAIService`) or screens that moved from
+`lib/screens/` to `lib/features/`. Because `ci.yml` ran `flutter test` with
+`continue-on-error: true`, CI reported green the entire time. The old README
+claimed ">95% service coverage" and described a `run_tests.sh` with unit /
+widget / screen / integration layers; none of it had been true for a long
+while.
 
-## Running tests
+All of it is gone. `flutter test` now blocks CI, so what lives here has to
+pass.
 
-A wrapper script is provided to run subsets of the suite consistently. From
-the repository root:
+## What is covered
 
-```bash
-# All tests
-scripts/run_tests.sh
+- `services/sentence_timing_service_test.dart` — read-along highlight timing:
+  binary search over timings, half-open interval boundaries, clamping past
+  either end, and gap-free estimated word/sentence timings. Pure Dart, no
+  plugins, no network.
 
-# A specific layer
-scripts/run_tests.sh unit         # test/services/
-scripts/run_tests.sh widget       # test/widgets/
-scripts/run_tests.sh screen       # test/screens/
-scripts/run_tests.sh integration  # test/integration/
+That is a deliberately small honest baseline, not a target. It is also the
+right first thing to protect: Sarvam forced alignment is disabled for cost, so
+the player depends on these estimates for highlighting.
 
-# Full suite with coverage (writes coverage/lcov.info; HTML if lcov installed)
-scripts/run_tests.sh coverage
-```
-
-Equivalent direct invocations:
+## Running them
 
 ```bash
-flutter test                              # All tests
-flutter test test/services/news_service_test.dart   # Single file
-flutter test --coverage                   # Coverage output
-genhtml coverage/lcov.info -o coverage/html         # HTML report
-open coverage/html/index.html             # macOS
+cd packages/app
+flutter test                                              # everything
+flutter test test/services/sentence_timing_service_test.dart   # one file
+flutter test --coverage                                   # writes coverage/lcov.info
 ```
 
-## Layers in detail
+## Adding tests
 
-### Unit tests (`test/services/`)
+Prefer pure-Dart logic tests — they need no device, run in milliseconds, and
+do not rot when the UI is restyled. Good next candidates, in rough order of
+value:
 
-One file per service. Each file uses the corresponding
-`FakeXService` / `MockXService` from `test/mocks/mock_services.dart` so that
-no real network or platform plugin is touched.
+1. `text_highlight_service.dart` — same read-along path, more logic.
+2. The chunk-advance bookkeeping in `playback_service.dart`, which has
+   accumulated several subtle fixes (chunk-source swaps, position freezing,
+   duplicate prefetch suppression) and no test to hold them in place.
+3. Telugu sentence-boundary detection, which has already regressed once.
 
-Covered services:
-- `FirebaseService` — analytics events, FCM tokens, init guard, exception types
-- `SarvamAIService` — OCR, TTS, batch TTS, error injection
-- `GeminiService` — summarization, audio script generation, batch ops
-- `StorageService` — uploads, downloads, listing, deletion
-- `NewsService` — fetch, search, filter, cache, Article model round-trip
-
-Each suite is organized into `group(...)` blocks for **Initialization**,
-**Happy path**, **Edge cases**, **Exception handling**, **Concurrency**, and
-**Performance** to make extension predictable.
-
-### Widget tests (`test/widgets/`)
-
-Tests for individual design-system components:
-- `article_card_widget_test.dart`
-- `audio_player_widget_test.dart`
-- `mini_player_widget_test.dart` *(progress clamp, play/pause icon swap,
-  callbacks, semantics, dark-mode rendering)*
-- `gradient_background_widget_test.dart` *(every gradient enum, adaptive dark
-  resolution, gesture pass-through)*
-- `search_bar_widget_test.dart`
-- `source_filter_widget_test.dart`
-- `loading_states_widget_test.dart`
-
-### Screen tests (`test/screens/`)
-
-Full-screen widget tests that drive interaction:
-- `settings_screen_test.dart` — defaults, popup menus, switch toggles,
-  snackbars
-- `bookmarks_screen_test.dart` — skeleton -> loaded -> empty state, wrapped
-  in a real `GoRouter` so navigation calls don't blow up
-
-### Integration tests (`test/integration/`)
-
-Compose multiple services in a single flow:
-- `article_to_audio_flow_test.dart` — fetch -> summarize -> generate script
-  -> TTS, including batch processing, search, filter, and concurrent flows.
-- `offline_cache_fallback_test.dart` — cache hit/miss behavior, typed
-  exception surfacing when AI services fail, Article model serialization
-  round-trip (the contract Hive/SharedPreferences relies on).
-
-These are pure-Dart integration tests so they run with `flutter test` and
-don't require a device. The `integration_test` package is wired in
-`pubspec.yaml` for when on-device flows are added later.
-
-## Mock / Fake strategy
-
-`test/mocks/mock_services.dart` exports two flavors for every service:
-
-| Flavor   | Purpose                                                  |
-|----------|----------------------------------------------------------|
-| `MockX`  | `extends Mock implements X` (mockito-style verification) |
-| `FakeX`  | Hand-rolled stub with mutable state and error injection  |
-
-Use **Mocks** when you want to assert call counts (`verify(mock.foo()).called(1)`).
-Use **Fakes** when you want a behaving stand-in (e.g. `service.articles = ...`,
-`service.errorToThrow = '...'`).
-
-The fakes are the recommended starting point for new tests — they are easier
-to read and rarely need updating when the production API changes.
-
-## Fixtures
-
-Located in `test/fixtures/`:
-
-- `article_fixtures.dart` — `ArticleFixtures.createArticle(...)` and
-  `createArticleList(...)`.
-- `gemini_fixtures.dart` — sample article/summary/script text in English and
-  Telugu, generators for long-form content, prompt patterns.
-- `service_fixtures.dart` — common URLs, error messages, HTTP status code
-  table, performance benchmarks, language codes, retry configs.
-
-## Coverage targets
-
-| Layer       | Target | Notes                                          |
-|-------------|--------|------------------------------------------------|
-| Services    | >95%   | Achieved via FakeX + MockX combinations        |
-| Widgets     | >80%   | Each design-system component has a dedicated file |
-| Screens     | >80%   | Settings + Bookmarks; new screens add tests here |
-| Overall     | >80%   | Reported via `flutter test --coverage`         |
-
-Generate a local coverage report:
-
-```bash
-scripts/run_tests.sh coverage
-open coverage/html/index.html
-```
-
-## Adding new tests
-
-1. **Service test** — copy an existing file in `test/services/`. Pull the
-   fake from `mocks/mock_services.dart`; if the service is new, add a new
-   fake alongside the existing ones.
-2. **Widget test** — copy an existing file in `test/widgets/`. Use the
-   `buildSubject({...})` helper pattern at the top of the file for default
-   arguments. Group tests by concern (Rendering, Callbacks, Edge Cases).
-3. **Screen test** — wrap in `MaterialApp.router` if the screen uses
-   `go_router` (see `bookmarks_screen_test.dart`).
-4. **Integration test** — compose multiple services from
-   `mocks/mock_services.dart`. Reset state in `setUp`.
-
-## Conventions
-
-- Top-of-file doc comment explains coverage areas.
-- Tests live inside named `group(...)` blocks; use **Initialization**,
-  **Rendering**, **Callbacks**, **Edge Cases**, **Performance**,
-  **Concurrent Operations**, **Exception Handling** as the standard
-  hierarchy where applicable.
-- Prefer `expect(actual, matcher)` over assertions.
-- Use Telugu / Hindi / English content side-by-side for any text input to
-  guarantee Unicode safety.
+Widget tests are welcome, but write them against components that actually
+exist in `lib/design/components/` — checking the import resolves before
+writing the test is the lesson of everything above.

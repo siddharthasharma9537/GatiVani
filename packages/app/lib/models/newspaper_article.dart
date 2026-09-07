@@ -30,6 +30,18 @@ class NewspaperArticle {
   /// For image uploads this is the actual photo; for PDFs it is empty.
   final String imageUrl;
 
+  /// Which narration surface this article belongs to, sent to the synthesize
+  /// endpoint so it can pick the right voice and cost lane.
+  ///
+  /// 'live_article'  — Live feed stories (WaveNet; synthesised on tap only)
+  /// 'edition_tail'  — newspaper edition articles (Standard; the largest pool)
+  ///
+  /// Defaults to 'edition_tail' because that is the overwhelming majority and
+  /// because it draws on the largest free pool — a surface that forgets to
+  /// declare itself should land on the cheapest correct voice, not the
+  /// scarcest. See docs/ORCHESTRATION_PLAN.md §2.3.
+  final String surface;
+
   String? audioUrl;
   // Cached audio of the short "briefing" narration (headline + lede), separate
   // from the full-article audioUrl.
@@ -54,6 +66,7 @@ class NewspaperArticle {
     this.readingStyle = 'news_anchor',
     this.suggestedSpeaker = '',
     this.imageUrl = '',
+    this.surface = 'edition_tail',
     this.audioUrl,
     this.summaryAudioUrl,
     this.summaryText,

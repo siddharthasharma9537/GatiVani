@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { generate } from "../_shared/gemini.ts";
 
 // feeds-explains — "GatiVani Take": an original Telugu explainer for the
 // day's single most newsworthy story, national or international.
@@ -319,29 +320,16 @@ async function synthesize(
     `factual rather than padding it. Write in ${scriptName} only.\n\n` +
     `Headlines:\n${factLines}\n\n` +
     `Respond as JSON: {"title": "...", "commentary": "..."}`;
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.6,
-          maxOutputTokens: 500,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-      signal: AbortSignal.timeout(40_000),
-    },
-  );
-  if (!r.ok) return null;
-  const data = await r.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const text = (data.candidates?.[0]?.content?.parts ?? [])
-    .map((p) => p.text ?? "").join("").trim();
+  const { status, text: raw } = await generate({
+    tier: "fast",
+    parts: [{ text: prompt }],
+    apiKey: geminiKey,
+    temperature: 0.6,
+    maxOutputTokens: 500,
+    timeoutMs: 40_000,
+  });
+  if (status !== 200) return null;
+  const text = raw.trim();
   try {
     const parsed = JSON.parse(text) as { title?: string; commentary?: string };
     if (!parsed.title || !parsed.commentary) return null;

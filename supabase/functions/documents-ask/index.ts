@@ -14,6 +14,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { generate } from "../_shared/gemini.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -52,8 +53,11 @@ Deno.serve(async (req) => {
     // fall back to the client-provided text for web stories / podcasts.
     let articleBlock = "";
     let indexBlock = "";
+    // Hoisted out of the `if (articleId)` block below: the cost ledger needs
+    // this client on every path, including Live articles grounded on
+    // client-supplied text, which never touch the articles table.
+    const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
     if (articleId) {
-      const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
       const { data: article } = await supabase
         .from("articles")
         .select("title, full_content, section, newspaper_id")
@@ -107,22 +111,22 @@ ${indexBlock ? `\n=== TODAY'S EDITION (index of all articles) ===\n${indexBlock}
 === QUESTION ===
 ${question}`;
 
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 600, thinkingConfig: { thinkingBudget: 0 } },
-        }),
-        signal: AbortSignal.timeout(40_000),
-      },
-    );
-    if (!r.ok) return json({ error: "ask_failed", message: `Gemini HTTP ${r.status}` }, 502);
-    const data = await r.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    const answer = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").trim();
-    return json({ ok: true, answer: answer || "—" });
+    // gemini-flash-latest is an alias that tracks Google's current Flash, so
+    // it survives the 2.5 retirement on its own — pinned deliberately rather
+    // than tiered. Routed through the gateway for retry and cost logging.
+    const { status, text } = await generate({
+      tier: "fast",
+      model: "gemini-flash-latest",
+      parts: [{ text: prompt }],
+      apiKey: GEMINI,
+      json: false, // a prose answer for the reader, not JSON
+      temperature: 0.2,
+      maxOutputTokens: 600,
+      timeoutMs: 40_000,
+      ctx: { supabase, fn: "documents-ask", articleId: articleId || null },
+    });
+    if (status !== 200) return json({ error: "ask_failed", message: `Gemini HTTP ${status}` }, 502);
+    return json({ ok: true, answer: text.trim() || "—" });
   } catch (err) {
     return json({ error: "ask_failed", message: (err as Error).message }, 500);
   }
