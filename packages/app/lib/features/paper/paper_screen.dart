@@ -51,6 +51,10 @@ class _PaperScreenState extends State<PaperScreen> {
   EditionJob? _job;
   EditionJobStatus? _jobStatus;
   Timer? _poll;
+  // When the job started polling — the basis for the "~N min left" estimate.
+  // Real per-page time varies a lot with OCR load, so this is a running
+  // average over pages done so far, not a fixed estimate.
+  DateTime? _jobStartedAt;
   String? _error;
   bool _uploading = false;
   double _uploadProgress = 0;
@@ -125,8 +129,10 @@ class _PaperScreenState extends State<PaperScreen> {
         _job = job;
         _pubDate = job.pubDate;
         _uploading = false;
+        _jobStartedAt = DateTime.now();
       });
       _poll = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
+      _refresh(); // first status right away rather than a 10s blank wait
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -514,6 +520,22 @@ class _PaperScreenState extends State<PaperScreen> {
     );
   }
 
+  /// "~N min left", based on the average pace so far — not a fixed per-page
+  /// guess, since OCR latency swings a lot page to page. Null until at least
+  /// one page has landed (nothing to average yet) or once it's basically done.
+  String? _etaText(EditionJobStatus st) {
+    final started = _jobStartedAt;
+    if (started == null || st.donePages == 0) return null;
+    final remaining = st.totalPages - st.donePages;
+    if (remaining <= 0) return null;
+    final perPage =
+        DateTime.now().difference(started).inSeconds / st.donePages;
+    final remainingSec = (perPage * remaining).round();
+    if (remainingSec < 30) return 'Almost done…';
+    final mins = (remainingSec / 60).ceil();
+    return '~$mins min left';
+  }
+
   Future<void> _refresh() async {
     final job = _job;
     if (job == null) return;
@@ -693,22 +715,36 @@ class _PaperScreenState extends State<PaperScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(_editionTitle,
-                            style: const TextStyle(
-                                color: kPaper,
-                                fontSize: 17,
-                                fontWeight: FontWeight.w500)),
+                        Row(children: [
+                          Expanded(
+                            child: Text(_editionTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: kPaper,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w500)),
+                          ),
+                          if (_etaText(st) != null) ...[
+                            const SizedBox(width: 8),
+                            Text(_etaText(st)!,
+                                style: const TextStyle(
+                                    color: Gati.onInkMuted, fontSize: 11.5)),
+                          ],
+                        ]),
                         const SizedBox(height: 4),
                         Text(
-                            'Page ${st.donePages}/${st.totalPages} · '
-                            '${st.articleCount} articles found',
+                            '${st.stageLabel} · ${st.articleCount} articles found',
                             style: const TextStyle(
                                 color: Gati.onInkMuted, fontSize: 12)),
                         const SizedBox(height: 10),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(2),
                           child: LinearProgressIndicator(
-                              value: st.progress,
+                              // null while donePages == 0 (queued/splitting):
+                              // an indeterminate bar reads correctly as "still
+                              // starting" instead of a false 0% stall.
+                              value: st.donePages == 0 ? null : st.progress,
                               minHeight: 4,
                               backgroundColor: Gati.onInkTrack,
                               color: Gati.pasupu),

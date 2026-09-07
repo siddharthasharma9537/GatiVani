@@ -112,7 +112,7 @@ class DocumentService {
         },
         contentType: mime,
         sendTimeout: const Duration(minutes: 10),
-        receiveTimeout: const Duration(minutes: 2),
+        receiveTimeout: const Duration(minutes: 10),
         validateStatus: (s) => s != null && s < 500,
       ),
       onSendProgress: (sent, total) {
@@ -157,6 +157,12 @@ class DocumentService {
   /// table: the ingest tables are RLS-scoped to their owner, and an edition can
   /// be uploaded without signing in. The job id is the capability — an
   /// unguessable uuid handed only to whoever started the job.
+  ///
+  /// `jobId` is an `ingest_jobs.id` (the parallel-pipeline rewrite) — polling
+  /// the old `processing_jobs` table (which this pipeline never writes to)
+  /// used to throw `Job not found` on every tick, silently, forever: the
+  /// progress card never appeared and the finished edition never rendered
+  /// until the user reloaded the page by hand.
   Future<EditionJobStatus> pollEdition(String jobId) async {
     final r = await http.get(
       Uri.parse('${ApiConfig.pipelineStatusUrl}?jobId=$jobId'),
@@ -426,7 +432,7 @@ class EditionJob {
 }
 
 class EditionJobStatus {
-  /// queued | splitting | pages | stitching | ready | failed
+  /// ingest_jobs.status: queued | splitting | pages | stitching | ready | failed
   final String status;
   final int donePages;
   final int totalPages;
@@ -451,6 +457,17 @@ class EditionJobStatus {
   bool get isDone => status == 'ready' || status == 'failed';
   bool get failed => status == 'failed';
   double get progress => totalPages == 0 ? 0 : donePages / totalPages;
+
+  /// A short label for what the pipeline is doing right now, since "page 3/21"
+  /// alone doesn't say much during the split/stitch phases that aren't page
+  /// work at all.
+  String get stageLabel => switch (status) {
+        'queued' => 'Queued…',
+        'splitting' => 'Reading the PDF…',
+        'pages' => 'Extracting articles — page $donePages of $totalPages',
+        'stitching' => 'Joining continued stories…',
+        _ => 'Processing…',
+      };
 }
 
 /// Small bag of fields common to both shapes callers need a played article
