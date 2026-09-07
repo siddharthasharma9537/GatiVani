@@ -33,7 +33,7 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::warning::SUPABASE_ACCESS_TOKEN not set — deploy skipped"
           fi
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         if: steps.gate.outputs.skip != 'true'
         with:
           version: latest
