@@ -371,8 +371,11 @@ const MKB_MONTHS: Record<string, string> = {
   november: "Nov", december: "Dec",
 };
 const MKB_ASSUMED_BITRATE_BPS = 128_000; // standard broadcast-MP3 rate
+// Derived from this function's own project, not hardcoded to one project ref
+// -- a function calling another function by a fixed URL breaks the moment
+// either one is redeployed to a different Supabase project.
 const MKB_PROXY_URL =
-  "https://jjoxowdvzmlchtfarpbs.supabase.co/functions/v1/mkb-audio-proxy";
+  `${Deno.env.get("SUPABASE_URL")}/functions/v1/mkb-audio-proxy`;
 
 // playhls.media.nic.in sends an incomplete TLS chain (leaf issued by Let's
 // Encrypt "YR1", but the server serves the wrong intermediate) — Deno's
