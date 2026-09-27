@@ -74,8 +74,11 @@ Qc123V5LTXDZW4CcsPBDyhy4v+c8hClAyw/IkJlfBqxB9D+/wvIMHgECZ4ptP6o=
 -----END CERTIFICATE-----`;
 const upstreamClient = Deno.createHttpClient({ caCerts: [YR1_INTERMEDIATE_PEM] });
 
+// Derived from this function's own project, not hardcoded to one project ref
+// -- a function calling another function by a fixed URL breaks the moment
+// either one is redeployed to a different Supabase project.
 const MKB_PROXY_URL =
-  "https://jjoxowdvzmlchtfarpbs.supabase.co/functions/v1/mkb-audio-proxy";
+  `${Deno.env.get("SUPABASE_URL")}/functions/v1/mkb-audio-proxy`;
 
 interface MkbListItem {
   id: string; // the div id, e.g. "div135" — also the resolve key

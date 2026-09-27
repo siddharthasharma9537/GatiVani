@@ -23,7 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      PROJECT_REF: jjoxowdvzmlchtfarpbs
+      # Migrated to the shared SoHum identity project (sohum) — see
+      # github.com/SoHum-Digital-Services/sohum-contracts.
+      PROJECT_REF: ziebgspujtdzkiwyybsa
     steps:
       - uses: actions/checkout@v4
       - name: Skip if secret missing
