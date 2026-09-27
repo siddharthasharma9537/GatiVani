@@ -13,14 +13,16 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class ApiConfig {
   ApiConfig._();
 
+  // Migrated to the shared SoHum identity project (sohum) -- see
+  // github.com/SoHum-Digital-Services/sohum-contracts.
   static const String functionsUrl = String.fromEnvironment(
     'SUPABASE_FUNCTIONS_URL',
-    defaultValue: 'https://jjoxowdvzmlchtfarpbs.supabase.co/functions/v1',
+    defaultValue: 'https://ziebgspujtdzkiwyybsa.supabase.co/functions/v1',
   );
 
   static const String anonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impqb3hvd2R2em1sY2h0ZmFycGJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1MTQ2MDEsImV4cCI6MjA5NTA5MDYwMX0.45oi82WrFqF8eQHbXjQ5hjcONXa8xkYROvgoGVMqsNI',
+    defaultValue: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InppZWJnc3B1anRkemtpd3l5YnNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0ODE5NjMsImV4cCI6MjEwNjA1Nzk2M30.wEqY7dttS1hitsZCZSC0GXFyqeiFUb8jdVlYG-toRmU',
   );
 
   static String get documentsProcessUrl => '$functionsUrl/documents-process';

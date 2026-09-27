@@ -104,7 +104,9 @@ curl -s "https://texttospeech.googleapis.com/v1/voices?languageCode=te-IN&key=$G
 
 ```bash
 supabase login
-supabase link --project-ref jjoxowdvzmlchtfarpbs
+# Migrated to the shared SoHum identity project (sohum) -- see
+# github.com/SoHum-Digital-Services/sohum-contracts.
+supabase link --project-ref ziebgspujtdzkiwyybsa
 ```
 
 ---
