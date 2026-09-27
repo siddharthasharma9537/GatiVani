@@ -27,7 +27,7 @@ jobs:
       # github.com/SoHum-Digital-Services/sohum-contracts.
       PROJECT_REF: ziebgspujtdzkiwyybsa
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Skip if secret missing
         id: gate
         run: |
