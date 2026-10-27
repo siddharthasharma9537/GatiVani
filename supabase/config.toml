@@ -411,3 +411,8 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # the CRON_SECRET header instead.
 [functions.storage-cleanup]
 verify_jwt = false
+
+# The SoHum/Vani manifest must be public (it is a schema, not user data), and every action is
+# a read of public content, so there is no user JWT to verify.
+[functions.gativani-actions]
+verify_jwt = false
