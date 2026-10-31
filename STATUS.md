@@ -1,16 +1,17 @@
-# GatiVani (గతివాణి) status            updated 2026-10-27 by Desk · GatiVani
+# GatiVani (గతివాణి) status            updated 2026-11-01 by Desk · GatiVani
 
 Telugu news you can listen to. Repo `siddharthasharma9537/GatiVani`, default branch `main` (last change 2026-09-27, #16). Operating model: sohum-contracts `docs/OPERATING_MODEL.md`.
 
 ## Now
 
-- Setup only: this ledger. No build step is running.
+- Paper tiles, phase 1 (owner-approved 2026-11-01, via HQ): the Paper tab opens on five text-only paper tiles; each paper's page shows GatiVani's own Take plus "Your copy" upload. Built on `feat/paper-tiles`, PR open, not merged, not deployed.
 
 ## Next
 
-1. Owner decision on PR #17 (`gativani-actions`, the SoHum/Vāni manifest and four read actions): it is the only open item that unblocks another vertical (Vāni routing GatiVani). See "Waiting on the owner".
-2. Decide the fate of PR #3 (45-second playback) and PR #2 (extraction fix). Both conflict with `main` and are 39 and 46 commits behind it; neither can merge as it stands. Likely outcome: re-do the still-wanted parts as fresh, small step sessions from a brief.
-3. Tidy: the 11 Dependabot PRs, stale branches and a leftover worktree (proposals below).
+1. Review the paper-tiles PR (see Open pull requests); a native Telugu reader must check the new Telugu wording (marked "being reviewed" in the app).
+2. Owner decision on PR #17 (`gativani-actions`, the SoHum/Vāni manifest and four read actions): it is the only open item that unblocks another vertical (Vāni routing GatiVani). See "Waiting on the owner".
+3. Decide the fate of PR #3 (45-second playback) and PR #2 (extraction fix). Both conflict with `main` and are 39 and 46 commits behind it; neither can merge as it stands. Likely outcome: re-do the still-wanted parts as fresh, small step sessions from a brief.
+4. Tidy: the 11 Dependabot PRs, stale branches and a leftover worktree (proposals below).
 
 ## Blocked
 
@@ -34,6 +35,7 @@ Nothing below has been done. All are proposals.
 
 | # | What | State |
 |---|------|-------|
+| (new) | Paper tiles, phase 1: five text-only tiles, paper pages with the Take hero and "Your copy"; old Paper tab kept as "My uploads" | Open, `feat/paper-tiles`; analyze, 16 tests and web build pass; not run on a device or screen reader |
 | 17 | `gativani-actions`: SoHum/Vāni manifest and four read actions | Open since 2026-09-30, CI green, mergeable; function already live on `sohum` (see above) |
 | 3 | Playback: stop articles dying at about 45 s (removes chunked narration) | Open since 2026-09-02, conflicts with `main`, uncompiled, never deployed |
 | 2 | Extraction: stop losing, hiding and scrambling newspaper articles | Open since 2026-08-01, conflicts with `main` |

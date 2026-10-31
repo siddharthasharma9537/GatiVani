@@ -124,19 +124,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
   }
 
   // Play the GatiVani Take explainer via the shared player.
-  void _playTake(Explainer t) {
-    final art = NewspaperArticle(
-      id: 'a0000000-0000-4000-8000-0000000000e1', // stable → one storage file
-      title: t.title,
-      content: t.commentary,
-      preview: t.commentary,
-      category: 'GatiVani Take',
-      estimatedDurationSeconds: NewspaperArticle.estimateDuration(t.commentary),
-      readingStyle: 'news_anchor',
-      language: _newsLang ?? 'te',
-    );
-    PlaybackService.i.playOne(art);
-  }
+  void _playTake(Explainer t) => playGatiVaniTake(t, _newsLang ?? 'te');
 
   // Open the full story in-app (ReaderStore carries it across the route).
   void _openReader(WebArticle a) {
@@ -254,7 +242,7 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
                   Column(children: [
                     const SizedBox(height: Gati.s4),
                     if (_take != null)
-                      _TakeCard(
+                      TakeCard(
                           take: _take!, onListen: () => _playTake(_take!)),
                     const SizedBox(height: Gati.s5),
                   ]),
@@ -379,8 +367,23 @@ class _LiveFeedScreenState extends State<LiveFeedScreen> {
 // Telugu title + explainer synthesized from independently-corroborated facts
 // across national/international sources — never a translation of any one
 // publisher's wording. Sits above the cricket card as the editorial lead.
-class _TakeCard extends StatelessWidget {
-  const _TakeCard({required this.take, required this.onListen});
+/// Plays the Take through the shared player (also used by the Paper pages).
+void playGatiVaniTake(Explainer t, String lang) {
+  final art = NewspaperArticle(
+    id: 'a0000000-0000-4000-8000-0000000000e1', // stable → one storage file
+    title: t.title,
+    content: t.commentary,
+    preview: t.commentary,
+    category: 'GatiVani Take',
+    estimatedDurationSeconds: NewspaperArticle.estimateDuration(t.commentary),
+    readingStyle: 'news_anchor',
+    language: lang,
+  );
+  PlaybackService.i.playOne(art);
+}
+
+class TakeCard extends StatelessWidget {
+  const TakeCard({required this.take, required this.onListen});
   final Explainer take;
   final VoidCallback onListen;
 

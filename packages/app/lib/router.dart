@@ -7,6 +7,8 @@ import 'features/library/library_screen.dart';
 import 'features/auth/gemini_key_gate_screen.dart';
 import 'features/library/history_screen.dart';
 import 'features/live/live_feed_screen.dart';
+import 'features/paper/paper_hub_screen.dart';
+import 'features/paper/paper_page_screen.dart';
 import 'features/library/playlist_detail_screen.dart';
 import 'features/library/playlists_screen.dart';
 import 'features/reader/reader_screen.dart';
@@ -72,7 +74,24 @@ final GoRouter appRouter = GoRouter(
           GoRoute(path: '/', builder: (_, __) => const LiveFeedScreen()),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/paper', builder: (_, __) => const PaperScreen()),
+          GoRoute(
+            path: '/paper',
+            builder: (_, __) => const PaperHubScreen(),
+            routes: [
+              // The previous Paper tab, kept whole as "My uploads". Declared
+              // before ':id' so it is not read as a paper id.
+              GoRoute(
+                path: 'uploads',
+                builder: (_, state) => PaperScreen(
+                    startUpload: state.uri.queryParameters['upload'] == '1'),
+              ),
+              GoRoute(
+                path: ':id',
+                builder: (_, state) =>
+                    PaperPageScreen(paperId: state.pathParameters['id']!),
+              ),
+            ],
+          ),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/shows', builder: (_, __) => const ShowsScreen()),
