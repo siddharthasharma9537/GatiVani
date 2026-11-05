@@ -28,10 +28,12 @@ import '../../widgets/news_ticker.dart';
 /// Paper tab: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
 class PaperScreen extends StatefulWidget {
-  const PaperScreen({super.key, this.onMenu});
+  const PaperScreen({super.key, this.onMenu, this.startUpload = false});
   // When hosted inside the reveal drawer, the header menu button toggles the
   // drawer instead of pushing a /menu route.
   final VoidCallback? onMenu;
+  // Open the file picker as soon as the screen is up ("Your copy" on a paper page).
+  final bool startUpload;
   @override
   State<PaperScreen> createState() => _PaperScreenState();
 }
@@ -67,6 +69,11 @@ class _PaperScreenState extends State<PaperScreen> {
   void initState() {
     super.initState();
     _loadFeatured();
+    if (widget.startUpload) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _upload();
+      });
+    }
   }
 
   // Open onto real content: load the featured/most-recent edition so the app is
@@ -620,6 +627,9 @@ class _PaperScreenState extends State<PaperScreen> {
       body: SafeArea(
         child: Column(children: [
           GatiMasthead(lang: lang, actions: [
+            if (context.canPop())
+              GatiHeaderButton(
+                  icon: Icons.arrow_back, onTap: () => context.pop()),
             GatiHeaderButton(
                 icon: Icons.search, onTap: () => context.push('/search')),
           ]),

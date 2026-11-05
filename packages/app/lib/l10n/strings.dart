@@ -154,6 +154,19 @@ const Map<String, Map<String, String>> _kStrings = {
     'remove_from_playlist': 'Remove from playlist',
     'cancel': 'Cancel',
     'create': 'Create',
+    'paper_choose': 'Choose a paper',
+    'paper_my_uploads': 'My uploads',
+    'paper_my_uploads_sub': 'Editions you have uploaded',
+    'paper_take_label':
+        "GatiVani's take on today's top story. Not from {paper}.",
+    'paper_take_loading': "Getting today's take…",
+    'paper_take_none': "Today's take isn't ready yet.",
+    'paper_your_copy': 'Your copy',
+    'paper_upload_copy': 'Upload your {paper} edition to listen privately.',
+    'paper_upload_btn': 'Upload my copy',
+    'paper_official_audio': 'Official {paper} audio: not yet available.',
+    'paper_being_reviewed': 'Telugu text being reviewed',
+    'back': 'Back',
   },
   'te': {
     'listen': 'వినండి',
@@ -309,6 +322,20 @@ const Map<String, Map<String, String>> _kStrings = {
     'remove_from_playlist': 'ప్లేలిస్ట్ నుండి తీసివేయండి',
     'cancel': 'రద్దు చేయండి',
     'create': 'సృష్టించండి',
+    'paper_choose': 'పత్రికను ఎంచుకోండి',
+    'paper_my_uploads': 'నా అప్‌లోడ్‌లు',
+    'paper_my_uploads_sub': 'మీరు అప్‌లోడ్ చేసిన ఎడిషన్లు',
+    'paper_take_label':
+        'ఈ రోజు ప్రధాన వార్తపై గతివాణి విశ్లేషణ. {paper} నుండి కాదు.',
+    'paper_take_loading': 'ఈ రోజు విశ్లేషణ వస్తోంది…',
+    'paper_take_none': 'ఈ రోజు విశ్లేషణ ఇంకా సిద్ధం కాలేదు.',
+    'paper_your_copy': 'మీ కాపీ',
+    'paper_upload_copy':
+        'మీ {paper} ఎడిషన్‌ను అప్‌లోడ్ చేసి ప్రైవేట్‌గా వినండి.',
+    'paper_upload_btn': 'నా కాపీ అప్‌లోడ్ చేయండి',
+    'paper_official_audio': 'అధికారిక {paper} ఆడియో: ఇంకా అందుబాటులో లేదు.',
+    'paper_being_reviewed': 'తెలుగు పాఠ్యం సమీక్షలో ఉంది',
+    'back': 'వెనుకకు',
   },
 };
 
