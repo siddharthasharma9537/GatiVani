@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import '../config/api_config.dart';
@@ -94,7 +95,11 @@ class DocumentService {
             ? 'image/jpeg'
             : 'application/pdf';
     final safe = filename.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
-    final path = 'editions/${DateTime.now().millisecondsSinceEpoch}_$safe';
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) {
+      throw Exception('Please sign in before uploading a newspaper.');
+    }
+    final path = 'editions/${session.user.id}/${DateTime.now().millisecondsSinceEpoch}_$safe';
 
     // 1. Heavy leg: upload bytes straight to Supabase Storage (not via the edge
     //    function). dio reports real byte progress (XHR upload events on web).
@@ -106,7 +111,8 @@ class DocumentService {
       data: Stream.fromIterable([bytes]),
       options: Options(
         headers: {
-          ...ApiConfig.authHeaders,
+          'Authorization': 'Bearer ${session.accessToken}',
+          'apikey': ApiConfig.anonKey,
           'content-type': mime,
           'content-length': bytes.length,
         },
