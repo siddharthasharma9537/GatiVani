@@ -1,4 +1,4 @@
-# GatiVani (గతివాణి) status            updated 2026-10-27 by Desk · GatiVani
+# GatiVani (గతివాణి) status            updated 2026-11-12 by Desk · GatiVani
 
 Telugu news you can listen to. Repo `siddharthasharma9537/GatiVani`, default branch `main` (last change 2026-09-27, #16). Operating model: sohum-contracts `docs/OPERATING_MODEL.md`.
 
@@ -18,6 +18,8 @@ Telugu news you can listen to. Repo `siddharthasharma9537/GatiVani`, default bra
 - **OCR reprocess** (older session "OCR accuracy improvements", 2026-08-01): every page failed against Sarvam even though the owner's dashboard showed credits; that session suspected the key deployed in Supabase belongs to a different, exhausted account. Not known to be resolved.
 - Telugu wording and TTS voice quality in GatiVani have not been checked by a native reader (per the suite document for the other verticals; not re-verified here for GatiVani).
 
+- **Uploads on the live site** (diagnosed 2026-11-07): the web build at `gativani.sohum.cc` is older than #25, so uploads are rejected at the storage step and never reach Sarvam. The fix is merged; it needs a web deploy (see Waiting on the owner, item 8).
+
 ## Waiting on the owner
 
 Nothing below has been done. All are proposals.
@@ -29,6 +31,9 @@ Nothing below has been done. All are proposals.
 5. **Orphaned-audio list**: `.cleanup/orphaned-audio.txt` (91 files, 427.6 MB) is not in the repository or in this checkout, and the old project's storage is now empty, so that list is obsolete. No deletion is needed from it. On `sohum`, storage holds 138 audio objects (188 MB) and 41 uploads (180 MB). The `storage-cleanup` function is deployed on `sohum`; the nightly workflow still needs a GitHub secret (per an earlier ledger note; not re-checked). Say if you want it armed.
 6. **Sarvam key** for the OCR evaluation: supply it to a step session (or say to skip the evaluation).
 7. **Housekeeping, local only**: delete local branches `chore/flutter-app-point-at-sohum` (remote gone, its content is in `main` via #16) and `claude/gativani-analysis-design-3ate8o` (remote gone, merged as #4/#15); `feature/live-discovery` (remote gone), `fix/chunk-gapless-playlist` (never pushed, a reverted rewrite) and the three git stashes are also candidates. Remove the prunable worktree `scratchpad/gativani-main`. Nothing deleted.
+8. **Deploy the web build that includes #25** so signed-in uploads work (users must be signed in). #25 is untested end to end, so try one signed-in upload right after. Not done by this desk.
+9. **Sarvam OCR model**: HQ asked for "Sarvam 2.0 OCR"; no model has that name. Sarvam's current document OCR is Sarvam Vision (`POST /doc-ai/v1/job/parse`, `model: sarvam-vision-v1`, 10 pages per job), while GatiVani uses the older `/doc-digitization/job/v1` flow. Switch to Sarvam Vision? Not started.
+10. **Eenadu daily PDFs and the mobile review page** (handoff 2026-11-12, notes: `side-session-notes/local_33ae0bce-1c10-497f-aa45-f8c85e283749/eenadu-for-gativani-desk.md`). The owner's Mac saves Eenadu e-paper PDFs to Drive `sohum-gativani/`; nothing is hosted. The legacy-font to Unicode converter is about 31% right, so OCR stays. The handoff says personal use only and to ask Ushodaya Enterprises before any server-side version, so a hosted review page that shows Eenadu's text is a licensing question, not only a build choice. Decisions needed: (a) is a hosted page allowed, or keep review local; (b) if hosted, a passcode-gated page or a screen in the Flutter app. Not started.
 
 ## Open pull requests
 
