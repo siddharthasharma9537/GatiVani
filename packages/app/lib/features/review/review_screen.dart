@@ -102,6 +102,10 @@ class _ReviewScreenState extends State<ReviewScreen> {
   List<Map<String, dynamic>> get _shown =>
       _blocks.where((b) => !_onlyLook || b['needsLook'] == true).toList();
 
+  // Eenadu's own name for this page ("EDITORIAL", "BUSINESS"...); empty for plain pages
+  String get _pageLabel => (_data?['label'] as String?) ?? '';
+  String get _pageSection => (_data?['section'] as String?) ?? '';
+
   String? _verdictOf(String id) => (_results[id] as Map?)?['verdict'] as String?;
 
   Future<void> _persist() async {
@@ -263,7 +267,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 tooltip: 'Previous page',
                 onPressed: _page > 1 ? () => _go(-1) : null,
                 icon: const Icon(Icons.chevron_left)),
-            Text('Page $_page / $pages', style: TextStyle(color: p.ink, fontWeight: FontWeight.w600)),
+            Text('Page $_page / $pages${_pageLabel.isEmpty ? '' : ' · $_pageLabel'}',
+                style: TextStyle(color: p.ink, fontWeight: FontWeight.w600)),
             IconButton(
                 constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
                 tooltip: 'Next page',
@@ -321,6 +326,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
           .where((id) => byId[id] != null && (!_onlyLook || byId[id]!['needsLook'] == true))
           .toList();
       if (ids.isEmpty) continue;
+      if (rows.isEmpty && _pageSection.isNotEmpty) {
+        // the page's own label decides the section: every story below is tagged with it
+        rows.add(Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 2),
+            child: Text(_pageSection,
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: kAccent))));
+      }
       rows.add(_articleHeader(p, a));
       for (final id in ids) {
         rows.add(_blockCard(p, byId[id]!, ++n));

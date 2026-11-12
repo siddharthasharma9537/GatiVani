@@ -96,6 +96,34 @@ class Store:
     def _decode_old(self, codes):
         return "".join(self.table.get(c, ["?"])[0] if c != " " else " " for c in codes)
 
+    # Eenadu's own page names -> the section tag GatiVani shows. Pages called just "Page" get no tag (general news):
+    # what the unlabelled pages are is not guessed.
+    SECTION_BY_LABEL = {"EDITORIAL": "Editorial", "FRONT PAGE": "Front page", "BACK PAGE": "Back page", "BUSINESS": "Business",
+                        "CINEMA": "Entertainment", "VASUNDHARA": "Vasundhara", "CHAMPION": "Champion", "PRATIBHA": "Pratibha",
+                        "CHADUVU": "Chaduvu", "REGIONAL": "Regional", "NATIONAL": "National"}
+
+    def _page_label(self, edition, date, pno):
+        """The page's printed label (NewsProPageTitle). From the links.json the daily link step writes ('pages': [{page, title}]);
+        until that exists for a day, from page_labels_<date>.json next to the converter."""
+        labels = None
+        lj = os.path.join(self.drive, "Eenadu_%s_%s.links.json" % (edition, date))
+        if os.path.exists(lj):
+            try:
+                pages = json.load(open(lj, encoding="utf-8")).get("pages")
+                if pages:
+                    labels = {int(p["page"]): p.get("title", "") for p in pages}
+            except (ValueError, KeyError):
+                labels = None
+        if labels is None:
+            fb = os.path.join(self.glyph_dir, "page_labels_%s.json" % date)
+            if os.path.exists(fb):
+                labels = {int(k): v for k, v in json.load(open(fb, encoding="utf-8")).get(edition, {}).items()}
+        label = (labels or {}).get(pno, "")
+        if label.strip().lower() == "page":
+            label = ""
+        key = re.sub(r"-\d+$", "", label.upper())
+        return label, self.SECTION_BY_LABEL.get(key, "")
+
     def _line_ocr(self, edition, pno):
         """Tesseract readings of whole lines, from lines_<ED>.json next to the converter (made by lineocr.py)."""
         code = {"TELANGANA": "TG", "ANDHRA-PRADESH": "AP", "GREATER-HYDERABAD": "GH"}.get(edition)
@@ -148,7 +176,9 @@ class Store:
                                # worth a human look: every headline, any block whose reading differs from the OCR, any block
                                # with no OCR to compare against
                                "needsLook": headline or differs or not has_ocr})
-        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg))}
+        label, section = self._page_label(edition, date, pno)
+        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg)),
+                "label": label, "section": section}
 
     @staticmethod
     def _differs(a, b):
