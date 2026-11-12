@@ -1,11 +1,9 @@
 import 'config.dart';
+import 'telugu_normalizer.dart';
 
-/// Text side of the pipeline: text -> the characters the model reads -> chunks -> token ids. Ported from
-/// `indic_tiny_tts/frontend/textproc.py` and `tokenizer.py`.
-///
-/// NOT YET PORTED: the model's number / date / currency spelling-out (`textnorm`). Until it is, digits and other
-/// characters the vocabulary lacks are dropped and listed in [lastDropped], so nothing is skipped silently. Unicode NFC
-/// is also not applied (Dart has no built-in normaliser); text from the GatiVani converter is already composed.
+/// Text side of the pipeline: text -> numbers spelled out ([TeluguNormalizer]) -> the characters the model reads -> chunks ->
+/// token ids. Ported from `indic_tiny_tts/frontend/textproc.py` and `tokenizer.py`. Characters the vocabulary still lacks are
+/// dropped and listed in [lastDropped], so nothing is skipped silently.
 class IndicTinyFrontend {
   IndicTinyFrontend(this.config);
   final IndicTinyConfig config;
@@ -17,11 +15,13 @@ class IndicTinyFrontend {
   static const _maxChunk = 250; // characters; longer sentences are split at commas
   static final _letter = RegExp(r'\p{L}', unicode: true);
 
+  static const _telugu = TeluguNormalizer();
+
   String normalize(String text) {
     lastDropped.clear();
     final known = config.symbolId;
     final b = StringBuffer();
-    for (final rune in text.runes) {
+    for (final rune in _telugu.normalize(text).runes) {
       final ch = String.fromCharCode(rune);
       if (ch == ' ' || known.containsKey('c:$ch')) {
         b.write(ch);

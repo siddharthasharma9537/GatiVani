@@ -105,8 +105,9 @@ void main() {
 
   test('frontend: drops unknown characters (and says so), keeps known ones, maps pause-like ones', () {
     final fe = IndicTinyFrontend(_cfg());
-    expect(fe.normalize('కా 12 త;'), 'కా త,');
-    expect(fe.lastDropped, {'1', '2'});
+    // "12" is spelled out by the Telugu normaliser; its letters are not in this test vocabulary, so they are dropped and reported
+    expect(fe.normalize('కా @ త;'), 'కా త,');
+    expect(fe.lastDropped, {'@'});
   });
 
   test('frontend: chunks at sentence ends, ids have a blank around every symbol', () {
