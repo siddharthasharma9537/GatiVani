@@ -15,7 +15,7 @@ you trust.
 
 API (all under /review-api/, key required):
   GET  editions                       -> [{edition, date, pages}]
-  GET  page?edition=&date=&page=      -> {width, height, blocks:[{id, box, kind, lines:[{converted, old, ocr, fonts}]}], articles:[{headline, blockIds}]}
+  GET  page?edition=&date=&page=      -> {width, height, blocks:[{id, box, kind, lines:[{converted, old, ocr, fonts}]}], articles:[{headline, blockIds, graphicBox?}]}
   GET  image?edition=&date=&page=     -> JPEG of the page
   GET  crop?edition=&date=&page=&box=x0,y0,x1,y1  -> JPEG of one block (box in fractions of the page)
   GET  results?edition=&date=         -> {blockId: {verdict, note}}
@@ -148,7 +148,7 @@ class Store:
                                # worth a human look: every headline, any block whose reading differs from the OCR, any block
                                # with no OCR to compare against
                                "needsLook": headline or differs or not has_ocr})
-        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks)}
+        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg))}
 
     @staticmethod
     def _differs(a, b):
@@ -163,16 +163,41 @@ class Store:
             or (font == "Tapati" and size >= 18)
 
     @staticmethod
-    def _articles(blocks):
+    def _wide_pictures(pg):
+        """Wide, short pictures on the page (fractions of the page): big display headlines are often printed as a picture, with
+        no text in the PDF at all. Photos are mostly squarer, the masthead sits at the very top; both are left out."""
+        W, H = pg.rect.width, pg.rect.height
+        out = []
+        for im in pg.get_image_info():
+            x0, y0, x1, y1 = im["bbox"]
+            w, h = x1 - x0, y1 - y0
+            if h > 0 and w / h >= 2.5 and w >= 0.15 * W and h >= 0.015 * H and y0 > 0.08 * H:
+                out.append([x0 / W, y0 / H, x1 / W, y1 / H])
+        return out
+
+    @staticmethod
+    def _articles(blocks, pictures=()):
         """FIRST CUT grouping: a headline block starts an article; the body blocks that follow, in the PDF's own order,
-        belong to it until the next headline. Blocks before the first headline are grouped as 'page furniture'."""
+        belong to it until the next headline. Blocks before the first headline are grouped as 'page furniture'.
+        If a wide picture sits right above the group, its headline is probably that picture ('graphicBox'): needs OCR."""
         arts, cur = [], None
         for b in blocks:
             if b["kind"] == "headline" or cur is None:
                 cur = {"headline": " ".join(l["converted"] for l in b["lines"]) if b["kind"] == "headline" else "",
-                       "blockIds": []}
+                       "blockIds": [], "_boxes": []}
                 arts.append(cur)
             cur["blockIds"].append(b["id"])
+            cur["_boxes"].append(b["box"])
+        for a in arts:
+            boxes = a.pop("_boxes")
+            gx0, gy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+            gx1 = max(b[2] for b in boxes)
+            for p in pictures:
+                gap = gy0 - p[3]
+                overlap = min(gx1, p[2]) - max(gx0, p[0])
+                if -0.04 <= gap <= 0.02 and overlap >= 0.5 * min(gx1 - gx0, p[2] - p[0]):
+                    a["graphicBox"] = p
+                    break
         return arts
 
     def crop(self, edition, date, pno, box):

@@ -353,6 +353,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   // FIRST CUT grouping: a headline block starts an article, the body blocks after it belong to it.
   Widget _articleHeader(GatiPalette p, Map<String, dynamic> a) {
     final h = (a['headline'] as String?) ?? '';
+    final gbox = (a['graphicBox'] as List?)?.cast<num>();
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
@@ -360,6 +361,24 @@ class _ReviewScreenState extends State<ReviewScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(h.isEmpty ? 'Other text on the page' : 'Article (first-cut grouping)',
               style: TextStyle(fontSize: 11.5, color: p.muted)),
+          if (gbox != null) ...[
+            // a wide picture sits right above this story: its big headline is probably printed as a picture,
+            // with no text in the PDF, so the converter cannot read it
+            Text('Headline is probably a picture (no text in the PDF): needs OCR',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: kAccent)),
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                color: Colors.white,
+                width: double.infinity,
+                child: Image.network(_cropUri(gbox).toString(),
+                    fit: BoxFit.fitWidth,
+                    errorBuilder: (c, e, s) => const SizedBox(height: 30, child: Center(child: Text('picture unavailable')))),
+              ),
+            ),
+            const SizedBox(height: 4),
+          ],
           if (h.isNotEmpty)
             Text(h, style: TextStyle(fontSize: 17, height: 1.35, fontWeight: FontWeight.w600, color: p.ink)),
         ]),
