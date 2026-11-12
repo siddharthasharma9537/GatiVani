@@ -42,7 +42,7 @@ Settings → Voice picks who reads a story: **Automatic** (the on-device voice w
 Telugu voice, else the cloud voice), **On-device**, **Phone's voice**, or **Online**. Female and male voices.
 
 - **Model**: [sulabhkatiyar/indic-tiny-tts-telugu](https://huggingface.co/sulabhkatiyar/indic-tiny-tts-telugu), three ONNX graphs
-  (text encoder, flow decoder, vocoder; 86 MB). Weights CC-BY-4.0 (trained on AI4Bharat Rasa, CC-BY-4.0), code and Vocos MIT. The
+  (text encoder, flow decoder, vocoder; 87 MB). Weights CC-BY-4.0 (trained on AI4Bharat Rasa, CC-BY-4.0), code and Vocos MIT. The
   credits text (required by CC-BY) is `voicePackCredits` in `lib/services/tts/voice_pack/pack_manifest.dart`, shown in
   Settings → Voice → Voice credits.
 - **Voice pack**: downloaded after install from a pinned Hugging Face revision; every file's size and SHA-256 is in the manifest
