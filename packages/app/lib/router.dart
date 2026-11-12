@@ -7,6 +7,7 @@ import 'features/library/library_screen.dart';
 import 'features/auth/gemini_key_gate_screen.dart';
 import 'features/library/history_screen.dart';
 import 'features/live/live_feed_screen.dart';
+import 'features/review/review_screen.dart';
 import 'features/library/playlist_detail_screen.dart';
 import 'features/library/playlists_screen.dart';
 import 'features/reader/reader_screen.dart';
@@ -136,6 +137,9 @@ final GoRouter appRouter = GoRouter(
         },
       ),
     ),
+    // Local-only Eenadu review; compiled in only with --dart-define=EENADU_REVIEW=true.
+    if (kEenaduReview)
+      GoRoute(path: '/review', builder: (_, __) => const ReviewScreen()),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
     GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
     GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
