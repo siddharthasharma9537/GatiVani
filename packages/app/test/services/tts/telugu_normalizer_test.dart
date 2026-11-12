@@ -6,6 +6,18 @@ import 'package:gativani_app/services/tts/indic_tiny/telugu_normalizer.dart';
 
 /// Expected strings are hand-derived from the model's number tables (numbers.py, lang "te") and the extensions' own rules.
 /// All Telugu sentences here are neutral test text written for this file (no newspaper content).
+/// Intentional differences from the model's own normaliser (measured with the owner's reference dump of 2026-11-13, 5 of ~1,140
+/// compared cases). Value = what this port reads.
+/// - "12/13", "3/4", "1:2": the model leaves the digits (its tokenizer then drops them, so nothing is spoken); this port reads them.
+/// - "5వ", "12వ …": the model glues "వ" to the cardinal ("ఐదువ"); this port reads the Telugu ordinal ("ఐదవ", "పన్నెండవ").
+const _knownDifferences = {
+  '12/13': 'పన్నెండు/పదమూడు',
+  '3/4': 'మూడు/నాలుగు',
+  '1:2': 'ఒకటి:రెండు',
+  '5వ': 'ఐదవ',
+  '12వ తేదీ': 'పన్నెండవ తేదీ',
+};
+
 void main() {
   const n = TeluguNormalizer();
 
@@ -147,6 +159,11 @@ void main() {
         if (g.startsWith('ext_')) return;
         m.forEach((k, v) {
           final got = n.normalize(k);
+          if (_knownDifferences.containsKey(k)) {
+            expect(got, _knownDifferences[k], reason: 'known difference for $k changed');
+            expect(v, isNot(got), reason: '$k no longer differs from the model: remove it from _knownDifferences');
+            return;
+          }
           if (got != v) diffs.add('[$g] ${jsonEncode(k)}: model=${jsonEncode(v)} ours=${jsonEncode(got)}');
         });
       });
