@@ -162,8 +162,15 @@ class _ReviewScreenState extends State<ReviewScreen> {
       aspect: (_data!['width'] as num) / (_data!['height'] as num),
       box: blocks.where((b) => b['id'] == _selected).map((b) => (b['box'] as List).cast<num>()).firstOrNull,
     );
+    final byId = {for (final b in blocks) b['id'] as String: b};
+    final arts = ((_data!['articles'] as List?) ?? const []).cast<Map<String, dynamic>>();
+    var n = 0;
     final list = [
-      for (var i = 0; i < blocks.length; i++) _blockCard(p, blocks[i], i + 1),
+      for (final a in arts) ...[
+        _articleHeader(p, a),
+        for (final id in (a['blockIds'] as List).cast<String>())
+          if (byId[id] != null) _blockCard(p, byId[id]!, ++n),
+      ],
       if (blocks.isEmpty)
         Padding(
             padding: const EdgeInsets.all(16),
@@ -178,6 +185,20 @@ class _ReviewScreenState extends State<ReviewScreen> {
       }
       return ListView(padding: const EdgeInsets.fromLTRB(12, 0, 12, 40), children: [image, const SizedBox(height: 12), ...list]);
     });
+  }
+
+  // FIRST CUT grouping: a headline block starts an article, the body blocks after it belong to it.
+  Widget _articleHeader(GatiPalette p, Map<String, dynamic> a) {
+    final h = (a['headline'] as String?) ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(h.isEmpty ? 'Other text on the page' : 'Article (first-cut grouping)',
+            style: TextStyle(fontSize: 11.5, color: p.muted)),
+        if (h.isNotEmpty)
+          Text(h, style: TextStyle(fontSize: 17, height: 1.35, fontWeight: FontWeight.w600, color: p.ink)),
+      ]),
+    );
   }
 
   Widget _blockCard(GatiPalette p, Map<String, dynamic> b, int n) {
@@ -197,13 +218,18 @@ class _ReviewScreenState extends State<ReviewScreen> {
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Block $n · ${lines.length} lines', style: TextStyle(fontSize: 12, color: p.muted)),
+            Text('Block $n · ${lines.length} lines · ${b['kind'] == 'headline' ? 'headline' : 'body'}',
+                style: TextStyle(fontSize: 12, color: p.muted)),
             const SizedBox(height: 6),
             for (final l in lines) ...[
               Text('Direct reading: ${l['converted']}',
                   style: TextStyle(fontSize: 14, height: 1.4, color: p.ink)),
-              Text('Old table: ${l['old']}',
-                  style: TextStyle(fontSize: 13, height: 1.4, color: p.muted)),
+              if (l['old'] != null)
+                Text('Old table: ${l['old']}',
+                    style: TextStyle(fontSize: 13, height: 1.4, color: p.muted)),
+              if ((l['fonts'] as List).any((f) => f != 'Eenadu-Light'))
+                Text('Font: ${(l['fonts'] as List).join(', ')}',
+                    style: TextStyle(fontSize: 11.5, color: p.muted)),
               Text('OCR: ${l['ocr'] ?? '(none for this edition)'}',
                   style: TextStyle(fontSize: 13, height: 1.4, color: p.muted)),
               const SizedBox(height: 6),

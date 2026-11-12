@@ -15,7 +15,7 @@ you trust.
 
 API (all under /review-api/, key required):
   GET  editions                       -> [{edition, date, pages}]
-  GET  page?edition=&date=&page=      -> {width, height, blocks:[{id, box, lines:[{converted, old, ocr}]}]}
+  GET  page?edition=&date=&page=      -> {width, height, blocks:[{id, box, kind, lines:[{converted, old, ocr, fonts}]}], articles:[{headline, blockIds}]}
   GET  image?edition=&date=&page=     -> JPEG of the page
   GET  results?edition=&date=         -> {blockId: {verdict, note}}
   PUT  results?edition=&date=         -> same shape, replaces the file
@@ -34,7 +34,7 @@ import urllib.parse
 
 import pymupdf
 
-BODY_FONT = "Eenadu-Light"  # the only font the converter table covers
+BODY_FONT = "Eenadu-Light"  # the font the old statistical table covered (kept for the comparison line)
 IMG_ZOOM = 1.4
 
 
@@ -57,10 +57,10 @@ class Store:
             self.table = json.load(f)            # the old statistical table, kept for comparison
         # The direct glyph reading (rules.py + table3.json) lives with the owner's other Eenadu files, not in this repo.
         sys.path.insert(0, glyph_dir)
-        import rules
-        self._rules = rules
-        with open(os.path.join(glyph_dir, "table3.json"), encoding="utf-8") as f:
-            self.table3 = json.load(f)
+        import fonts
+        self.fonts = fonts
+        self.glyph_dir = glyph_dir
+        self._ocr_cache = {}
         self._docs = {}
 
     def editions(self):
@@ -91,20 +91,17 @@ class Store:
     def _decode_old(self, codes):
         return "".join(self.table.get(c, ["?"])[0] if c != " " else " " for c in codes)
 
-    def _decode(self, codes):
-        return self._rules.decode(codes, self.table3)
-
-    def _ocr_by_bbox(self, edition, date, pno):
-        # Tesseract line readings exist only for the page set the converter was
-        # trained on (Telangana, 12-11-2026); everything else shows no OCR.
-        if (edition, date) != ("TELANGANA", "12-11-2026"):
-            return {}
-        p = os.path.join(self.font_dir, "lines_p%d.json" % pno)
-        if not os.path.exists(p):
-            return {}
-        with open(p, encoding="utf-8") as f:
-            rows = json.load(f)
-        return {tuple(round(v, 2) for v in r["bbox"]): re.sub("[​‌‍]", "", r["ocr"]) for r in rows}
+    def _span_ocr(self, edition, pno):
+        """Tesseract readings of single spans, from spans_<ED>.json next to the converter (made by spans.py)."""
+        code = {"TELANGANA": "TG", "ANDHRA-PRADESH": "AP", "GREATER-HYDERABAD": "GH"}.get(edition)
+        if code not in self._ocr_cache:
+            path = os.path.join(self.glyph_dir, "spans_%s.json" % code)
+            rows = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []
+            by = {}
+            for r in rows:
+                by[(r["page"], tuple(round(v, 1) for v in r["bbox"]))] = re.sub("[\u200b\u200c\u200d]", "", r["ocr"])
+            self._ocr_cache[code] = by
+        return {k[1]: v for k, v in self._ocr_cache[code].items() if k[0] == pno}
 
     def page(self, edition, date, pno):
         doc = self.doc(edition, date)
@@ -112,27 +109,52 @@ class Store:
             return None
         pg = doc[pno - 1]
         W, H = pg.rect.width, pg.rect.height
-        ocr = self._ocr_by_bbox(edition, date, pno)
+        ocr = self._span_ocr(edition, pno)
         blocks = []
         for bi, b in enumerate(pg.get_text("rawdict")["blocks"]):
             lines, x0, y0, x1, y1 = [], 1e9, 1e9, 0, 0
+            headline = False
             for l in b.get("lines", []):
-                sp = l["spans"]
-                if not sp or any(s["font"].split("+")[-1] != BODY_FONT for s in sp):
+                spans = [(s["font"].split("+")[-1], "".join(ch["c"] for ch in s["chars"]), s) for s in l["spans"]]
+                spans = [t for t in spans if t[1].strip()]
+                if not spans or sum(len(t[1].strip()) for t in spans) < 3:
                     continue
-                codes = "".join(ch["c"] for s in sp for ch in s["chars"])
-                if len(codes.strip()) < 12:
-                    continue
+                if not any(self.fonts.table_for(f) is not None for f, _, _ in spans):
+                    continue                      # a line of pure Latin/symbol text is not what is being reviewed
+                headline = headline or any(self._is_headline(f, s["size"]) for f, _, s in spans)
                 bb = l["bbox"]
                 x0, y0, x1, y1 = min(x0, bb[0]), min(y0, bb[1]), max(x1, bb[2]), max(y1, bb[3])
+                tel = [t for t in spans if self.fonts.table_for(t[0]) is not None]
+                span_ocr = [ocr.get(tuple(round(v, 1) for v in t[2]["bbox"])) for t in tel]
                 lines.append({
-                    "converted": self._decode(codes),
-                    "old": self._decode_old(codes),
-                    "ocr": ocr.get(tuple(round(v, 2) for v in bb)),
+                    "converted": self.fonts.decode_line([(f, c) for f, c, _ in spans]),
+                    "old": self._decode_old("".join(c for f, c, _ in spans if f == BODY_FONT)) if all(f == BODY_FONT for f, _, _ in spans) else None,
+                    "ocr": " ".join(span_ocr) if all(o is not None for o in span_ocr) else None,
+                    "fonts": sorted({f for f, _, _ in spans}),
                 })
             if lines:
-                blocks.append({"id": "%d:%d" % (pno, bi), "box": [x0 / W, y0 / H, x1 / W, y1 / H], "lines": lines})
-        return {"width": W, "height": H, "blocks": blocks}
+                blocks.append({"id": "%d:%d" % (pno, bi), "box": [x0 / W, y0 / H, x1 / W, y1 / H], "lines": lines,
+                               "kind": "headline" if headline else "body"})
+        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks)}
+
+    @staticmethod
+    def _is_headline(font, size):
+        # first cut: large type in the heading faces
+        return (font == "Narmada" and size >= 18) or (font in ("GodawariHeading", "GodawariSubHeading") and size >= 16) \
+            or (font == "Tapati" and size >= 18)
+
+    @staticmethod
+    def _articles(blocks):
+        """FIRST CUT grouping: a headline block starts an article; the body blocks that follow, in the PDF's own order,
+        belong to it until the next headline. Blocks before the first headline are grouped as 'page furniture'."""
+        arts, cur = [], None
+        for b in blocks:
+            if b["kind"] == "headline" or cur is None:
+                cur = {"headline": " ".join(l["converted"] for l in b["lines"]) if b["kind"] == "headline" else "",
+                       "blockIds": []}
+                arts.append(cur)
+            cur["blockIds"].append(b["id"])
+        return arts
 
     def image(self, edition, date, pno):
         doc = self.doc(edition, date)
