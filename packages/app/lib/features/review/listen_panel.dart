@@ -119,7 +119,8 @@ class _ListenPanelState extends State<ListenPanel> {
       elevation: 6,
       child: SafeArea(
         top: false,
-        child: Center(
+        child: Align(
+          heightFactor: 1,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 680),
             child: Padding(
