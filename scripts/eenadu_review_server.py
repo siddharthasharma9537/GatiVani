@@ -299,6 +299,8 @@ class Store:
     SECTION_ORDER = ["Front page", "Editorial", "Business", "Entertainment", "Champion", "Vasundhara", "Pratibha", "Chaduvu",
                      "Regional", "National", "Back page", "News"]
     SECTION_TITLE = {"Editorial": "Editorial news", "Entertainment": "Cinema", "Champion": "Champion (sports)", "News": "General news"}
+    # "(మిగతా 2లో)" with or without the brackets, possibly several in a row
+    _POINTER = re.compile(r"\(?\s*\u0c2e\u0c3f\u0c17\u0c24\u0c3e\s*\d{1,2}\s*\u0c32\u0c4b\s*\)?")
     _CONT_MARK = re.compile(r"\u0c2e\u0c3f\u0c17\u0c24\u0c3e\s*(\d{1,2})\s*\u0c32\u0c4b")      # "మిగతా N లో": continued on page N
     _CONT_HEAD = "\u0c24\u0c30\u0c41\u0c35\u0c3e\u0c2f\u0c3f"                                       # "తరువాయి": continued from
 
@@ -538,12 +540,23 @@ class Store:
     def _narration(st):
         """What would be read aloud: the headline once, then the body paragraphs and subheadings in order. No page markers, captions,
         boxed notes, deck bullets, bylines or repeated headings."""
-        parts = [st["headline"].strip()] if st["headline"].strip() else []
+        def clean(t):
+            t = Store._POINTER.sub(" ", t)                       # "(మిగతా 2లో)" is a page pointer, not words to read
+            t = re.sub(r"\s{2,}", " ", t).strip()
+            # a paragraph that ends in a bare "3లో" (no full stop before it) ends in the printed jump badge
+            return re.sub(r"(?<=[^\s.\u0964?!\u2026])\s+\d{1,2}\s*\u0c32\u0c4b$", "", t).strip()
+
+        badge = re.compile(r"[\s\u200b\u200c\u200d]*\d{1,2}[\s\u200b\u200c\u200d]*\u0c32\u0c4b[\s\u200b\u200c\u200d]*")
+        head = clean(st["headline"])
+        parts = [head] if head and not badge.fullmatch(head) else []
         for it in st["items"]:
             if it["role"] in ("body", "subhead") and it["text"].strip():
-                if parts and it["text"].strip() == parts[-1]:
+                text = clean(it["text"])
+                if badge.fullmatch(text):
+                    continue                                   # a paragraph that is only the badge "3లో"
+                if not text or (parts and text == parts[-1]):
                     continue                                   # never the same heading twice in a row
-                parts.append(it["text"].strip())
+                parts.append(text)
         return "\n\n".join(parts)
 
     def _reflow(self, p):
