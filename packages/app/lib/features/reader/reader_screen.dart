@@ -208,7 +208,7 @@ class _ListenButtonState extends State<_ListenButton> {
         final hasProgress = !_completed && (_posSec ?? 0) > 0;
         return GestureDetector(
           onTap: playing
-              ? () => ps.player.pause()
+              ? ps.pause
               : () => widget.onListen(
                   hasProgress ? Duration(seconds: _posSec!) : null),
           child: Container(
