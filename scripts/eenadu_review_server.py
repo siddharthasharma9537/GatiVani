@@ -22,6 +22,7 @@ API (all under /review-api/, key required):
   PUT  results?edition=&date=         -> same shape, replaces the file
 """
 import argparse
+import collections
 import difflib
 import glob
 import http.server
@@ -67,6 +68,9 @@ class Store:
         self._lock = threading.RLock()     # PyMuPDF documents are not thread-safe; the HTTP server is threaded
         self._ocr_cache = {}
         self._paper_cache = {}
+        self._page_cache = {}
+        self._lex = None
+        self.rejoin_log = {"joined": 0, "unclear": []}
         self._docs = {}
 
     def editions(self):
@@ -139,9 +143,12 @@ class Store:
 
     def page(self, edition, date, pno):
         with self._lock:
-            return self._page(edition, date, pno)
+            key = (edition, date, pno)
+            if key not in self._page_cache:
+                self._page_cache[key] = self._page_uncached(edition, date, pno)
+            return self._page_cache[key]
 
-    def _page(self, edition, date, pno):
+    def _page_uncached(self, edition, date, pno):
         doc = self.doc(edition, date)
         if doc is None or not 1 <= pno <= len(doc):
             return None
@@ -168,6 +175,12 @@ class Store:
                     "old": self._decode_old("".join(c for f, c, _ in spans if f == BODY_FONT)) if all(f == BODY_FONT for f, _, _ in spans) else None,
                     "ocr": line_ocr,
                     "fonts": sorted({f for f, _, _ in spans}),
+                    # geometry and type for sorting a story into headline / byline / subheading / caption / paragraphs
+                    "bbox": [round(v, 1) for v in bb],
+                    "size": round(max(s["size"] for f, _, s in spans if self.fonts.table_for(f) is not None), 1),
+                    "bold": any(s["flags"] & 16 for f, _, s in spans if self.fonts.table_for(f) is not None),
+                    "bullet": any(f in self.fonts.SYMBOL_FONTS for f, _, _ in spans),
+                    "tfonts": sorted({f for f, _, _ in spans if self.fonts.table_for(f) is not None}),
                 })
             if lines:
                 has_ocr = all(l["ocr"] is not None for l in lines)
@@ -177,6 +190,7 @@ class Store:
                                # worth a human look: every headline, any block whose reading differs from the OCR, any block
                                # with no OCR to compare against
                                "needsLook": headline or differs or not has_ocr})
+        self._mark_boxed(pg, blocks, W, H)
         label, section = self._page_label(edition, date, pno)
         return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg)),
                 "label": label, "section": section}
@@ -192,6 +206,25 @@ class Store:
         # first cut: large type in the heading faces
         return (font == "Narmada" and size >= 18) or (font in ("GodawariHeading", "GodawariSubHeading") and size >= 16) \
             or (font == "Tapati" and size >= 18)
+
+    @staticmethod
+    def _mark_boxed(pg, blocks, W, H):
+        """Flag blocks that sit inside a tinted or bordered box drawn on the page (a sidebar / boxed note), rather than in the
+        plain column. Boxes are small rectangles (under 25% of the page, over 3 text lines)."""
+        rects = []
+        for d in pg.get_drawings():
+            r = d["rect"]
+            area = r.width * r.height
+            if area > 0.25 * W * H or r.width < 60 or r.height < 40:
+                continue
+            fill = d.get("fill")
+            tinted = fill is not None and tuple(fill) != (1.0, 1.0, 1.0)
+            bordered = d.get("color") is not None and (d.get("width") or 0) > 0 and d.get("fill") is None
+            if tinted or bordered:
+                rects.append(r)
+        for b in blocks:
+            x0, y0, x1, y1 = b["box"][0] * W, b["box"][1] * H, b["box"][2] * W, b["box"][3] * H
+            b["boxed"] = any(r.x0 - 3 <= x0 and r.y0 - 3 <= y0 and x1 <= r.x1 + 3 and y1 <= r.y1 + 3 for r in rects)
 
     @staticmethod
     def _wide_pictures(pg):
@@ -211,14 +244,39 @@ class Store:
         """FIRST CUT grouping: a headline block starts an article; the body blocks that follow, in the PDF's own order,
         belong to it until the next headline. Blocks before the first headline are grouped as 'page furniture'.
         If a wide picture sits right above the group, its headline is probably that picture ('graphicBox'): needs OCR."""
-        arts, cur = [], None
-        for b in blocks:
-            if b["kind"] == "headline" or cur is None:
-                cur = {"headline": " ".join(l["converted"] for l in b["lines"]) if b["kind"] == "headline" else "",
-                       "blockIds": [], "_boxes": []}
-                arts.append(cur)
-            cur["blockIds"].append(b["id"])
-            cur["_boxes"].append(b["box"])
+        # Each headline block starts a group. A body block joins the group whose headline sits closest ABOVE it with a horizontal overlap
+        # (a story's text normally lies under its headline); when none fits, it follows the previous block in the PDF's own order.
+        arts, idx_of = [], {}
+        for i, b in enumerate(blocks):
+            if b["kind"] == "headline":
+                arts.append({"headline": " ".join(l["converted"] for l in b["lines"]), "blockIds": [b["id"]], "_boxes": [b["box"]],
+                             "_idx": [i], "_hb": b["box"]})
+        cur = None
+        for i, b in enumerate(blocks):
+            if b["kind"] == "headline":
+                cur = next(a for a in arts if a["_idx"][0] == i)
+                continue
+            bx = b["box"]
+            best, bgap = None, 1e9
+            for a in arts:
+                hb = a["_hb"]
+                gap = bx[1] - hb[3]
+                ov = min(bx[2], hb[2]) - max(bx[0], hb[0])
+                if gap >= -0.02 and ov >= 0.5 * min(bx[2] - bx[0], hb[2] - hb[0]) and gap < bgap:
+                    best, bgap = a, gap
+            if best is None:
+                best = cur
+            if best is None:                       # text before any headline: page furniture
+                best = {"headline": "", "blockIds": [], "_boxes": [], "_idx": [], "_hb": [0, 0, 0, 0]}
+                arts.insert(0, best)
+            best["blockIds"].append(b["id"])
+            best["_boxes"].append(bx)
+            best["_idx"].append(i)
+        order = {b["id"]: i for i, b in enumerate(blocks)}
+        for a in arts:
+            a["blockIds"].sort(key=lambda bid: order[bid])
+            a.pop("_idx", None)
+            a.pop("_hb", None)
         for a in arts:
             boxes = a.pop("_boxes")
             gx0, gy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
@@ -245,20 +303,229 @@ class Store:
                 self._paper_cache[key] = self._build_paper(edition, date)
             return self._paper_cache[key]
 
+    # ── Sorting a story's text into roles ──────────────────────────────────────────────────────────────────────────────────
+    DISPLAY_FONTS = {"Narmada", "GodawariHeading", "GodawariSubHeading", "Tapati"}
+    _MARK_TO = re.compile(r"^[\s.\u2026]*\u0c2e\u0c3f\u0c17\u0c24\u0c3e\s*\d{1,2}\s*\u0c32\u0c4b[\s.]*$")      # whole line "...మిగతా N లో"
+    _MARK_TO_END = re.compile(r"[\s.\u2026]*\u0c2e\u0c3f\u0c17\u0c24\u0c3e\s*(\d{1,2})\s*\u0c32\u0c4b[\s.]*$")      # the same at a line's end
+    # "ఈనాడు, హైదరాబాద్:" / "న్యూస్‌టుడే, కరీంనగర్" at the start of a story
+    _DATELINE = re.compile(r"^\s*[\u2022\-\u2013]?\s*(\u0c08\u0c28\u0c3e\u0c21\u0c41|\u0c28\u0c4d\u0c2f\u0c42\u0c38\u0c4d[\u200c]?\u0c1f\u0c41\u0c21\u0c47)[^:\n]{0,40}:\s*")
+    _CREDIT = re.compile(r"^\s*[\u2022\-\u2013]\s*(\u0c08\u0c28\u0c3e\u0c21\u0c41|\u0c28\u0c4d\u0c2f\u0c42\u0c38\u0c4d[\u200c]?\u0c1f\u0c41\u0c21\u0c47)")
+
+    def _lexicon(self):
+        """Words and word pairs that appear INSIDE printed lines (not first or last on a line, where a word may be cut), over all
+        three editions: the corpus used to decide whether two pieces across a line break are one word."""
+        if self._lex is None:
+            words, pairs = collections.Counter(), collections.Counter()
+            for ed in [e["edition"] for e in self.editions()]:
+                date = [e["date"] for e in self.editions() if e["edition"] == ed][0]
+                doc = self.doc(ed, date)
+                for pno in range(1, len(doc) + 1):
+                    for b in self.page(ed, date, pno)["blocks"]:
+                        for l in b["lines"]:
+                            toks = l["converted"].split()
+                            for i in range(1, len(toks) - 1):
+                                words[toks[i]] += 1
+                                if i + 1 < len(toks) - 1:
+                                    pairs[(toks[i], toks[i + 1])] += 1
+            self._lex = (words, pairs)
+        return self._lex
+
+    _TELWORD = re.compile("^[\u0c00-\u0c7f]+$")
+
+    def _join_lines(self, lines):
+        """Join printed lines into running text. A space goes between lines, except where the line end cuts a word: the two
+        pieces are glued when the joined word is one the corpus already has (twice or more) and the pieces never stand as two
+        words inside a line. Joined-word cases that are not clear are logged."""
+        words, pairs = self._lexicon()
+        out = lines[0].strip()
+        for nxt in lines[1:]:
+            nxt = nxt.strip()
+            ta, tb = out.split(" ")[-1] if out else "", nxt.split(" ")[0] if nxt else ""
+            if ta and tb and self._TELWORD.match(ta) and self._TELWORD.match(tb) and words.get(ta + tb, 0) >= 2:
+                if pairs.get((ta, tb), 0) == 0:
+                    out += nxt
+                    self.rejoin_log["joined"] += 1
+                    continue
+                self.rejoin_log["unclear"].append((ta, tb, words.get(ta + tb, 0), pairs.get((ta, tb), 0)))
+            out += " " + nxt
+        return out
+
+    def _line_role(self, l):
+        txt = l["converted"].strip()
+        if not txt:
+            return None
+        fonts = set(l["tfonts"])
+        display = bool(fonts) and fonts <= self.DISPLAY_FONTS
+        size = l["size"]
+        if self._CONT_HEAD in txt and len(txt) < 48:
+            return "marker_from"
+        if self._MARK_TO.match(txt):
+            return "marker_to"
+        if display and re.match(r"^\s*[-\u2013]\s*\S", txt) and len(txt) < 45 and size <= 20:
+            return "byline"                      # an author's name set under an opinion piece: "- జమ్నాలాల్ బజాజ్"
+        if any(self._is_headline(f, size) for f in fonts):
+            return "headline"
+        if display and size < 13.15:
+            return "caption"
+        if l["bullet"] and display:
+            return "deck"
+        if display and size >= 14.4:
+            return "subhead"
+        return "body"
+
+    def _structure(self, blocks, big_box_ok=True):
+        """A story's blocks -> ordered items {role, text}. Roles: deck, byline, subhead, body, caption, sidebar, marker."""
+        items = []
+        boxed_words = sum(len(" ".join(l["converted"] for l in b["lines"]).split()) for b in blocks if b.get("boxed") and b["kind"] != "headline")
+        all_words = sum(len(" ".join(l["converted"] for l in b["lines"]).split()) for b in blocks if b["kind"] != "headline") or 1
+        # when most of a story sits in a box the box is its background, not a sidebar
+        sidebars_on = big_box_ok and boxed_words < 0.6 * all_words
+        prevl = None
+        for b in blocks:
+            if b["kind"] == "headline":
+                continue
+            run, runrole = [], None
+
+            def flush():
+                nonlocal run, runrole
+                if not run:
+                    return
+                if runrole == "body":
+                    # Paragraph starts: a line indented a little from its column's left edge, or a larger gap above it. A line far to the
+                    # right or left of the running column edge starts the next column: the text goes on, no paragraph break.
+                    hts = sorted(l["bbox"][3] - l["bbox"][1] for l in run)
+                    lh = hts[len(hts) // 2] or 10
+                    colleft = run[0]["bbox"][0]
+                    paras, cur = [], [run[0]]
+                    for prev, l in zip(run, run[1:]):
+                        dx = l["bbox"][0] - colleft
+                        newcol = abs(dx) > 15 or l["bbox"][1] < prev["bbox"][1] - 2 * lh
+                        if newcol:
+                            colleft = l["bbox"][0]
+                        elif dx > 3 or l["bbox"][1] - prev["bbox"][3] > 0.5 * lh:
+                            paras.append(cur)
+                            cur = []
+                        cur.append(l)
+                    paras.append(cur)
+                    # does the first paragraph of this block start a paragraph, or go on from the block before (the next column)?
+                    left_all = min(l["bbox"][0] for l in run)
+                    first_indented = len(run) > 1 and run[0]["bbox"][0] - left_all > 3
+                    for k, ps in enumerate(paras):
+                        role = "sidebar" if (sidebars_on and b.get("boxed")) else "body"
+                        text = self._join_lines([l["converted"] for l in ps])
+                        if k == 0 and not first_indented and items and items[-1]["role"] == role and items[-1].get("_open"):
+                            items[-1]["text"] = self._join_lines([items[-1]["text"], text])
+                        else:
+                            items.append({"role": role, "text": text})
+                        items[-1]["_open"] = (k == len(paras) - 1)
+                    run, runrole = [], None
+                    return
+                elif runrole == "caption":
+                    cur = []
+                    for l in run:
+                        if l["bullet"] and cur:
+                            items.append({"role": "caption", "text": self._join_lines([x["converted"] for x in cur])})
+                            cur = []
+                        cur.append(l)
+                    items.append({"role": "caption", "text": self._join_lines([x["converted"] for x in cur])})
+                elif runrole == "deck":
+                    cur = []
+                    for l in run:
+                        if l["bullet"] and cur:
+                            items.append({"role": "deck", "text": self._join_lines([x["converted"] for x in cur])})
+                            cur = []
+                        cur.append(l)
+                    items.append({"role": "deck", "text": self._join_lines([x["converted"] for x in cur])})
+                else:
+                    items.append({"role": runrole, "text": self._join_lines([l["converted"] for l in run])})
+                run, runrole = [], None
+
+            for l in b["lines"]:
+                role = self._line_role(l)
+                if role is None:
+                    continue
+                if role == "headline":
+                    role = "subhead"
+                if role == "subhead" and (runrole == "deck" or (not run and items and items[-1]["role"] == "deck")) \
+                        and prevl is not None and abs(prevl["size"] - l["size"]) < 0.6 and l["bbox"][1] - prevl["bbox"][3] < 8:
+                    role = "deck"
+                prevl = l
+                if role == "marker_to":
+                    flush()
+                    items.append({"role": "marker", "text": "continues on page %s" % re.search(r"\d+", l["converted"]).group(0)})
+                    continue
+                if role == "byline":
+                    flush()
+                    items.append({"role": "byline", "text": l["converted"].strip("-\u2013 ").strip()})
+                    continue
+                if role == "marker_from":
+                    flush()
+                    items.append({"role": "marker", "text": "continued from page 1" if "\u0c2e\u0c4a\u0c26\u0c1f\u0c3f" in l["converted"] else l["converted"].strip("() ")})
+                    continue
+                if role == "body":
+                    m = self._MARK_TO_END.search(l["converted"])
+                    if m and len(l["converted"]) > len(m.group(0)):
+                        # a body line that ends with "...మిగతా N లో": keep the text, show the marker apart
+                        l = dict(l, converted=l["converted"][:m.start()])
+                        flush_marker = m.group(1)
+                    else:
+                        flush_marker = None
+                else:
+                    flush_marker = None
+                if role != runrole:
+                    flush()
+                    runrole = role
+                run.append(l)
+                if flush_marker:
+                    flush()
+                    items.append({"role": "marker", "text": "continues on page %s" % flush_marker})
+            flush()
+        merged = []
+        for it in items:
+            it.pop("_open", None)
+            if it["role"] == "deck" and not it["text"].lstrip().startswith("\u2022") and merged and merged[-1]["role"] == "deck":
+                merged[-1]["text"] = self._join_lines([merged[-1]["text"], it["text"]])          # a deck bullet that runs over two lines
+            elif it["role"] == "caption":
+                starts_bullet = it["text"].lstrip().startswith("\u2022")
+                for k, part in enumerate([t for t in re.split(r"(?=\u2022)", it["text"]) if t.strip()]):
+                    part = part.strip("\u2022 ").strip()
+                    if k == 0 and not starts_bullet and merged and merged[-1]["role"] == "caption":
+                        merged[-1]["text"] = self._join_lines([merged[-1]["text"], part])    # the tail of the caption before it
+                    else:
+                        merged.append({"role": "caption", "text": part})
+            else:
+                merged.append(it)
+        items = merged
+        # a dateline or credit sits apart from the first / last sentence
+        out = []
+        for i, it in enumerate(items):
+            if it["role"] == "body":
+                m = self._DATELINE.match(it["text"])
+                if m and not any(o["role"] == "byline" for o in out):
+                    out.append({"role": "byline", "text": it["text"][:m.end()].strip(" :").strip("\u2022-\u2013 ").strip()})
+                    rest = it["text"][m.end():].strip()
+                    if rest:
+                        out.append({"role": "body", "text": rest})
+                    continue
+                if self._CREDIT.match(it["text"]) and len(it["text"]) < 70:
+                    out.append({"role": "byline", "text": it["text"].strip("\u2022-\u2013 ").strip()})
+                    continue
+            out.append(it)
+        return out
+
     def _build_paper(self, edition, date):
         doc = self.doc(edition, date)
         if doc is None:
             return None
         stories = []
         for pno in range(1, len(doc) + 1):
-            p = self._page(edition, date, pno)
+            p = self.page(edition, date, pno)
             byid = {b["id"]: b for b in p["blocks"]}
             for gi, a in enumerate(p["articles"]):
                 blocks = [byid[i] for i in a["blockIds"]]
-                body = [b for b in blocks if b["kind"] != "headline"]
-                paras = [" ".join(l["converted"].strip() for l in b["lines"]).strip() for b in body]
-                paras = [t for t in paras if t]
-                words = sum(len(t.split()) for t in paras)
+                items = self._structure(blocks)
+                paras = [it["text"] for it in items if it["role"] in ("body", "subhead", "deck", "sidebar") and it["text"]]
+                words = sum(len(it["text"].split()) for it in items if it["role"] == "body")
                 head = a["headline"].strip()
                 graphic = a.get("graphicBox")
                 if not head and not graphic and words < 40:
@@ -267,7 +534,7 @@ class Store:
                 bx = [byid[i]["box"] for i in a["blockIds"]]
                 box = [min(b[0] for b in bx), min(b[1] for b in bx), max(b[2] for b in bx), max(b[3] for b in bx)]
                 story = {"id": "p%d-g%d" % (pno, gi), "page": pno, "label": p["label"], "section": p["section"] or "News",
-                         "headline": head, "graphic": graphic, "paras": paras, "words": words, "box": box, "size": (p["width"], p["height"]),
+                         "headline": head, "graphic": graphic, "paras": paras, "items": items, "words": words, "box": box, "size": (p["width"], p["height"]),
                          "isCont": self._CONT_HEAD in first, "contTo": [], "contFrom": None, "hidden": False}
                 # a headline that runs over several blocks comes out as several head-only groups: join them to the story that follows
                 prev = stories[-1] if stories else None
@@ -314,15 +581,19 @@ class Store:
             text = " ".join(st["paras"])
             cands = [c for c in stories if c["page"] == n and c["isCont"] and not c["hidden"] and c is not st]
             best, score = None, 0
+            head_words = vocab(st["headline"] + " " + text)
             for c in cands:
-                sc = len(vocab(" ".join(c["paras"][:2])) & vocab(text))
+                # the continuation repeats the story's headline words; its first paragraphs share words with the front part
+                sc = 3 * len(vocab(c["headline"]) & head_words) + len(vocab(" ".join(c["paras"][:4])) & vocab(text))
                 if sc > score:
                     best, score = c, sc
-            if best is not None and score >= 2:
+            if best is not None and score >= 3:
                 best["hidden"] = True
                 best["contFrom"] = st["page"]
-                st["paras"] = st["paras"] + ["\u2014 continued on page %d \u2014" % n] + \
-                    ([best["headline"]] if best["headline"] else []) + best["paras"]
+                st["paras"] = st["paras"] + ([best["headline"]] if best["headline"] else []) + best["paras"]
+                st["items"] = st["items"] + [{"role": "marker", "text": "continued on page %d" % n}] + \
+                    ([{"role": "subhead", "text": best["headline"]}] if best["headline"] else []) + \
+                    [it for it in best["items"] if it["role"] != "marker"]
                 st["words"] += best["words"]
                 st["contTo"].append({"page": n, "linked": True})
             else:
@@ -436,7 +707,7 @@ def make_handler(store, key, web_dir):
                 return self._json(200, {"sections": [
                     {"name": sec["name"], "title": sec["title"], "stories": [
                         {"id": st["id"], "page": st["page"], "headline": st["headline"], "graphic": bool(st["graphic"]),
-                         "words": st["words"], "preview": (st["paras"][0][:150] if st["paras"] else ""),
+                         "words": st["words"], "preview": next((it["text"] for it in st["items"] if it["role"] == "body"), "")[:150],
                          "continued": bool(st["contTo"]), "unmatched": any(not c["linked"] for c in st["contTo"])}
                         for st in sec["stories"]]} for sec in pp["sections"]]})
             if route == "story":

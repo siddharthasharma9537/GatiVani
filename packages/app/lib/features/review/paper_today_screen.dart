@@ -229,11 +229,69 @@ class _StoryScreenState extends State<StoryScreen> {
     );
   }
 
+  /// The story in its parts: deck bullets, byline, paragraphs, subheadings and markers in reading order; photo captions and boxed
+  /// "also on this page" notes gathered under the story, never inside the paragraphs.
+  List<Widget> _storyBody(GatiPalette p, List<Map<String, dynamic>> items) {
+    final out = <Widget>[];
+    for (final it in items) {
+      final text = it['text'] as String;
+      switch (it['role'] as String) {
+        case 'deck':
+          out.add(Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(text.startsWith('\u2022') ? text : '\u2022 $text',
+                  style: TextStyle(fontSize: 18, height: 1.5, fontWeight: FontWeight.w600, color: p.ink))));
+        case 'byline':
+          out.add(Padding(
+              padding: const EdgeInsets.only(top: 6, bottom: 10),
+              child: Text('Byline: $text',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, letterSpacing: 0.2, color: kAccent))));
+        case 'subhead':
+          out.add(Padding(
+              padding: const EdgeInsets.only(top: 10, bottom: 8),
+              child: Text(text, style: TextStyle(fontSize: 21, height: 1.4, fontWeight: FontWeight.w700, color: p.ink))));
+        case 'marker':
+          out.add(Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 10),
+              child: Text('\u2014 $text \u2014', style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic, color: p.muted))));
+        case 'body':
+          out.add(Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Text(text, style: TextStyle(fontSize: 18, height: 1.75, color: p.ink))));
+      }
+    }
+    final side = items.where((i) => i['role'] == 'sidebar').toList();
+    if (side.isNotEmpty) {
+      out.add(const SizedBox(height: 8));
+      out.add(Text('Also on this page', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kAccent)));
+      for (final i in side) {
+        out.add(Container(
+          margin: const EdgeInsets.only(top: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+              color: p.surface, borderRadius: BorderRadius.circular(Gati.rCard), border: Border.all(color: p.line)),
+          child: Text(i['text'] as String, style: TextStyle(fontSize: 16, height: 1.6, color: p.ink)),
+        ));
+      }
+    }
+    final caps = items.where((i) => i['role'] == 'caption').toList();
+    if (caps.isNotEmpty) {
+      out.add(const SizedBox(height: 16));
+      out.add(Text('Photo captions', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kAccent)));
+      for (final i in caps) {
+        out.add(Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(i['text'] as String, style: TextStyle(fontSize: 14, height: 1.5, color: p.muted))));
+      }
+    }
+    return out;
+  }
+
   Widget _read(GatiPalette p, Map<String, dynamic> s) {
     final head = (s['headline'] as String).trim();
     final graphic = (s['graphic'] as List?)?.cast<num>();
     final label = (s['label'] as String?) ?? '';
-    final paras = (s['paras'] as List).cast<String>();
+    final items = (s['items'] as List).cast<Map<String, dynamic>>();
     final unmatched = ((s['contTo'] as List?) ?? const []).cast<Map>().where((c) => c['linked'] != true).toList();
     return Center(
       child: ConstrainedBox(
@@ -273,13 +331,7 @@ class _StoryScreenState extends State<StoryScreen> {
           else if (graphic == null)
             Text('(no headline in the PDF text)', style: TextStyle(fontSize: 16, color: p.muted)),
           const SizedBox(height: 14),
-          for (final t in paras)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: t.startsWith('— continued')
-                  ? Text(t, style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic, color: p.muted))
-                  : Text(t, style: TextStyle(fontSize: 18, height: 1.75, color: p.ink)),
-            ),
+          ..._storyBody(p, items),
           if (unmatched.isNotEmpty)
             Text(
                 'The story says it continues on page ${unmatched.map((c) => c['page']).join(', ')}; that part could not be matched '
