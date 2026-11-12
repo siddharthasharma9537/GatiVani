@@ -24,6 +24,7 @@ import '../../design/tokens.dart';
 import '../../widgets/article_card.dart';
 import '../../widgets/edition_masthead.dart';
 import '../../widgets/news_ticker.dart';
+import '../review/review_screen.dart' show kEenaduReview;
 
 /// Paper tab: today's edition front and center, live processing card,
 /// in-place category chips, persistent mini-player. Upload via FAB.
@@ -620,6 +621,9 @@ class _PaperScreenState extends State<PaperScreen> {
       body: SafeArea(
         child: Column(children: [
           GatiMasthead(lang: lang, actions: [
+            // local review build only: Eenadu's paper as news (owner's Mac)
+            if (kEenaduReview)
+              GatiHeaderButton(icon: Icons.newspaper, onTap: () => context.push('/paper/today')),
             GatiHeaderButton(
                 icon: Icons.search, onTap: () => context.push('/search')),
           ]),

@@ -66,6 +66,7 @@ class Store:
         self.glyph_dir = glyph_dir
         self._lock = threading.RLock()     # PyMuPDF documents are not thread-safe; the HTTP server is threaded
         self._ocr_cache = {}
+        self._paper_cache = {}
         self._docs = {}
 
     def editions(self):
@@ -230,6 +231,110 @@ class Store:
                     break
         return arts
 
+    # ── The paper as news: stories grouped by Eenadu's own page labels (for the app's "Today's paper" screen) ──────────────────────
+    SECTION_ORDER = ["Front page", "Editorial", "Business", "Entertainment", "Champion", "Vasundhara", "Pratibha", "Chaduvu",
+                     "Regional", "National", "Back page", "News"]
+    SECTION_TITLE = {"Editorial": "Editorial news", "Entertainment": "Cinema", "Champion": "Champion (sports)", "News": "General news"}
+    _CONT_MARK = re.compile(r"\u0c2e\u0c3f\u0c17\u0c24\u0c3e\s*(\d{1,2})\s*\u0c32\u0c4b")      # "మిగతా N లో": continued on page N
+    _CONT_HEAD = "\u0c24\u0c30\u0c41\u0c35\u0c3e\u0c2f\u0c3f"                                       # "తరువాయి": continued from
+
+    def paper(self, edition, date):
+        key = (edition, date)
+        with self._lock:
+            if key not in self._paper_cache:
+                self._paper_cache[key] = self._build_paper(edition, date)
+            return self._paper_cache[key]
+
+    def _build_paper(self, edition, date):
+        doc = self.doc(edition, date)
+        if doc is None:
+            return None
+        stories = []
+        for pno in range(1, len(doc) + 1):
+            p = self._page(edition, date, pno)
+            byid = {b["id"]: b for b in p["blocks"]}
+            for gi, a in enumerate(p["articles"]):
+                blocks = [byid[i] for i in a["blockIds"]]
+                body = [b for b in blocks if b["kind"] != "headline"]
+                paras = [" ".join(l["converted"].strip() for l in b["lines"]).strip() for b in body]
+                paras = [t for t in paras if t]
+                words = sum(len(t.split()) for t in paras)
+                head = a["headline"].strip()
+                graphic = a.get("graphicBox")
+                if not head and not graphic and words < 40:
+                    continue                     # page furniture and fragments
+                first = " ".join(l["converted"] for b in blocks[:2] for l in b["lines"])
+                bx = [byid[i]["box"] for i in a["blockIds"]]
+                box = [min(b[0] for b in bx), min(b[1] for b in bx), max(b[2] for b in bx), max(b[3] for b in bx)]
+                story = {"id": "p%d-g%d" % (pno, gi), "page": pno, "label": p["label"], "section": p["section"] or "News",
+                         "headline": head, "graphic": graphic, "paras": paras, "words": words, "box": box, "size": (p["width"], p["height"]),
+                         "isCont": self._CONT_HEAD in first, "contTo": [], "contFrom": None, "hidden": False}
+                # a headline that runs over several blocks comes out as several head-only groups: join them to the story that follows
+                prev = stories[-1] if stories else None
+                if prev and prev["page"] == pno and prev["words"] == 0 and prev["headline"] and not prev["graphic"] and (head or paras) \
+                        and not graphic:
+                    story["headline"] = (prev["headline"] + " " + head).strip()
+                    story["box"] = [min(prev["box"][0], box[0]), min(prev["box"][1], box[1]), max(prev["box"][2], box[2]),
+                                    max(prev["box"][3], box[3])]
+                    stories.pop()
+                stories.append(story)
+        # Join front stories with their continuation. The jump list in links.json ("continued on page N" hotspots, in PDF points) says which
+        # story on which page points where; the continuation on page N is the story that starts "(... తరువాయి)" and shares the most words.
+        # A first cut: when nothing clear matches, the continuation is left unmatched and the story says so.
+        def vocab(t):
+            return {w for w in re.split(r"[\s.,;:!?'\"()\-]+", t) if len(w) >= 4}
+        jumps = []
+        lj = os.path.join(self.drive, "Eenadu_%s_%s.links.json" % (edition, date))
+        if os.path.exists(lj):
+            try:
+                jumps = json.load(open(lj, encoding="utf-8")).get("jumps", [])
+            except ValueError:
+                jumps = []
+        pairs = []                                   # (story, target page)
+        for j in jumps:
+            pg, to = int(j["page"]), int(j["to_page"])
+            cx, cy = (j["rect"][0] + j["rect"][2]) / 2, (j["rect"][1] + j["rect"][3]) / 2
+            best, bd = None, 1e18
+            for st in stories:
+                if st["page"] != pg:
+                    continue
+                W, H = st["size"]
+                x0, y0, x1, y1 = st["box"][0] * W, st["box"][1] * H, st["box"][2] * W, st["box"][3] * H
+                dx = max(x0 - cx, 0, cx - x1)
+                dy = max(y0 - cy, 0, cy - y1)
+                if dx * dx + dy * dy < bd:
+                    best, bd = st, dx * dx + dy * dy
+            if best is not None and bd <= 60 ** 2 and (best, to) not in pairs:
+                pairs.append((best, to))
+        if not jumps:                                # no links file: fall back to the "మిగతా N లో" words in the text
+            for st in stories:
+                for m in self._CONT_MARK.finditer(" ".join(st["paras"])):
+                    pairs.append((st, int(m.group(1))))
+        for st, n in pairs:
+            text = " ".join(st["paras"])
+            cands = [c for c in stories if c["page"] == n and c["isCont"] and not c["hidden"] and c is not st]
+            best, score = None, 0
+            for c in cands:
+                sc = len(vocab(" ".join(c["paras"][:2])) & vocab(text))
+                if sc > score:
+                    best, score = c, sc
+            if best is not None and score >= 2:
+                best["hidden"] = True
+                best["contFrom"] = st["page"]
+                st["paras"] = st["paras"] + ["\u2014 continued on page %d \u2014" % n] + \
+                    ([best["headline"]] if best["headline"] else []) + best["paras"]
+                st["words"] += best["words"]
+                st["contTo"].append({"page": n, "linked": True})
+            else:
+                st["contTo"].append({"page": n, "linked": False})
+        shown = [s for s in stories if not s["hidden"]]
+        sections = []
+        for name in self.SECTION_ORDER:
+            items = [s for s in shown if s["section"] == name]
+            if items:
+                sections.append({"name": name, "title": self.SECTION_TITLE.get(name, name), "stories": items})
+        return {"sections": sections, "byId": {s["id"]: s for s in shown}}
+
     def crop(self, edition, date, pno, box):
         """JPEG of one block, cut from the page by its box (fractions of the page), cached under the state dir."""
         with self._lock:
@@ -324,6 +429,22 @@ def make_handler(store, key, web_dir):
             if route == "image":
                 img = store.image(ed, date, pno)
                 return self._send(200, img, "image/jpeg") if img else self._json(404, {"error": "no page"})
+            if route == "paper":
+                pp = store.paper(ed, date)
+                if pp is None:
+                    return self._json(404, {"error": "no such edition"})
+                return self._json(200, {"sections": [
+                    {"name": sec["name"], "title": sec["title"], "stories": [
+                        {"id": st["id"], "page": st["page"], "headline": st["headline"], "graphic": bool(st["graphic"]),
+                         "words": st["words"], "preview": (st["paras"][0][:150] if st["paras"] else ""),
+                         "continued": bool(st["contTo"]), "unmatched": any(not c["linked"] for c in st["contTo"])}
+                        for st in sec["stories"]]} for sec in pp["sections"]]})
+            if route == "story":
+                pp = store.paper(ed, date)
+                st = (pp or {}).get("byId", {}).get(q.get("id", ""))
+                if st is None:
+                    return self._json(404, {"error": "no such story"})
+                return self._json(200, st)
             if route == "crop":
                 try:
                     box = [float(v) for v in q.get("box", "").split(",")]
