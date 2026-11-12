@@ -71,6 +71,7 @@ class Store:
         self._page_cache = {}
         self._lex = None
         self.rejoin_log = {"joined": 0, "unclear": []}
+        self.join_log = {"kept_jump_headings": [], "sentences_rejoined": 0}
         self._docs = {}
 
     def editions(self):
@@ -158,7 +159,7 @@ class Store:
         blocks = []
         for bi, b in enumerate(pg.get_text("rawdict")["blocks"]):
             lines, x0, y0, x1, y1 = [], 1e9, 1e9, 0, 0
-            headline = False
+            n_head = 0
             for l in b.get("lines", []):
                 spans = [(s["font"].split("+")[-1], "".join(ch["c"] for ch in s["chars"]), s) for s in l["spans"]]
                 spans = [t for t in spans if t[1].strip()]
@@ -166,7 +167,7 @@ class Store:
                     continue
                 if not any(self.fonts.table_for(f) is not None for f, _, _ in spans):
                     continue                      # a line of pure Latin/symbol text is not what is being reviewed
-                headline = headline or any(self._is_headline(f, s["size"]) for f, _, s in spans)
+                n_head += any(self._is_headline(f, s["size"]) for f, _, s in spans)
                 bb = l["bbox"]
                 x0, y0, x1, y1 = min(x0, bb[0]), min(y0, bb[1]), max(x1, bb[2]), max(y1, bb[3])
                 line_ocr = ocr.get(tuple(round(v, 1) for v in bb))
@@ -183,6 +184,8 @@ class Store:
                     "tfonts": sorted({f for f, _, _ in spans if self.fonts.table_for(f) is not None}),
                 })
             if lines:
+                # a headline block is one that is mostly headline-size lines; a body block with a heading inside keeps its text
+                headline = n_head >= 0.6 * len(lines)
                 has_ocr = all(l["ocr"] is not None for l in lines)
                 differs = any(self._differs(l["converted"], l["ocr"]) for l in lines if l["ocr"] is not None)
                 blocks.append({"id": "%d:%d" % (pno, bi), "box": [x0 / W, y0 / H, x1 / W, y1 / H], "lines": lines,
@@ -513,6 +516,18 @@ class Store:
             out.append(it)
         return out
 
+    @staticmethod
+    def _narration(st):
+        """What would be read aloud: the headline once, then the body paragraphs and subheadings in order. No page markers, captions,
+        boxed notes, deck bullets, bylines or repeated headings."""
+        parts = [st["headline"].strip()] if st["headline"].strip() else []
+        for it in st["items"]:
+            if it["role"] in ("body", "subhead") and it["text"].strip():
+                if parts and it["text"].strip() == parts[-1]:
+                    continue                                   # never the same heading twice in a row
+                parts.append(it["text"].strip())
+        return "\n\n".join(parts)
+
     def _build_paper(self, edition, date):
         doc = self.doc(edition, date)
         if doc is None:
@@ -535,7 +550,8 @@ class Store:
                 box = [min(b[0] for b in bx), min(b[1] for b in bx), max(b[2] for b in bx), max(b[3] for b in bx)]
                 story = {"id": "p%d-g%d" % (pno, gi), "page": pno, "label": p["label"], "section": p["section"] or "News",
                          "headline": head, "graphic": graphic, "paras": paras, "items": items, "words": words, "box": box, "size": (p["width"], p["height"]),
-                         "isCont": self._CONT_HEAD in first, "contTo": [], "contFrom": None, "hidden": False}
+                         "isCont": self._CONT_HEAD in first, "contTo": [], "contFrom": None, "hidden": False,
+                         "headline_from": "", "kicker": ""}
                 # a headline that runs over several blocks comes out as several head-only groups: join them to the story that follows
                 prev = stories[-1] if stories else None
                 if prev and prev["page"] == pno and prev["words"] == 0 and prev["headline"] and not prev["graphic"] and (head or paras) \
@@ -577,7 +593,10 @@ class Store:
             for st in stories:
                 for m in self._CONT_MARK.finditer(" ".join(st["paras"])):
                     pairs.append((st, int(m.group(1))))
+        absorbed = {}                                # continuation story id -> the story it was joined into (for chains)
         for st, n in pairs:
+            while st["id"] in absorbed:
+                st = absorbed[st["id"]]
             text = " ".join(st["paras"])
             cands = [c for c in stories if c["page"] == n and c["isCont"] and not c["hidden"] and c is not st]
             best, score = None, 0
@@ -587,17 +606,51 @@ class Store:
                 sc = 3 * len(vocab(c["headline"]) & head_words) + len(vocab(" ".join(c["paras"][:4])) & vocab(text))
                 if sc > score:
                     best, score = c, sc
-            if best is not None and score >= 3:
-                best["hidden"] = True
-                best["contFrom"] = st["page"]
-                st["paras"] = st["paras"] + ([best["headline"]] if best["headline"] else []) + best["paras"]
-                st["items"] = st["items"] + [{"role": "marker", "text": "continued on page %d" % n}] + \
-                    ([{"role": "subhead", "text": best["headline"]}] if best["headline"] else []) + \
-                    [it for it in best["items"] if it["role"] != "marker"]
-                st["words"] += best["words"]
-                st["contTo"].append({"page": n, "linked": True})
-            else:
-                st["contTo"].append({"page": n, "linked": False})
+            if best is None or score < 3:
+                reason = ("no continuation block marked '(... తరువాయి)' found on page %d" % n) if not cands else \
+                    "%d candidate(s) on page %d, but none shares enough words with the front part (best score %d)" % (len(cands), n, score)
+                st["contTo"].append({"page": n, "linked": False, "reason": reason})
+                continue
+            best["hidden"] = True
+            best["contFrom"] = st["page"]
+            absorbed[best["id"]] = st
+            st["contTo"].append({"page": n, "linked": True})
+            # ONE story: the continuation's body goes on as the next paragraphs. Page markers are dropped. The continuation's own
+            # headline is dropped when it only repeats the story's headline / deck / words; a heading that does not look like a repeat
+            # stays as a subheading and is listed in self.join_log["kept_jump_headings"].
+            cont = [it for it in best["items"] if it["role"] != "marker"]
+            front = [it for it in st["items"] if it["role"] != "marker"]
+            jh = best["headline"].strip()
+            if jh:
+                jv = vocab(jh)
+                known = vocab(" ".join([st["headline"]] + [it["text"] for it in front]))
+                if jv and len(jv & known) / len(jv) >= 0.5:
+                    if st["graphic"] and not st["headline_from"]:
+                        # the story's own headline is a picture; the continuation carries it as text
+                        st["kicker"] = st["headline"]
+                        st["headline"], st["headline_from"] = jh, "continuation"
+                else:
+                    cont.insert(0, {"role": "subhead", "text": jh})
+                    self.join_log["kept_jump_headings"].append((st["id"], n, jh))
+            # a sentence cut by the page break: the last front paragraph does not end a sentence and the next item is body text
+            if front and cont and front[-1]["role"] == "body" and cont[0]["role"] == "body" \
+                    and not re.search(r"[.?!\u2026\u0964'\"\u2019\u201d)]\s*$", front[-1]["text"]):
+                front[-1] = {"role": "body", "text": self._join_lines([front[-1]["text"], cont[0]["text"]])}
+                cont = cont[1:]
+                self.join_log["sentences_rejoined"] += 1
+            st["items"] = front + cont
+            st["paras"] = st["paras"] + ([jh] if jh else []) + best["paras"]
+            st["words"] += best["words"]
+        # stories whose continuation could not be matched: a display-only note, never part of the narration
+        for st in stories:
+            for c in st["contTo"]:
+                if not c["linked"]:
+                    st["items"] = [it for it in st["items"] if it["role"] != "marker"] + \
+                        [{"role": "marker", "text": "continues on page %d, part not matched" % c["page"], "display_only": True}]
+        for st in stories:
+            if all(c["linked"] for c in st["contTo"]):
+                st["items"] = [it for it in st["items"] if it["role"] != "marker"]
+            st["narration"] = self._narration(st)
         shown = [s for s in stories if not s["hidden"]]
         sections = []
         for name in self.SECTION_ORDER:

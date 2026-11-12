@@ -292,7 +292,6 @@ class _StoryScreenState extends State<StoryScreen> {
     final graphic = (s['graphic'] as List?)?.cast<num>();
     final label = (s['label'] as String?) ?? '';
     final items = (s['items'] as List).cast<Map<String, dynamic>>();
-    final unmatched = ((s['contTo'] as List?) ?? const []).cast<Map>().where((c) => c['linked'] != true).toList();
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 680),
@@ -326,17 +325,16 @@ class _StoryScreenState extends State<StoryScreen> {
             ),
             const SizedBox(height: 10),
           ],
+          if (((s['kicker'] as String?) ?? '').isNotEmpty)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(s['kicker'] as String, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: p.muted))),
           if (head.isNotEmpty)
             Text(head, style: TextStyle(fontSize: 24, height: 1.35, fontWeight: FontWeight.w700, color: p.ink))
           else if (graphic == null)
             Text('(no headline in the PDF text)', style: TextStyle(fontSize: 16, color: p.muted)),
           const SizedBox(height: 14),
           ..._storyBody(p, items),
-          if (unmatched.isNotEmpty)
-            Text(
-                'The story says it continues on page ${unmatched.map((c) => c['page']).join(', ')}; that part could not be matched '
-                'automatically yet.',
-                style: TextStyle(fontSize: 13, color: kAccent)),
         ]),
       ),
     );
