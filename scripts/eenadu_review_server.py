@@ -17,10 +17,12 @@ API (all under /review-api/, key required):
   GET  editions                       -> [{edition, date, pages}]
   GET  page?edition=&date=&page=      -> {width, height, blocks:[{id, box, kind, lines:[{converted, old, ocr, fonts}]}], articles:[{headline, blockIds}]}
   GET  image?edition=&date=&page=     -> JPEG of the page
+  GET  crop?edition=&date=&page=&box=x0,y0,x1,y1  -> JPEG of one block (box in fractions of the page)
   GET  results?edition=&date=         -> {blockId: {verdict, note}}
   PUT  results?edition=&date=         -> same shape, replaces the file
 """
 import argparse
+import difflib
 import glob
 import http.server
 import json
@@ -30,12 +32,14 @@ import secrets
 import socket
 import sys
 import tempfile
+import threading
 import urllib.parse
 
 import pymupdf
 
 BODY_FONT = "Eenadu-Light"  # the font the old statistical table covered (kept for the comparison line)
 IMG_ZOOM = 1.4
+CROP_ZOOM = 2.2   # crops are shown at phone width, so they are cut sharper than the page image
 
 
 def lan_ip():
@@ -60,6 +64,7 @@ class Store:
         import fonts
         self.fonts = fonts
         self.glyph_dir = glyph_dir
+        self._lock = threading.RLock()     # PyMuPDF documents are not thread-safe; the HTTP server is threaded
         self._ocr_cache = {}
         self._docs = {}
 
@@ -91,11 +96,11 @@ class Store:
     def _decode_old(self, codes):
         return "".join(self.table.get(c, ["?"])[0] if c != " " else " " for c in codes)
 
-    def _span_ocr(self, edition, pno):
-        """Tesseract readings of single spans, from spans_<ED>.json next to the converter (made by spans.py)."""
+    def _line_ocr(self, edition, pno):
+        """Tesseract readings of whole lines, from lines_<ED>.json next to the converter (made by lineocr.py)."""
         code = {"TELANGANA": "TG", "ANDHRA-PRADESH": "AP", "GREATER-HYDERABAD": "GH"}.get(edition)
         if code not in self._ocr_cache:
-            path = os.path.join(self.glyph_dir, "spans_%s.json" % code)
+            path = os.path.join(self.glyph_dir, "lines_%s.json" % code)
             rows = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []
             by = {}
             for r in rows:
@@ -104,12 +109,16 @@ class Store:
         return {k[1]: v for k, v in self._ocr_cache[code].items() if k[0] == pno}
 
     def page(self, edition, date, pno):
+        with self._lock:
+            return self._page(edition, date, pno)
+
+    def _page(self, edition, date, pno):
         doc = self.doc(edition, date)
         if doc is None or not 1 <= pno <= len(doc):
             return None
         pg = doc[pno - 1]
         W, H = pg.rect.width, pg.rect.height
-        ocr = self._span_ocr(edition, pno)
+        ocr = self._line_ocr(edition, pno)
         blocks = []
         for bi, b in enumerate(pg.get_text("rawdict")["blocks"]):
             lines, x0, y0, x1, y1 = [], 1e9, 1e9, 0, 0
@@ -124,18 +133,28 @@ class Store:
                 headline = headline or any(self._is_headline(f, s["size"]) for f, _, s in spans)
                 bb = l["bbox"]
                 x0, y0, x1, y1 = min(x0, bb[0]), min(y0, bb[1]), max(x1, bb[2]), max(y1, bb[3])
-                tel = [t for t in spans if self.fonts.table_for(t[0]) is not None]
-                span_ocr = [ocr.get(tuple(round(v, 1) for v in t[2]["bbox"])) for t in tel]
+                line_ocr = ocr.get(tuple(round(v, 1) for v in bb))
                 lines.append({
                     "converted": self.fonts.decode_line([(f, c) for f, c, _ in spans]),
                     "old": self._decode_old("".join(c for f, c, _ in spans if f == BODY_FONT)) if all(f == BODY_FONT for f, _, _ in spans) else None,
-                    "ocr": " ".join(span_ocr) if all(o is not None for o in span_ocr) else None,
+                    "ocr": line_ocr,
                     "fonts": sorted({f for f, _, _ in spans}),
                 })
             if lines:
+                has_ocr = all(l["ocr"] is not None for l in lines)
+                differs = any(self._differs(l["converted"], l["ocr"]) for l in lines if l["ocr"] is not None)
                 blocks.append({"id": "%d:%d" % (pno, bi), "box": [x0 / W, y0 / H, x1 / W, y1 / H], "lines": lines,
-                               "kind": "headline" if headline else "body"})
+                               "kind": "headline" if headline else "body", "hasOcr": has_ocr,
+                               # worth a human look: every headline, any block whose reading differs from the OCR, any block
+                               # with no OCR to compare against
+                               "needsLook": headline or differs or not has_ocr})
         return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks)}
+
+    @staticmethod
+    def _differs(a, b):
+        norm = lambda t: re.sub(r"[\s.,;:!?'\"\u201c\u201d\u2018\u2019()\-_/|\u0964\u0965\u200b\u200c\u200d]", "", t)
+        x, y = norm(a), norm(b)
+        return x != y and difflib.SequenceMatcher(None, x, y).ratio() < 0.9
 
     @staticmethod
     def _is_headline(font, size):
@@ -156,7 +175,34 @@ class Store:
             cur["blockIds"].append(b["id"])
         return arts
 
+    def crop(self, edition, date, pno, box):
+        """JPEG of one block, cut from the page by its box (fractions of the page), cached under the state dir."""
+        with self._lock:
+            doc = self.doc(edition, date)
+            if doc is None or not 1 <= pno <= len(doc):
+                return None
+            x0, y0, x1, y1 = box
+            if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+                return None
+            os.makedirs(os.path.join(self.state_dir, "crops"), exist_ok=True)
+            cache = os.path.join(self.state_dir, "crops", "%s_%s_p%d_%d_%d_%d_%d.jpg" % (
+                edition, date, pno, *(int(round(v * 10000)) for v in box)))
+            if not os.path.exists(cache):
+                pg = doc[pno - 1]
+                W, H = pg.rect.width, pg.rect.height
+                pad = 3
+                clip = pymupdf.Rect(max(x0 * W - pad, 0), max(y0 * H - pad, 0), min(x1 * W + pad, W), min(y1 * H + pad, H))
+                pix = pg.get_pixmap(matrix=pymupdf.Matrix(CROP_ZOOM, CROP_ZOOM), clip=clip)
+                with open(cache, "wb") as f:
+                    f.write(pix.tobytes("jpeg", jpg_quality=80))
+            with open(cache, "rb") as f:
+                return f.read()
+
     def image(self, edition, date, pno):
+        with self._lock:
+            return self._image(edition, date, pno)
+
+    def _image(self, edition, date, pno):
         doc = self.doc(edition, date)
         if doc is None or not 1 <= pno <= len(doc):
             return None
@@ -223,6 +269,14 @@ def make_handler(store, key, web_dir):
             if route == "image":
                 img = store.image(ed, date, pno)
                 return self._send(200, img, "image/jpeg") if img else self._json(404, {"error": "no page"})
+            if route == "crop":
+                try:
+                    box = [float(v) for v in q.get("box", "").split(",")]
+                    assert len(box) == 4
+                except (ValueError, AssertionError):
+                    return self._json(400, {"error": "bad box"})
+                img = store.crop(ed, date, pno, box)
+                return self._send(200, img, "image/jpeg") if img else self._json(404, {"error": "no such crop"})
             if route == "results":
                 path = store.results_path(ed, date)
                 if method == "GET":
