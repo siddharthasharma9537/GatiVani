@@ -184,7 +184,7 @@ class TeluguNormalizer {
   static String _num(String body) {
     if (body.contains(',')) {
       final g = _grouped(body);
-      return g != null ? integerWords(g) : body.split(',').map(integerWords).join(', ');
+      return g != null ? integerWords(g) : body.split(',').map(integerWords).join(',');
     }
     return integerWords(body);
   }
@@ -241,7 +241,7 @@ class TeluguNormalizer {
       final String words;
       if (body.contains(',')) {
         final g = _grouped(body);
-        words = g != null ? integerWords(g) : body.split(',').map(integerWords).join(', ');
+        words = g != null ? integerWords(g) : body.split(',').map(integerWords).join(',');
       } else {
         words = integerWords(body);
       }

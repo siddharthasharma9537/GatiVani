@@ -117,16 +117,40 @@ void main() {
     });
   });
 
-  test('matches the model\'s own normaliser when a reference dump is present', () {
-    // Dump made by the owner with scripts/tts_reference/ref_numbers.py; absent in CI, so the test then does nothing.
-    final f = File(Platform.environment['TTS_REF_JSON'] ?? '');
-    if (f.path.isEmpty || !f.existsSync()) return;
-    final ref = (jsonDecode(f.readAsStringSync()) as Map).cast<String, String>();
-    final diffs = <String>[];
-    ref.forEach((k, v) {
-      final got = n.normalize(k);
-      if (got != v) diffs.add('"$k": model="$v" ours="$got"');
+  group('reference comparison (cases_te.json)', () {
+    final cases = (jsonDecode(File('../../scripts/tts_reference/cases_te.json').readAsStringSync()) as Map)
+        .map((k, v) => MapEntry(k as String, (v as List).cast<String>()));
+
+    test('no ASCII digit survives in any case', () {
+      final bad = <String>[];
+      cases.forEach((g, list) {
+        for (final c in list) {
+          if (RegExp(r'[0-9]').hasMatch(n.normalize(c))) bad.add('$g: "$c" -> "${n.normalize(c)}"');
+        }
+      });
+      expect(bad, isEmpty, reason: bad.take(20).join('\n'));
     });
-    expect(diffs, isEmpty, reason: diffs.take(20).join('\n'));
+
+    test('a comma directly between digits has no space after it (as the model does)', () {
+      expect(n.normalize('1,2'), 'ఒకటి,రెండు');
+      expect(n.normalize('12,34'), 'పన్నెండు,ముప్పై నాలుగు');
+    });
+
+    // Dump made by the owner with scripts/tts_reference/ref_numbers.py (model's Python); absent in CI, then nothing is compared.
+    // Groups named ext_* are readings the model's normaliser does not have: not compared.
+    test('every non-ext group equals the model\'s own normaliser when a reference dump is present', () {
+      final f = File(Platform.environment['TTS_REF_JSON'] ?? '');
+      if (f.path.isEmpty || !f.existsSync()) return;
+      final ref = (jsonDecode(f.readAsStringSync()) as Map).map((k, v) => MapEntry(k as String, (v as Map).cast<String, String>()));
+      final diffs = <String>[];
+      ref.forEach((g, m) {
+        if (g.startsWith('ext_')) return;
+        m.forEach((k, v) {
+          final got = n.normalize(k);
+          if (got != v) diffs.add('[$g] ${jsonEncode(k)}: model=${jsonEncode(v)} ours=${jsonEncode(got)}');
+        });
+      });
+      expect(diffs, isEmpty, reason: '${diffs.length} differences:\n${diffs.take(60).join('\n')}');
+    });
   });
 }

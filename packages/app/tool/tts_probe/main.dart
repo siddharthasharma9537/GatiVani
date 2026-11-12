@@ -66,6 +66,19 @@ Future<void> main() async {
         result['joined_normalised'] = const TeluguNormalizer().normalize(texts.last);
       }
     } catch (_) {}
+    // Optional: sentences_te.json next to the page (scripts/tts_reference): durations per voice, compared with ref_durations.py.
+    try {
+      final r = await web.window.fetch('sentences_te.json'.toJS).toDart;
+      if (r.ok) {
+        final list = (jsonDecode((await r.text().toDart).toDart) as List).cast<String>();
+        final byVoice = <String, List<double>>{};
+        for (final voice in ['female', 'male']) {
+          byVoice[voice] = [for (final t in list) (await engine.synthesize(t, voice: voice)).seconds];
+        }
+        result['sentences_te'] = byVoice;
+        result['sentences_te_normalised'] = [for (final t in list) const TeluguNormalizer().normalize(t)];
+      }
+    } catch (_) {}
     final runs = <Map<String, Object?>>[];
     for (final voice in ['female', 'male']) {
       for (var i = 0; i < texts.length; i++) {
