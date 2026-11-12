@@ -18,43 +18,62 @@ abstract class WavPlayer {
 }
 
 /// [WavPlayer] on just_audio. The clip goes in as a data: URI (a sentence is ~0.5-1 MB), which every platform's player takes.
-/// just_audio's own audio-session handling pauses for a phone call or another app's audio and resumes afterwards.
+/// A NEW AudioPlayer is made for every clip: reusing one player and calling setAudioSource again left the web player on its first
+/// clip, so the first sentence was heard over and over while the reader moved on. just_audio's own audio-session handling pauses
+/// for a phone call or another app's audio and resumes afterwards.
 class JustAudioWavPlayer implements WavPlayer {
-  JustAudioWavPlayer() : _p = AudioPlayer(handleInterruptions: true);
-  final AudioPlayer _p;
+  AudioPlayer? _p;
   Completer<void>? _done;
+  double _speed = 1.0;
 
   @override
   Future<void> play(Uint8List wav, double speed) async {
-    final done = _done = Completer<void>();
-    final sub = _p.processingStateStream.listen((s) {
+    final old = _p;
+    _p = null;
+    await old?.dispose();
+    final p = AudioPlayer(handleInterruptions: true);
+    final done = Completer<void>();
+    _p = p;
+    _done = done;
+    _speed = speed;
+    final sub = p.processingStateStream.listen((s) {
       if (s == ProcessingState.completed && !done.isCompleted) done.complete();
     });
     try {
-      await _p.setAudioSource(AudioSource.uri(Uri.dataFromBytes(wav, mimeType: 'audio/wav')));
-      await _p.setSpeed(speed);
-      unawaited(_p.play());
+      await p.setAudioSource(AudioSource.uri(Uri.dataFromBytes(wav, mimeType: 'audio/wav')));
+      await p.setSpeed(_speed);
+      if (!done.isCompleted) unawaited(p.play());
       await done.future;
     } finally {
       await sub.cancel();
+      if (identical(_p, p)) _p = null;
+      await p.dispose();
     }
   }
 
   @override
-  Future<void> pause() => _p.pause();
+  Future<void> pause() async => _p?.pause();
   @override
-  Future<void> resume() async => unawaited(_p.play());
-  @override
-  Future<void> stop() async {
-    await _p.stop();
-    final d = _done;
-    if (d != null && !d.isCompleted) d.complete();
+  Future<void> resume() async {
+    final p = _p;
+    if (p != null) unawaited(p.play());
   }
 
   @override
-  Future<void> setSpeed(double speed) => _p.setSpeed(speed);
+  Future<void> stop() async {
+    final d = _done;
+    if (d != null && !d.isCompleted) d.complete();
+    await _p?.stop();
+  }
+
   @override
-  Future<void> dispose() => _p.dispose();
+  Future<void> setSpeed(double speed) async {
+    _speed = speed;
+    await _p?.setSpeed(speed);
+  }
+
+  @override
+  Future<void> dispose() => stop();
 }
 
 /// The on-device model as a [SentenceOutput]: synthesises each sentence once (at 1.0x), caches the WAV by text + voice +
