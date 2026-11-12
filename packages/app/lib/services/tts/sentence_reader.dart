@@ -67,6 +67,9 @@ class SentenceReader extends ChangeNotifier {
   String? fallbackReason;
   String get outputLabel => _out.label;
 
+  /// Seconds of work per second of audio of the current output (null when unknown); above 1.0 it cannot keep up.
+  double? get realTimeFactor => _out.realTimeFactor;
+
   int _epoch = 0;
   bool _initialised = false;
   int _played = 0;

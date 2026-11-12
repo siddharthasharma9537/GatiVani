@@ -78,6 +78,9 @@ class NarrationController extends ChangeNotifier {
   static const _kVoice = 'tts_voice';
 
   NarrationEngine engine = NarrationEngine.auto;
+
+  /// Local review build only: false keeps text from ever reaching a browser's speech service (some browsers' Telugu voices are online).
+  bool allowSystemVoice = true;
   String voice = 'female'; // 'female' | 'male'
   PackStatus packStatus = PackStatus.unknown;
   int packDone = 0;
@@ -208,7 +211,7 @@ class NarrationController extends ChangeNotifier {
   /// A reader for [text], or null when the cloud path should narrate it.
   Future<SentenceReader?> readerFor(String text, {int startIndex = 0}) async {
     final installed = packStatus == PackStatus.installed || (packStatus == PackStatus.unknown && await store.isInstalled());
-    final system = engine != NarrationEngine.cloud && await _hasSystemVoice();
+    final system = allowSystemVoice && engine != NarrationEngine.cloud && await _hasSystemVoice();
     SentenceOutput? primary;
     SentenceOutput? fallback;
     SentenceOutput onDevice() => OnDeviceOutput(

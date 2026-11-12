@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import '../../design/tokens.dart';
+import 'listen_panel.dart';
 import 'review_screen.dart' show kEenaduReview;
 
 /// "Today's paper": Eenadu's e-paper as news inside the app, grouped by the paper's own page labels. Local only: it talks to
 /// scripts/eenadu_review_server.py on the same origin (the owner's Mac), is compiled in only with --dart-define=EENADU_REVIEW=true,
-/// and writes nothing anywhere. Nothing here is narrated: no text leaves the Mac.
+/// and writes nothing anywhere. The story screen can read a story aloud with the on-device voice (services/tts; the text is synthesised
+/// on this device and goes nowhere; in the browser the device's own voice is not used).
 const String kPaperNotice =
     'Machine-converted from the printed PDF, not proofread. Eenadu text: owner only, on this Mac.';
 
@@ -219,6 +221,9 @@ class _StoryScreenState extends State<StoryScreen> {
         toolbarHeight: 48,
         title: Text(s == null ? 'Story' : "${widget.edition} · page ${s['page']}", style: const TextStyle(fontSize: 15)),
       ),
+      bottomNavigationBar: s == null || ((s['narration'] as String?) ?? '').trim().isEmpty
+          ? null
+          : ListenPanel(key: ValueKey(widget.id), narration: s['narration'] as String),
       body: SafeArea(
         child: _error != null
             ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!, style: TextStyle(color: p.ink))))
