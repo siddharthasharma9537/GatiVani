@@ -8,6 +8,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/api_config.dart';
 import '../models/newspaper_article.dart';
 import '../router.dart';
+import 'tts/narration_controller.dart';
+import 'tts/sentence_reader.dart';
 import 'media_session_stub.dart'
     if (dart.library.html) 'media_session_web.dart';
 
@@ -21,9 +23,9 @@ class PlaybackService extends ChangeNotifier {
   PlaybackService._() {
     // OS lock-screen / headphone media controls (web Media Session API).
     initMediaSession(
-      onPlay: () => player.play(),
+      onPlay: _resumeAny,
       onPause: () {
-        player.pause();
+        _pauseAny();
         _saveProgress();
       },
       onNext: next,
@@ -99,6 +101,23 @@ class PlaybackService extends ChangeNotifier {
   static final PlaybackService i = PlaybackService._();
 
   final AudioPlayer player = AudioPlayer();
+
+  // ── On-device / device-voice narration ──────────────────────────────────────
+  // When Voice settings pick the on-device model (or the device voice), the current article is read sentence by sentence by
+  // a SentenceReader instead of the cloud audio above. While [_local] is set it is the source of truth for play state,
+  // position and speed; `player` stays idle. See services/tts/.
+  SentenceReader? _local;
+  Duration _localDuration = Duration.zero;
+  double _localSpeed = 1.0;
+
+  /// True while the current article is read on the device (not from cloud audio).
+  bool get isLocalNarration => _local != null;
+
+  /// 'on-device' | 'system' while reading on the device, else null.
+  String? get localVoiceLabel => _local?.outputLabel;
+
+  /// Set when the reader left the on-device model (e.g. too slow, failed): shown to the listener.
+  String? get localFallbackReason => _local?.fallbackReason;
   final List<NewspaperArticle> queue = [];
   int index = -1;
   bool loading = false;
@@ -192,16 +211,20 @@ class PlaybackService extends ChangeNotifier {
   // the last-chunk check, the UI flipped to "replay" during every stalled
   // transition, and tapping it restarted the whole article from chunk 0.
   bool get ended =>
+      (_local != null && _local!.state == ReaderState.ended) ||
+      _local == null &&
       player.processingState == ProcessingState.completed &&
       (player.duration?.inMilliseconds ?? 0) > 500 &&
       (_totalChunks == null || _loadedChunkIndex + 1 >= _totalChunks!);
-  bool get isPlaying => player.playing && !ended;
-  double get speed => player.speed;
+  bool get isPlaying => _local != null ? _local!.isPlaying : player.playing && !ended;
+  double get speed => _local != null ? _localSpeed : player.speed;
   // In chunked mode, player.position/duration only cover the currently
   // loaded chunk (each chunk is its own setUrl()) — add back the elapsed
   // time of chunks already played through so the whole article reads as one
   // continuous track, matching how it behaved before chunking existed.
   Duration get position {
+    final l = _local;
+    if (l != null) return Duration(milliseconds: (_localDuration.inMilliseconds * l.progress).round());
     if (_totalChunks == null) return player.position;
     final frozen = _frozenPosition;
     if (frozen != null) return frozen;
@@ -210,6 +233,7 @@ class PlaybackService extends ChangeNotifier {
   // Only report a duration once a real track is loaded (avoids a stale/zero
   // duration making the lyric highlight race).
   Duration get duration {
+    if (_local != null) return _localDuration;
     if (player.processingState == ProcessingState.idle) return Duration.zero;
     final total = _totalChunks;
     if (total == null) return player.duration ?? Duration.zero;
@@ -681,6 +705,11 @@ class PlaybackService extends ChangeNotifier {
   /// finishing it) since a bare seek-to-zero would only rewind within
   /// whichever chunk happened to be loaded last, not the whole article.
   void _restartCurrentTrack() {
+    final l = _local;
+    if (l != null) {
+      unawaited(l.seekToSentence(0).then((_) => l.play()));
+      return;
+    }
     if (_totalChunks != null && _totalChunks! > 1) {
       unawaited(_playIndex(index));
     } else {
@@ -764,6 +793,7 @@ class PlaybackService extends ChangeNotifier {
     _pendingSeek = null;
     _resetChunkState();
     notifyListeners();
+    await _disposeLocal();
     await player.stop();
     updateMediaSession(title: '', artist: '', playing: false);
     notifyListeners();
@@ -775,9 +805,30 @@ class PlaybackService extends ChangeNotifier {
       _restartCurrentTrack();
       return;
     }
-    if (player.playing) {
-      player.pause();
+    if (isPlaying) {
+      _pauseAny();
       _saveProgress(); // remember the spot when paused
+    } else {
+      _resumeAny();
+    }
+  }
+
+  /// Pause whatever is playing (cloud audio or on-device narration).
+  void pause() => _pauseAny();
+
+  void _pauseAny() {
+    final l = _local;
+    if (l != null) {
+      unawaited(l.pause());
+    } else {
+      player.pause();
+    }
+  }
+
+  void _resumeAny() {
+    final l = _local;
+    if (l != null) {
+      unawaited(l.state == ReaderState.paused ? l.resume() : l.play());
     } else {
       player.play();
     }
@@ -795,7 +846,7 @@ class PlaybackService extends ChangeNotifier {
     if (d != null) {
       _sleepAt = DateTime.now().add(d);
       _sleepTimer = Timer(d, () {
-        player.pause();
+        _pauseAny();
         _saveProgress();
         _clearSleep();
       });
@@ -829,7 +880,7 @@ class PlaybackService extends ChangeNotifier {
     updateMediaSession(
       title: a.title,
       artist: '${a.category} · Gativani',
-      playing: player.playing,
+      playing: isPlaying,
     );
   }
 
@@ -843,6 +894,13 @@ class PlaybackService extends ChangeNotifier {
   /// callers (GatiSeekBar's ValueChanged<Duration>, the media-session
   /// void-Function() closures) expect a plain void call.
   void seek(Duration d) {
+    final l = _local;
+    if (l != null) {
+      if (_localDuration > Duration.zero && l.sentences.isNotEmpty) {
+        unawaited(l.seekToSentence((d.inMilliseconds / _localDuration.inMilliseconds * l.sentences.length).floor()));
+      }
+      return;
+    }
     if (_totalChunks == null) {
       player.seek(d);
       return;
@@ -931,7 +989,16 @@ class PlaybackService extends ChangeNotifier {
     }
   }
 
-  void setSpeed(double s) => player.setSpeed(s);
+  void setSpeed(double s) {
+    _localSpeed = s;
+    final l = _local;
+    if (l != null) {
+      unawaited(l.setSpeed(s));
+      notifyListeners();
+    } else {
+      player.setSpeed(s);
+    }
+  }
 
   /// Upsert the current article's playback progress into recent_plays (one row
   /// per article). DB-backed so web and the future native apps share it without
@@ -1035,10 +1102,26 @@ class PlaybackService extends ChangeNotifier {
       // playing while the UI has already switched to the new one, e.g. two
       // podcast tiles tapped back-to-back). This used to only run before a
       // fresh TTS synthesis (which can take many seconds); now it always runs.
+      await _disposeLocal();
       await player.stop();
       if (epoch != _playEpoch) return;
       // Briefing sessions narrate + cache the short version separately.
       final url = brief ? a.summaryAudioUrl : a.audioUrl;
+      // On-device / device voice, when Voice settings choose it. Already-synthesised cloud audio is reused in "auto" mode (free).
+      final ctl = NarrationController.i;
+      if (!(ctl.engine == NarrationEngine.auto && url != null && url.startsWith('http'))) {
+        final text = brief ? (a.summaryText ?? a.briefingText) : a.spokenText;
+        final startAt = _pendingSeek;
+        final reader = await ctl.readerFor(text);
+        if (epoch != _playEpoch) {
+          reader?.dispose();
+          return;
+        }
+        if (reader != null) {
+          _startLocal(reader, a, text, startAt);
+          return;
+        }
+      }
       if (url != null && url.startsWith('http')) {
         // Already fully synthesized (download, an earlier full play, or a
         // prefetch) — one complete file, exactly like before chunking.
@@ -1130,6 +1213,57 @@ class PlaybackService extends ChangeNotifier {
       loading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _disposeLocal() async {
+    final l = _local;
+    if (l == null) return;
+    _local = null;
+    l.removeListener(_onLocal);
+    await l.stop();
+    l.dispose();
+  }
+
+  void _startLocal(SentenceReader r, NewspaperArticle a, String text, Duration? resumeAt) {
+    _local = r;
+    _localDuration = Duration(seconds: NewspaperArticle.estimateDuration(text));
+    var start = 0;
+    if (resumeAt != null && resumeAt > Duration.zero && r.sentences.isNotEmpty) {
+      start = (resumeAt.inMilliseconds / _localDuration.inMilliseconds * r.sentences.length).floor();
+      r.load(text, startIndex: start);
+    }
+    _pendingSeek = null;
+    r.addListener(_onLocal);
+    unawaited(r.setSpeed(_localSpeed));
+    _saveProgress(atSeconds: resumeAt?.inSeconds ?? 0, includeContent: true);
+    loading = false;
+    notifyListeners();
+    unawaited(r.play());
+    _updateMedia();
+  }
+
+  void _onLocal() {
+    final r = _local;
+    if (r == null) return;
+    if (r.state == ReaderState.error) {
+      error = r.error;
+      loading = false;
+    } else if (r.state == ReaderState.ended) {
+      if (!_advancing) {
+        _advancing = true;
+        _saveProgress(completed: true);
+        if (_sleepAtTrackEnd) {
+          _clearSleep();
+          _advancing = false;
+        } else {
+          _autoAdvance().whenComplete(() => _advancing = false);
+        }
+      }
+    } else if (r.isPlaying) {
+      _saveProgress();
+    }
+    _updateMedia();
+    notifyListeners();
   }
 
   /// Shared tail once a source is loaded and about to play: resume-seek,
