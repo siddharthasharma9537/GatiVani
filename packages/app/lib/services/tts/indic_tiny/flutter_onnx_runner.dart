@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 
 import 'onnx_runner.dart';
+import 'ort_loader.dart';
 
 /// [OnnxRunner] on `flutter_onnxruntime` (MIT): ONNX Runtime Mobile on Android/iOS, ONNX Runtime Web in the browser.
 ///
@@ -27,6 +28,7 @@ class FlutterOnnxRunner implements OnnxRunner {
   Future<OrtSession> _session(String graph) async {
     final existing = _sessions[graph];
     if (existing != null) return existing;
+    await ensureOrtLoaded();
     final path = locations[graph];
     if (path == null) throw ArgumentError('Unknown graph $graph');
     final s = await _ort.createSession(
@@ -50,7 +52,7 @@ class FlutterOnnxRunner implements OnnxRunner {
         final t = e.value;
         ins[e.key] = t.floats != null
             ? await OrtValue.fromList(t.floats!, t.shape)
-            : await OrtValue.fromList(t.ints!, t.shape);
+            : await OrtValue.fromList(Int64List.fromList(t.ints!), t.shape);
       }
       outs = await session.run(ins);
       final result = <Tensor>[];

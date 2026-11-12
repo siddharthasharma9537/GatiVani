@@ -8,7 +8,7 @@ import 'audio_cache.dart';
 import 'audio_cache_factory.dart';
 import 'indic_tiny/config.dart';
 import 'indic_tiny/engine.dart';
-import 'indic_tiny/flutter_onnx_runner.dart';
+import 'indic_tiny/runner_factory.dart';
 import 'on_device_output.dart';
 import 'sentence_reader.dart';
 import 'system_voice_output.dart';
@@ -97,7 +97,7 @@ class NarrationController extends ChangeNotifier {
 
   static Future<TtsEngine> _buildEngine(VoicePackStore store) async {
     final config = IndicTinyConfig.fromJson(await store.readText('config.json'), await store.readText('onnx_manifest.json'));
-    final runner = FlutterOnnxRunner(await store.modelLocations(), threads: 2);
+    final runner = createOnnxRunner(await store.modelLocations(), threads: 2);
     return IndicTinyEngine(config: config, runner: runner);
   }
 

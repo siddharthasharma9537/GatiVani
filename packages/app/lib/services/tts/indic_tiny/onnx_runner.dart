@@ -5,13 +5,14 @@ class Tensor {
   Tensor.f32(this.shape, Float32List data)
       : floats = data,
         ints = null;
-  Tensor.i64(this.shape, Int64List data)
+  Tensor.i64(this.shape, List<int> data)
       : ints = data,
         floats = null;
 
   final List<int> shape;
   final Float32List? floats;
-  final Int64List? ints;
+  /// Plain ints: dart2js has no Int64List, so the runners build the 64-bit buffer themselves.
+  final List<int>? ints;
 }
 
 /// Runs one of the model's three ONNX graphs (`text_encoder`, `flow_decoder`, `vocoder`). The engine only talks to this

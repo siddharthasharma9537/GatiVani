@@ -69,11 +69,11 @@ class IndicTinyEngine implements TtsEngine {
       throw StateError('${ids.length} tokens > ${config.maxTokens}: the text frontend should have chunked this');
     }
     final enc = await runner.run('text_encoder', {
-      'tokens': Tensor.i64([1, ids.length], Int64List.fromList(ids)),
-      'token_lengths': Tensor.i64([1], Int64List.fromList([ids.length])),
-      'language': Tensor.i64([1], Int64List.fromList([config.languageId])),
-      'speaker': Tensor.i64([1], Int64List.fromList([config.speakerIds[spk]!])),
-      'style': Tensor.i64([1], Int64List.fromList([config.styleId])),
+      'tokens': Tensor.i64([1, ids.length], ids),
+      'token_lengths': Tensor.i64([1], [ids.length]),
+      'language': Tensor.i64([1], [config.languageId]),
+      'speaker': Tensor.i64([1], [config.speakerIds[spk]!]),
+      'style': Tensor.i64([1], [config.styleId]),
     });
     final muX = enc[0], logw = enc[1], cond = enc[2];
     final tx = muX.shape.last;

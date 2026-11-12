@@ -8,6 +8,7 @@ import '../../design/components/gati_wordmark.dart';
 import '../../l10n/strings.dart';
 import '../../services/gemini_key_store.dart';
 import '../../services/settings_provider.dart';
+import 'voice_settings_section.dart';
 
 /// Dedicated Settings screen (menu → Settings): language, theme, playback
 /// speed and the Gemini BYOK key all live here instead of inline in the
@@ -153,6 +154,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ]),
             ])),
             const SizedBox(height: 20),
+
+            // ── Voice (on-device TTS) ───────────────────────────────────────
+            VoiceSettingsSection(
+                p: p,
+                lang: lang,
+                sectionLabel: _sectionLabel,
+                card: _card,
+                choiceRow: _choiceRow),
 
             // ── Gemini API key (BYOK) ───────────────────────────────────────
             _sectionLabel(p, 'Gemini API key'),
