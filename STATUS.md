@@ -1,10 +1,11 @@
-# GatiVani (గతివాణి) status            updated 2026-10-27 by Desk · GatiVani
+# GatiVani (గతివాణి) status            updated 2026-11-13 by Desk · GatiVani
 
 Telugu news you can listen to. Repo `siddharthasharma9537/GatiVani`, default branch `main` (last change 2026-09-27, #16). Operating model: sohum-contracts `docs/OPERATING_MODEL.md`.
 
 ## Now
 
 - Setup only: this ledger. No build step is running.
+- **On-device Telugu TTS (PR #28, branch `feat/on-device-tts`)**: built end to end (normaliser, ONNX runtime for Android/iOS/web, voice pack download with SHA-256, sentence playback with fallbacks, Voice settings). Ran the real voice pack in the browser: real-time factor 0.17-0.20 on a Mac. Not merged, not deployed. Open: native phone checks (RAM, speed, background playback), the model-Python reference comparison and listening by an owner (steps in the PR).
 
 ## Next
 
