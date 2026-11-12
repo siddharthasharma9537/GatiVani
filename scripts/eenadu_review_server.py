@@ -15,7 +15,7 @@ you trust.
 
 API (all under /review-api/, key required):
   GET  editions                       -> [{edition, date, pages}]
-  GET  page?edition=&date=&page=      -> {width, height, blocks:[{id, box, lines:[{converted, ocr}]}]}
+  GET  page?edition=&date=&page=      -> {width, height, blocks:[{id, box, lines:[{converted, old, ocr}]}]}
   GET  image?edition=&date=&page=     -> JPEG of the page
   GET  results?edition=&date=         -> {blockId: {verdict, note}}
   PUT  results?edition=&date=         -> same shape, replaces the file
@@ -28,6 +28,7 @@ import os
 import re
 import secrets
 import socket
+import sys
 import tempfile
 import urllib.parse
 
@@ -49,11 +50,17 @@ def lan_ip():
 
 
 class Store:
-    def __init__(self, drive, font_dir, state_dir):
+    def __init__(self, drive, font_dir, glyph_dir, state_dir):
         self.drive, self.font_dir, self.state_dir = drive, font_dir, state_dir
         os.makedirs(os.path.join(state_dir, "images"), exist_ok=True)
         with open(os.path.join(font_dir, "table_v2.json"), encoding="utf-8") as f:
-            self.table = json.load(f)
+            self.table = json.load(f)            # the old statistical table, kept for comparison
+        # The direct glyph reading (rules.py + table3.json) lives with the owner's other Eenadu files, not in this repo.
+        sys.path.insert(0, glyph_dir)
+        import rules
+        self._rules = rules
+        with open(os.path.join(glyph_dir, "table3.json"), encoding="utf-8") as f:
+            self.table3 = json.load(f)
         self._docs = {}
 
     def editions(self):
@@ -81,8 +88,11 @@ class Store:
             self._docs[path] = pymupdf.open(path)
         return self._docs[path]
 
-    def _decode(self, codes):
+    def _decode_old(self, codes):
         return "".join(self.table.get(c, ["?"])[0] if c != " " else " " for c in codes)
+
+    def _decode(self, codes):
+        return self._rules.decode(codes, self.table3)
 
     def _ocr_by_bbox(self, edition, date, pno):
         # Tesseract line readings exist only for the page set the converter was
@@ -117,6 +127,7 @@ class Store:
                 x0, y0, x1, y1 = min(x0, bb[0]), min(y0, bb[1]), max(x1, bb[2]), max(y1, bb[3])
                 lines.append({
                     "converted": self._decode(codes),
+                    "old": self._decode_old(codes),
                     "ocr": ocr.get(tuple(round(v, 2) for v in bb)),
                 })
             if lines:
@@ -244,12 +255,13 @@ def main():
     ap.add_argument("--drive", default=os.path.expanduser(
         "~/Library/CloudStorage/GoogleDrive-pothulapatisiddhartha@gmail.com/My Drive/sohum-gativani"))
     ap.add_argument("--font-dir", default=os.path.expanduser("~/Workspace/sohum-veda-work/eenadu-font"))
+    ap.add_argument("--glyph-dir", default=os.path.expanduser("~/Workspace/sohum-veda-work/eenadu-glyph"))
     ap.add_argument("--state-dir", default=os.path.expanduser("~/eenadu-review"))
     ap.add_argument("--web", default=os.path.join(here, "..", "packages", "app", "build", "web"))
     ap.add_argument("--local-only", action="store_true", help="bind 127.0.0.1 instead of the LAN")
     a = ap.parse_args()
 
-    store = Store(a.drive, a.font_dir, a.state_dir)
+    store = Store(a.drive, a.font_dir, a.glyph_dir, a.state_dir)
     key = secrets.token_urlsafe(16)
     bind = "127.0.0.1" if a.local_only else "0.0.0.0"
     srv = http.server.ThreadingHTTPServer((bind, a.port), make_handler(store, key, os.path.abspath(a.web)))

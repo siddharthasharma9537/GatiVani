@@ -200,9 +200,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
             Text('Block $n · ${lines.length} lines', style: TextStyle(fontSize: 12, color: p.muted)),
             const SizedBox(height: 6),
             for (final l in lines) ...[
-              Text('Converted: ${l['converted']}', style: TextStyle(fontSize: 14, height: 1.4, color: p.ink)),
+              Text('Direct reading: ${l['converted']}',
+                  style: TextStyle(fontSize: 14, height: 1.4, color: p.ink)),
+              Text('Old table: ${l['old']}',
+                  style: TextStyle(fontSize: 13, height: 1.4, color: p.muted)),
               Text('OCR: ${l['ocr'] ?? '(none for this edition)'}',
-                  style: TextStyle(fontSize: 14, height: 1.4, color: p.muted)),
+                  style: TextStyle(fontSize: 13, height: 1.4, color: p.muted)),
               const SizedBox(height: 6),
             ],
             Row(children: [
