@@ -71,6 +71,9 @@ class Store:
         self._page_cache = {}
         self._lex = None
         self.rejoin_log = {"joined": 0, "unclear": []}
+        self.reflow_log = {}
+        self.opt_tags = True
+        self.opt_reflow = True
         self.join_log = {"kept_jump_headings": [], "sentences_rejoined": 0}
         self._docs = {}
 
@@ -344,7 +347,9 @@ class Store:
         for nxt in lines[1:]:
             nxt = nxt.strip()
             ta, tb = out.split(" ")[-1] if out else "", nxt.split(" ")[0] if nxt else ""
-            if ta and tb and self._TELWORD.match(ta) and self._TELWORD.match(tb) and words.get(ta + tb, 0) >= 2:
+            fj = words.get(ta + tb, 0) if (ta and tb and self._TELWORD.match(ta) and self._TELWORD.match(tb)) else 0
+            # the joined word is in the corpus twice or more; or once, when one of the pieces is not a word of its own
+            if fj >= 2 or (fj >= 1 and (words.get(ta, 0) < 2 or words.get(tb, 0) < 2)):
                 if pairs.get((ta, tb), 0) == 0:
                     out += nxt
                     self.rejoin_log["joined"] += 1
@@ -352,6 +357,8 @@ class Store:
                 self.rejoin_log["unclear"].append((ta, tb, words.get(ta + tb, 0), pairs.get((ta, tb), 0)))
             out += " " + nxt
         return out
+
+    _TAG_END = re.compile(r"\s*(\d{1,2})\s*\u0c32\u0c4b\s*$")        # the printed jump badge "3లో" at the end of a headline/deck line
 
     def _line_role(self, l):
         txt = l["converted"].strip()
@@ -379,6 +386,7 @@ class Store:
     def _structure(self, blocks, big_box_ok=True):
         """A story's blocks -> ordered items {role, text}. Roles: deck, byline, subhead, body, caption, sidebar, marker."""
         items = []
+        tags = []
         boxed_words = sum(len(" ".join(l["converted"] for l in b["lines"]).split()) for b in blocks if b.get("boxed") and b["kind"] != "headline")
         all_words = sum(len(" ".join(l["converted"] for l in b["lines"]).split()) for b in blocks if b["kind"] != "headline") or 1
         # when most of a story sits in a box the box is its background, not a sidebar
@@ -444,6 +452,15 @@ class Store:
                 run, runrole = [], None
 
             for l in b["lines"]:
+                # a short display line that ends with the jump badge "3లో": the badge is a pointer, not text
+                m = self._TAG_END.search(l["converted"])
+                if self.opt_tags and re.fullmatch(r"[\s\u200b\u200c\u200d]*\d{1,2}[\s\u200b\u200c\u200d]*\u0c32\u0c4b[\s\u200b\u200c\u200d]*", l["converted"]):
+                    tags.append(int(re.search(r"\d+", l["converted"]).group(0)))      # a line that is only the badge "3లో"
+                    continue
+                if self.opt_tags and m and len(l["converted"]) < 90 and "\u0c2e\u0c3f\u0c17\u0c24\u0c3e" not in l["converted"] \
+                        and set(l["tfonts"]) <= self.DISPLAY_FONTS | {"Eenadu-Light"} and l["converted"][:m.start()].strip():
+                    tags.append(int(m.group(1)))
+                    l = dict(l, converted=l["converted"][:m.start()])
                 role = self._line_role(l)
                 if role is None:
                     continue
@@ -514,6 +531,7 @@ class Store:
                     out.append({"role": "byline", "text": it["text"].strip("\u2022-\u2013 ").strip()})
                     continue
             out.append(it)
+        self._last_tags = tags
         return out
 
     @staticmethod
@@ -528,6 +546,50 @@ class Store:
                 parts.append(it["text"].strip())
         return "\n\n".join(parts)
 
+    def _reflow(self, p):
+        """Groups for one page, with text that flows from one column into the next put back with its story. A body block whose first
+        line starts in the middle of a word that the block to its left leaves unfinished (కేసు | లను = కేసులను) is the next column of
+        that block's story, even when it sits under a different headline. Returns (groups, number of blocks moved)."""
+        words, pairs = self._lexicon()
+        groups = [dict(a, blockIds=list(a["blockIds"])) for a in p["articles"]]
+        byid = {b["id"]: b for b in p["blocks"]}
+        owner = {i: g for g in groups for i in g["blockIds"]}
+        moved = 0
+        for b in p["blocks"]:
+            if b["kind"] == "headline" or not b["lines"]:
+                continue
+            tb = b["lines"][0]["converted"].split()[0] if b["lines"][0]["converted"].split() else ""
+            if not tb or not self._TELWORD.match(tb):
+                continue
+            x0, y0 = b["box"][0], b["box"][1]
+            best, bd = None, 1e9
+            for q in p["blocks"]:
+                if q is b or q["kind"] == "headline" or not q["lines"]:
+                    continue
+                qx1, qy1 = q["box"][2], q["box"][3]
+                if not (x0 - 0.20 <= qx1 <= x0 + 0.03 and qy1 >= y0):
+                    continue
+                last = q["lines"][-1]["converted"].strip()
+                if re.search(r"[.?!\u2026\u0964'\"\u2019\u201d)]\s*$", last):
+                    continue                                   # the left block ends a sentence: nothing flows on
+                ta = last.split(" ")[-1]
+                fj = words.get(ta + tb, 0) if self._TELWORD.match(ta) else 0
+                if fj >= 1 and pairs.get((ta, tb), 0) == 0 and (fj >= 2 or words.get(tb, 0) < 2):
+                    d = x0 - qx1
+                    if abs(d) < bd:
+                        best, bd = q, abs(d)
+            if best is not None and owner.get(b["id"]) is not owner.get(best["id"]):
+                src, dst = owner[b["id"]], owner[best["id"]]
+                src["blockIds"].remove(b["id"])
+                dst["blockIds"].append(b["id"])
+                owner[b["id"]] = dst
+                moved += 1
+        order = {b["id"]: i for i, b in enumerate(p["blocks"])}
+        for g in groups:
+            g["blockIds"].sort(key=lambda bid: order[bid])
+        self.reflow_log.setdefault("moved", []).append((p.get("label", ""), moved))
+        return groups, moved
+
     def _build_paper(self, edition, date):
         doc = self.doc(edition, date)
         if doc is None:
@@ -536,12 +598,19 @@ class Store:
         for pno in range(1, len(doc) + 1):
             p = self.page(edition, date, pno)
             byid = {b["id"]: b for b in p["blocks"]}
-            for gi, a in enumerate(p["articles"]):
+            groups, _moved = self._reflow(p) if self.opt_reflow else ([dict(a) for a in p["articles"]], 0)
+            self.reflow_log.setdefault("by_page", {})[(edition, pno)] = _moved
+            for gi, a in enumerate(groups):
                 blocks = [byid[i] for i in a["blockIds"]]
                 items = self._structure(blocks)
                 paras = [it["text"] for it in items if it["role"] in ("body", "subhead", "deck", "sidebar") and it["text"]]
                 words = sum(len(it["text"].split()) for it in items if it["role"] == "body")
                 head = a["headline"].strip()
+                tags = list(getattr(self, "_last_tags", []))
+                mt = self._TAG_END.search(head)
+                if self.opt_tags and mt and head[:mt.start()].strip():
+                    tags.append(int(mt.group(1)))              # the jump badge ("3లో") is a pointer, not headline text
+                    head = head[:mt.start()].strip()
                 graphic = a.get("graphicBox")
                 if not head and not graphic and words < 40:
                     continue                     # page furniture and fragments
@@ -551,11 +620,11 @@ class Store:
                 story = {"id": "p%d-g%d" % (pno, gi), "page": pno, "label": p["label"], "section": p["section"] or "News",
                          "headline": head, "graphic": graphic, "paras": paras, "items": items, "words": words, "box": box, "size": (p["width"], p["height"]),
                          "isCont": self._CONT_HEAD in first, "contTo": [], "contFrom": None, "hidden": False,
-                         "headline_from": "", "kicker": ""}
+                         "headline_from": "", "kicker": "", "tags": tags}
                 # a headline that runs over several blocks comes out as several head-only groups: join them to the story that follows
                 prev = stories[-1] if stories else None
                 if prev and prev["page"] == pno and prev["words"] == 0 and prev["headline"] and not prev["graphic"] and (head or paras) \
-                        and not graphic:
+                        and not graphic and not any(it["role"] in ("deck", "byline", "subhead", "marker", "caption") for it in prev["items"]):
                     story["headline"] = (prev["headline"] + " " + head).strip()
                     story["box"] = [min(prev["box"][0], box[0]), min(prev["box"][1], box[1]), max(prev["box"][2], box[2]),
                                     max(prev["box"][3], box[3])]
@@ -589,6 +658,10 @@ class Store:
                     best, bd = st, dx * dx + dy * dy
             if best is not None and bd <= 60 ** 2 and (best, to) not in pairs:
                 pairs.append((best, to))
+        for st in (stories if self.opt_tags else []):  # jump badges printed on the story ("3లో") are pointers too
+            for n in st["tags"]:
+                if all(not (x is st and y == n) for x, y in pairs):
+                    pairs.append((st, n))
         if not jumps:                                # no links file: fall back to the "మిగతా N లో" words in the text
             for st in stories:
                 for m in self._CONT_MARK.finditer(" ".join(st["paras"])):
@@ -607,6 +680,18 @@ class Store:
                 if sc > score:
                     best, score = c, sc
             if best is None or score < 3:
+                # no "(... తరువాయి)" block: a printed jump badge ("3లో") points at the full story, which repeats the headline
+                sv = vocab(st["headline"])
+                alt, asc = None, 0
+                for c in stories:
+                    if c["page"] == n and not c["hidden"] and c is not st and c["items"]:
+                        k = len(vocab(c["headline"]) & sv)
+                        if k > asc:
+                            alt, asc = c, k
+                if alt is not None and asc >= 3 and asc >= 0.5 * min(len(sv), len(vocab(alt["headline"])) or 1):
+                    best, score = alt, 9
+                    st["_by_headline"] = True
+            if best is None or score < 3:
                 reason = ("no continuation block marked '(... తరువాయి)' found on page %d" % n) if not cands else \
                     "%d candidate(s) on page %d, but none shares enough words with the front part (best score %d)" % (len(cands), n, score)
                 st["contTo"].append({"page": n, "linked": False, "reason": reason})
@@ -620,6 +705,9 @@ class Store:
             # stays as a subheading and is listed in self.join_log["kept_jump_headings"].
             cont = [it for it in best["items"] if it["role"] != "marker"]
             front = [it for it in st["items"] if it["role"] != "marker"]
+            fdeck = [vocab(it["text"]) for it in front if it["role"] == "deck"]
+            cont = [it for it in cont if not (it["role"] == "deck" and any(
+                fd and len(fd & vocab(it["text"])) / len(fd) >= 0.6 for fd in fdeck))]      # deck lines the story page repeats
             jh = best["headline"].strip()
             if jh:
                 jv = vocab(jh)
@@ -632,6 +720,10 @@ class Store:
                 else:
                     cont.insert(0, {"role": "subhead", "text": jh})
                     self.join_log["kept_jump_headings"].append((st["id"], n, jh))
+            # a subheading that only repeats the story's own headline / deck words (the story page prints them again) is dropped
+            hv = vocab(" ".join([st["headline"]] + [it["text"] for it in front if it["role"] == "deck"]))
+            cont = [it for it in cont if not (it["role"] == "subhead" and vocab(it["text"]) and
+                                              len(vocab(it["text"]) & hv) / len(vocab(it["text"])) >= 0.7)]
             # a sentence cut by the page break: the last front paragraph does not end a sentence and the next item is body text
             if front and cont and front[-1]["role"] == "body" and cont[0]["role"] == "body" \
                     and not re.search(r"[.?!\u2026\u0964'\"\u2019\u201d)]\s*$", front[-1]["text"]):
