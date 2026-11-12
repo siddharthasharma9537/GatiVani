@@ -32,7 +32,7 @@ void main() {
   });
 
   test('a long sentence is cut at a comma, each piece within the limit', () {
-    final long = List.generate(30, (i) => 'ఇది పదం సంఖ్య ${i + 1}').join(', ') + '.';
+    final long = '${List.generate(30, (i) => 'ఇది పదం సంఖ్య ${i + 1}').join(', ')}.';
     final parts = seg.split(long);
     expect(parts.length, greaterThan(1));
     expect(parts.every((p) => p.length <= 220), true);
