@@ -7,6 +7,8 @@ import 'features/library/library_screen.dart';
 import 'features/auth/gemini_key_gate_screen.dart';
 import 'features/library/history_screen.dart';
 import 'features/live/live_feed_screen.dart';
+import 'features/review/paper_today_screen.dart';
+import 'features/review/review_screen.dart';
 import 'features/library/playlist_detail_screen.dart';
 import 'features/library/playlists_screen.dart';
 import 'features/reader/reader_screen.dart';
@@ -72,7 +74,23 @@ final GoRouter appRouter = GoRouter(
           GoRoute(path: '/', builder: (_, __) => const LiveFeedScreen()),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/paper', builder: (_, __) => const PaperScreen()),
+          GoRoute(
+            path: '/paper',
+            builder: (_, __) => const PaperScreen(),
+            routes: [
+              // local-only "Today's paper" (Eenadu, owner's Mac); compiled in only with --dart-define=EENADU_REVIEW=true
+              if (kEenaduReview) ...[
+                GoRoute(path: 'today', builder: (_, __) => const PaperTodayScreen()),
+                GoRoute(
+                  path: 'today/story',
+                  builder: (_, state) => StoryScreen(
+                      edition: state.uri.queryParameters['edition'] ?? '',
+                      date: state.uri.queryParameters['date'] ?? '',
+                      id: state.uri.queryParameters['id'] ?? ''),
+                ),
+              ],
+            ],
+          ),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/shows', builder: (_, __) => const ShowsScreen()),
@@ -136,6 +154,9 @@ final GoRouter appRouter = GoRouter(
         },
       ),
     ),
+    // Local-only Eenadu review; compiled in only with --dart-define=EENADU_REVIEW=true.
+    if (kEenaduReview)
+      GoRoute(path: '/review', builder: (_, __) => const ReviewScreen()),
     GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
     GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
     GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
