@@ -54,11 +54,23 @@ Future<void> main() async {
     result['model_load_seconds'] = loadSw.elapsedMilliseconds / 1000;
     _log('model loaded in ${result['model_load_seconds']} s');
     result['normalised'] = [for (final s in _sentences) const TeluguNormalizer().normalize(s)];
+    // Optional: a sentences.txt next to the page ("1. text" lines) is read as ONE text, like the model's own make_samples.py does,
+    // so the total duration can be compared with the Python output for the same text (durations do not depend on the noise).
+    final texts = <String>[..._sentences];
+    try {
+      final r = await web.window.fetch('sentences.txt'.toJS).toDart;
+      if (r.ok) {
+        final t = (await r.text().toDart).toDart;
+        final lines = t.split('\n').where((l) => RegExp(r'^\d+\.\s').hasMatch(l)).map((l) => l.replaceFirst(RegExp(r'^\d+\.\s*'), ''));
+        texts.add(lines.join(' '));
+        result['joined_normalised'] = const TeluguNormalizer().normalize(texts.last);
+      }
+    } catch (_) {}
     final runs = <Map<String, Object?>>[];
     for (final voice in ['female', 'male']) {
-      for (var i = 0; i < _sentences.length; i++) {
+      for (var i = 0; i < texts.length; i++) {
         final sw = Stopwatch()..start();
-        final audio = await engine.synthesize(_sentences[i], voice: voice);
+        final audio = await engine.synthesize(texts[i], voice: voice);
         sw.stop();
         var peak = 0.0;
         var nan = 0;
@@ -78,7 +90,7 @@ Future<void> main() async {
         };
         runs.add(run);
         _log(jsonEncode(run));
-        final name = '${voice}_$i.wav';
+        final name = i < _sentences.length ? '${voice}_$i.wav' : '${voice}_joined.wav';
         final wav = audio.toWav();
         try {
           final init = web.RequestInit(method: 'PUT', body: wav.toJS);

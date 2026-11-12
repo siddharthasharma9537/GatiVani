@@ -61,8 +61,10 @@ Telugu voice, else the cloud voice), **On-device**, **Phone's voice**, or **Onli
   phone**.
 - **Measured** (this Mac, ONNX Runtime Web/WASM in the in-app browser, real voice pack, `tool/tts_probe`): model load 0.7 s warm,
   real-time factor 0.17-0.20 (about 5x faster than real time), peak level and loudness in line with the model's published samples,
-  no NaN, both voices. Not verified by ear, not measured on a phone, not compared with the model's Python output (see the owner
-  steps in the PR).
+  no NaN, both voices. On a four-sentence news paragraph (with "140" and "15" in it) the total audio duration equals the model's
+  own Python output to the sample (24.79 s female, 23.52 s male), which checks the text path, the encoder, the durations and the
+  inverse STFT length against the reference. Not verified by ear, not measured on a phone, and the normaliser is not yet
+  compared with the Python one over the whole number range (owner step in the PR).
 - **Not done / needs a device**: Android background playback (a foreground service, e.g. `audio_service`) and the iOS
   `UIBackgroundModes: audio` entry (the iOS project's Info.plist is not in this repo); phone-call interruption is handled by
   just_audio's audio session for the on-device voice, not tested on a device; iOS needs a minimum iOS 16 and static linkage for
