@@ -18,10 +18,22 @@
 @import audio_session;
 #endif
 
+#if __has_include(<disk_space_plus/DiskSpacePlusPlugin.h>)
+#import <disk_space_plus/DiskSpacePlusPlugin.h>
+#else
+@import disk_space_plus;
+#endif
+
 #if __has_include(<file_picker/FilePickerPlugin.h>)
 #import <file_picker/FilePickerPlugin.h>
 #else
 @import file_picker;
+#endif
+
+#if __has_include(<flutter_onnxruntime/FlutterOnnxruntimePlugin.h>)
+#import <flutter_onnxruntime/FlutterOnnxruntimePlugin.h>
+#else
+@import flutter_onnxruntime;
 #endif
 
 #if __has_include(<image_picker_ios/FLTImagePickerPlugin.h>)
@@ -71,7 +83,9 @@
 + (void)registerWithRegistry:(NSObject<FlutterPluginRegistry>*)registry {
   [AppLinksIosPlugin registerWithRegistrar:[registry registrarForPlugin:@"AppLinksIosPlugin"]];
   [AudioSessionPlugin registerWithRegistrar:[registry registrarForPlugin:@"AudioSessionPlugin"]];
+  [DiskSpacePlusPlugin registerWithRegistrar:[registry registrarForPlugin:@"DiskSpacePlusPlugin"]];
   [FilePickerPlugin registerWithRegistrar:[registry registrarForPlugin:@"FilePickerPlugin"]];
+  [FlutterOnnxruntimePlugin registerWithRegistrar:[registry registrarForPlugin:@"FlutterOnnxruntimePlugin"]];
   [FLTImagePickerPlugin registerWithRegistrar:[registry registrarForPlugin:@"FLTImagePickerPlugin"]];
   [IntegrationTestPlugin registerWithRegistrar:[registry registrarForPlugin:@"IntegrationTestPlugin"]];
   [JustAudioPlugin registerWithRegistrar:[registry registrarForPlugin:@"JustAudioPlugin"]];
