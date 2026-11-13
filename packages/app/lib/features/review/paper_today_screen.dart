@@ -11,7 +11,7 @@ import 'review_screen.dart' show kEenaduReview;
 /// and writes nothing anywhere. The story screen can read a story aloud with the on-device voice (services/tts; the text is synthesised
 /// on this device and goes nowhere; in the browser the device's own voice is not used).
 const String kPaperNotice =
-    'Machine-converted from the printed PDF, not proofread. Eenadu text: owner only, on this Mac.';
+    'Telugu reading: AI proposal, not proofread. Machine-converted from the printed PDF. Eenadu text: owner only, on this Mac.';
 
 Uri _api(String route, [Map<String, String> q = const {}]) =>
     Uri.base.replace(path: '/review-api/$route', queryParameters: q, fragment: '');
@@ -200,13 +200,29 @@ class StoryScreen extends StatefulWidget {
 class _StoryScreenState extends State<StoryScreen> {
   Map<String, dynamic>? _s;
   String? _error;
+  int _request = 0;
 
   @override
   void initState() {
     super.initState();
+    _loadStory();
+  }
+
+  @override
+  void didUpdateWidget(covariant StoryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id != widget.id || oldWidget.edition != widget.edition || oldWidget.date != widget.date) {
+      _loadStory();
+    }
+  }
+
+  void _loadStory() {
+    final request = ++_request;
+    _s = null;
+    _error = null;
     _get(_api('story', {'edition': widget.edition, 'date': widget.date, 'id': widget.id}))
-        .then((d) => mounted ? setState(() => _s = d as Map<String, dynamic>) : null)
-        .catchError((e) { if (mounted) setState(() => _error = '$e'); });
+        .then((d) => mounted && request == _request ? setState(() => _s = d as Map<String, dynamic>) : null)
+        .catchError((e) { if (mounted && request == _request) setState(() => _error = '$e'); });
   }
 
   @override
