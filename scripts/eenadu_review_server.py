@@ -324,13 +324,12 @@ class Store:
         three editions: the corpus used to decide whether two pieces across a line break are one word."""
         if self._lex is None:
             words, pairs = collections.Counter(), collections.Counter()
-            for ed in [e["edition"] for e in self.editions()]:
-                date = [e["date"] for e in self.editions() if e["edition"] == ed][0]
+            for ed, date in sorted({(e["edition"], e["date"]) for e in self.editions()}):
                 doc = self.doc(ed, date)
                 for pno in range(1, len(doc) + 1):
                     for b in self.page(ed, date, pno)["blocks"]:
                         for l in b["lines"]:
-                            toks = l["converted"].split()
+                            toks = [self._word(t) for t in l["converted"].split()]
                             for i in range(1, len(toks) - 1):
                                 words[toks[i]] += 1
                                 if i + 1 < len(toks) - 1:
@@ -340,23 +339,29 @@ class Store:
 
     _TELWORD = re.compile("^[\u0c00-\u0c7f]+$")
 
+    @staticmethod
+    def _word(t):
+        return t.strip(".,;:!?()[]{}'\"\u2018\u2019\u201c\u201d\u2026\u2022-\u0964\u0965")
+
     def _join_lines(self, lines):
         """Join printed lines into running text. A space goes between lines, except where the line end cuts a word: the two
-        pieces are glued when the joined word is one the corpus already has (twice or more) and the pieces never stand as two
-        words inside a line. Joined-word cases that are not clear are logged."""
+        pieces are glued only when the joined word is attested and at least one piece is not independently attested.
+        Ambiguous boundaries are logged instead of guessing."""
         words, pairs = self._lexicon()
         out = lines[0].strip()
         for nxt in lines[1:]:
             nxt = nxt.strip()
             ta, tb = out.split(" ")[-1] if out else "", nxt.split(" ")[0] if nxt else ""
-            fj = words.get(ta + tb, 0) if (ta and tb and self._TELWORD.match(ta) and self._TELWORD.match(tb)) else 0
-            # the joined word is in the corpus twice or more; or once, when one of the pieces is not a word of its own
-            if fj >= 2 or (fj >= 1 and (words.get(ta, 0) < 2 or words.get(tb, 0) < 2)):
-                if pairs.get((ta, tb), 0) == 0:
+            # Keep punctuation in the output; only quotes on the outside of the boundary may be ignored.
+            a, b = ta.lstrip("'\"\u2018\u201c\u2022"), tb.rstrip(".,;:!?)]}'\"\u2019\u201d\u2026\u0964\u0965")
+            if a and b and self._TELWORD.fullmatch(a) and self._TELWORD.fullmatch(b):
+                fj, separate = words.get(a + b, 0), pairs.get((a, b), 0)
+                if fj and not separate and (not words.get(a, 0) or not words.get(b, 0)):
                     out += nxt
                     self.rejoin_log["joined"] += 1
                     continue
-                self.rejoin_log["unclear"].append((ta, tb, words.get(ta + tb, 0), pairs.get((ta, tb), 0)))
+                if fj or not words.get(a, 0) or not words.get(b, 0):
+                    self.rejoin_log["unclear"].append((a, b, fj, separate))
             out += " " + nxt
         return out
 
@@ -394,6 +399,9 @@ class Store:
         # when most of a story sits in a box the box is its background, not a sidebar
         sidebars_on = big_box_ok and boxed_words < 0.6 * all_words
         prevl = None
+        subhead_size = 0
+        subhead_count = 0
+        sidebar = False
         for b in blocks:
             if b["kind"] == "headline":
                 continue
@@ -424,7 +432,7 @@ class Store:
                     left_all = min(l["bbox"][0] for l in run)
                     first_indented = len(run) > 1 and run[0]["bbox"][0] - left_all > 3
                     for k, ps in enumerate(paras):
-                        role = "sidebar" if (sidebars_on and b.get("boxed")) else "body"
+                        role = "sidebar" if sidebar or (sidebars_on and b.get("boxed")) else "body"
                         text = self._join_lines([l["converted"] for l in ps])
                         if k == 0 and not first_indented and items and items[-1]["role"] == role and items[-1].get("_open"):
                             items[-1]["text"] = self._join_lines([items[-1]["text"], text])
@@ -468,6 +476,21 @@ class Store:
                     continue
                 if role == "headline":
                     role = "subhead"
+                # A smaller display heading after the main subheads introduces a side note.
+                # Keep its following columns together, but exclude them from narration.
+                if role == "body" and subhead_count >= 2 and l is b["lines"][-1] \
+                        and set(l["tfonts"]) <= self.DISPLAY_FONTS and 13.15 <= l["size"] < subhead_size - 0.6:
+                    flush()
+                    sidebar = True
+                    items.append({"role": "sidebar", "text": l["converted"].strip()})
+                    continue
+                if role == "subhead":
+                    if runrole != "subhead":
+                        subhead_count += 1
+                    if sidebar:
+                        flush()
+                    subhead_size = max(subhead_size, l["size"])
+                    sidebar = False
                 if role == "subhead" and (runrole == "deck" or (not run and items and items[-1]["role"] == "deck")) \
                         and prevl is not None and abs(prevl["size"] - l["size"]) < 0.6 and l["bbox"][1] - prevl["bbox"][3] < 8:
                     role = "deck"
@@ -505,7 +528,9 @@ class Store:
         merged = []
         for it in items:
             it.pop("_open", None)
-            if it["role"] == "deck" and not it["text"].lstrip().startswith("\u2022") and merged and merged[-1]["role"] == "deck":
+            if it["role"] == "sidebar" and merged and merged[-1]["role"] == "sidebar":
+                merged[-1]["text"] += "\n\n" + it["text"]
+            elif it["role"] == "deck" and not it["text"].lstrip().startswith("\u2022") and merged and merged[-1]["role"] == "deck":
                 merged[-1]["text"] = self._join_lines([merged[-1]["text"], it["text"]])          # a deck bullet that runs over two lines
             elif it["role"] == "caption":
                 starts_bullet = it["text"].lstrip().startswith("\u2022")
@@ -537,11 +562,17 @@ class Store:
         return out
 
     @staticmethod
+    def _clean_reading(t):
+        t = Store._POINTER.sub(" ", t)
+        t = re.sub(r"\([^()]*" + Store._CONT_HEAD + r"[^()]*\)", " ", t)
+        return re.sub(r"[ \t]{2,}", " ", t).strip()
+
+    @staticmethod
     def _narration(st):
         """What would be read aloud: the headline once, then the body paragraphs and subheadings in order. No page markers, captions,
         boxed notes, deck bullets, bylines or repeated headings."""
         def clean(t):
-            t = Store._POINTER.sub(" ", t)                       # "(మిగతా 2లో)" is a page pointer, not words to read
+            t = Store._clean_reading(t)
             t = re.sub(r"\s{2,}", " ", t).strip()
             # a paragraph that ends in a bare "3లో" (no full stop before it) ends in the printed jump badge
             return re.sub(r"(?<=[^\s.\u0964?!\u2026])\s+\d{1,2}\s*\u0c32\u0c4b$", "", t).strip()
@@ -618,7 +649,8 @@ class Store:
                 items = self._structure(blocks)
                 paras = [it["text"] for it in items if it["role"] in ("body", "subhead", "deck", "sidebar") and it["text"]]
                 words = sum(len(it["text"].split()) for it in items if it["role"] == "body")
-                head = a["headline"].strip()
+                head = re.sub(r"[\u2022\u25cf\u25aa\u25a0]+", " ", a["headline"])
+                head = re.sub(r"\s+", " ", head).strip()
                 tags = list(getattr(self, "_last_tags", []))
                 mt = self._TAG_END.search(head)
                 if self.opt_tags and mt and head[:mt.start()].strip():
@@ -755,6 +787,17 @@ class Store:
         for st in stories:
             if all(c["linked"] for c in st["contTo"]):
                 st["items"] = [it for it in st["items"] if it["role"] != "marker"]
+            st["headline"] = self._clean_reading(st["headline"])
+            seen_heads = {st["headline"]}
+            clean_items = []
+            for it in st["items"]:
+                text = self._clean_reading(it["text"])
+                if not text or (it["role"] == "subhead" and text in seen_heads):
+                    continue
+                if it["role"] == "subhead":
+                    seen_heads.add(text)
+                clean_items.append(dict(it, text=text))
+            st["items"] = clean_items
             st["narration"] = self._narration(st)
         shown = [s for s in stories if not s["hidden"]]
         sections = []

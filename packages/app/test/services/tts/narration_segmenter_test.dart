@@ -1,9 +1,17 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gativani_app/services/tts/narration_segmenter.dart';
 
-// Neutral Telugu test sentences written for this file (no newspaper content).
+// Neutral Telugu test sentences written for this file (AI proposals; no newspaper content).
 void main() {
   const seg = NarrationSegmenter();
+
+  test('ellipses stay within the headline phrase and preserve all text', () {
+    for (final pause in ['..', '...', '…']) {
+      final headline = 'A walk through the garden$pause a quiet morning';
+      expect(seg.split('$headline\n\nThe next paragraph starts here.'),
+          [headline, 'The next paragraph starts here.']);
+    }
+  });
 
   test('splits at danda, question and exclamation marks', () {
     expect(seg.split('ఈ రోజు వర్షం కురిసింది। రేపు ఎండ ఉంటుందా? తప్పకుండా వస్తాను!'),

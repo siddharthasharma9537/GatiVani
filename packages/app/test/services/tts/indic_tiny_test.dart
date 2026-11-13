@@ -113,6 +113,10 @@ void main() {
   test('frontend: chunks at sentence ends, ids have a blank around every symbol', () {
     final fe = IndicTinyFrontend(_cfg());
     expect(fe.chunks('కా త. కా కా'), ['కా త.', 'కా కా']);
+    // Neutral Telugu fixture, AI proposal: an ellipsis stays in one synthesis chunk.
+    for (final pause in ['..', '...', '…']) {
+      expect(fe.chunks(fe.normalize('కా త$pause కా కా')), ['కా త, కా కా']);
+    }
     expect(fe.ids('కా'), [0, 5, 0, 6, 0]);
   });
 
