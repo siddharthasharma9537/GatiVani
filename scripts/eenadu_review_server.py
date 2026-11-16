@@ -55,7 +55,8 @@ def lan_ip():
 
 
 class Store:
-    def __init__(self, drive, font_dir, glyph_dir, state_dir):
+    def __init__(self, drive, font_dir, glyph_dir, state_dir, cancel_event=None):
+        self.cancel_event = cancel_event
         self.drive, self.font_dir, self.state_dir = drive, font_dir, state_dir
         os.makedirs(os.path.join(state_dir, "images"), exist_ok=True)
         with open(os.path.join(font_dir, "table_v2.json"), encoding="utf-8") as f:
@@ -146,6 +147,8 @@ class Store:
         return {k[1]: v for k, v in self._ocr_cache[code].items() if k[0] == pno}
 
     def page(self, edition, date, pno):
+        if getattr(self, "cancel_event", None) is not None and self.cancel_event.is_set():
+            raise InterruptedError("Extraction cancelled")
         with self._lock:
             key = (edition, date, pno)
             if key not in self._page_cache:
@@ -851,6 +854,8 @@ class Store:
 
 
 def make_handler(store, key, web_dir):
+    from local_uploads import LocalUploads, MAX_UPLOAD_BYTES
+    uploads = LocalUploads(store)
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=web_dir, **kw)
@@ -886,23 +891,50 @@ def make_handler(store, key, web_dir):
             if not self._authed(q):
                 return self._json(401, {"error": "key required"})
             route = u.path[len("/review-api/"):]
+            if route == "upload-job" and method == "GET":
+                job = uploads.status(q.get("id", ""))
+                return self._json(200, job) if job else self._json(404, {"error": "No such local job"})
+            if route == "cancel-upload" and method == "POST":
+                origin = self.headers.get("Origin")
+                if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+                    return self._json(403, {"error": "same-origin request required"})
+                job = uploads.cancel(q.get("id", ""))
+                return self._json(200, job) if job else self._json(404, {"error": "No such local job"})
+            if route == "upload" and method == "POST":
+                origin = self.headers.get("Origin")
+                if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+                    return self._json(403, {"error": "same-origin upload required"})
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= MAX_UPLOAD_BYTES:
+                        return self._json(413, {"error": "Choose a PDF smaller than 100 MB."})
+                    filename = urllib.parse.unquote(self.headers.get("X-Filename", "paper.pdf"))
+                    job = uploads.start(self.rfile, size, filename)
+                    return self._json(202, job)
+                except (ValueError, RuntimeError) as e:
+                    return self._json(400, {"error": str(e)[:300]})
+            if method == "POST":
+                return self._json(405, {"error": "method not allowed"})
+            if method != "GET" and route != "results":
+                return self._json(405, {"error": "method not allowed"})
             ed, date = q.get("edition", ""), q.get("date", "")
+            active = uploads.store_for(ed, date) or store
             try:
                 pno = int(q.get("page", "0"))
             except ValueError:
                 return self._json(400, {"error": "bad page"})
             if route == "editions":
-                return self._json(200, store.editions())
-            if store._pdf_path(ed, date)[0] is None:
+                return self._json(200, uploads.editions() + store.editions())
+            if active._pdf_path(ed, date)[0] is None:
                 return self._json(404, {"error": "unknown edition"})
             if route == "page":
-                p = store.page(ed, date, pno)
+                p = active.page(ed, date, pno)
                 return self._json(200, p) if p else self._json(404, {"error": "no page"})
             if route == "image":
-                img = store.image(ed, date, pno)
+                img = active.image(ed, date, pno)
                 return self._send(200, img, "image/jpeg") if img else self._json(404, {"error": "no page"})
             if route == "paper":
-                pp = store.paper(ed, date)
+                pp = active.paper(ed, date)
                 if pp is None:
                     return self._json(404, {"error": "no such edition"})
                 return self._json(200, {"sections": [
@@ -912,21 +944,21 @@ def make_handler(store, key, web_dir):
                          "continued": bool(st["contTo"]), "unmatched": any(not c["linked"] for c in st["contTo"])}
                         for st in sec["stories"]]} for sec in pp["sections"]]})
             if route == "story":
-                pp = store.paper(ed, date)
+                pp = active.paper(ed, date)
                 st = (pp or {}).get("byId", {}).get(q.get("id", ""))
                 if st is None:
                     return self._json(404, {"error": "no such story"})
-                return self._json(200, st)
+                return self._json(200, dict(st, editionTitle=getattr(active, "display_title", ed)))
             if route == "crop":
                 try:
                     box = [float(v) for v in q.get("box", "").split(",")]
                     assert len(box) == 4
                 except (ValueError, AssertionError):
                     return self._json(400, {"error": "bad box"})
-                img = store.crop(ed, date, pno, box)
+                img = active.crop(ed, date, pno, box)
                 return self._send(200, img, "image/jpeg") if img else self._json(404, {"error": "no such crop"})
             if route == "results":
-                path = store.results_path(ed, date)
+                path = active.results_path(ed, date)
                 if method == "GET":
                     data = {}
                     if os.path.exists(path):
@@ -967,6 +999,11 @@ def make_handler(store, key, web_dir):
         def do_PUT(self):
             if self.path.startswith("/review-api/"):
                 return self._handle_api("PUT")
+            return self._json(405, {"error": "method not allowed"})
+
+        def do_POST(self):
+            if self.path.startswith("/review-api/"):
+                return self._handle_api("POST")
             return self._json(405, {"error": "method not allowed"})
 
     return Handler

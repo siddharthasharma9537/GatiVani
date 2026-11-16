@@ -344,3 +344,41 @@ GV_REFERENCE_PYTHON="$HOME/Workspace/sohum-veda-work/eenadu-glyph/tts_samples/ve
 
 These commands are instructions only; current checks use Dart tests and the
 browser's ONNX runtime, not execution of downloaded model Python.
+
+## Local PDF upload in the review build (2026-11-16)
+
+With `EENADU_REVIEW=true`, the Paper tab (`/paper`) opens the local reader,
+including **Upload PDF locally**. Normal builds retain their cloud Paper screen.
+The local button sends the PDF only to `/review-api/upload` on the same Mac
+server, without signing in, creating a Supabase job, or calling a paid service.
+
+The server saves uploads under `<state-dir>/uploads/<random-id>/`, outside the
+checkout when using the documented default `~/eenadu-review`. This chat's preview
+uses its separate local work folder for state. Each upload has an isolated
+converter store, page progress, a grouping stage, and a Cancel extraction button.
+Completed results are saved locally and reappear in the edition picker after a
+server restart. Interrupted jobs require another upload. Only one extraction
+runs at a time; cancellation is checked between page operations.
+
+Limits: PDF only, up to 100 MiB and 100 pages, without password protection.
+The current converter handles supported Eenadu legacy-font text layers. A
+scan/graphic-only PDF reports that local OCR is needed; no cloud OCR fallback is
+used. Graphic headlines in otherwise supported pages remain pictures with their
+needs-OCR notice. Text and article grouping are AI proposals requiring review.
+Page-label/continuation sidecars are reused only when an uploaded file's bytes
+match the original daily PDF in the local Drive folder.
+
+Local upload/status/cancel requests require the server's private session cookie;
+upload and cancellation reject a different browser origin. Keep the access link
+private and use `--local-only` for a Mac-only preview. Stopping extraction retains
+local source files/results; it is not a delete action.
+
+Tests: `~/eenadu-env/bin/python -m unittest discover -s scripts/tests -v` and
+`cd packages/app && flutter test`. The upload widget test checks that selecting a
+PDF, polling its status, and opening extracted articles use only the local API.
+
+Verified on 2026-11-16: the owner's 19-page Telangana PDF was selected through
+the browser's local upload button, all 19 pages completed, and 199 article
+candidates appeared. Opened an extracted story and confirmed the Listen controls
+are available. These counts are machine grouping results, not proofread article
+accuracy. Final checks: 88 Flutter tests, 14 Python tests, review web build.
