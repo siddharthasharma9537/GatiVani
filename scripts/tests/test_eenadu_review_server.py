@@ -26,6 +26,26 @@ def store(words=None, pairs=None):
 
 
 class ReadingTests(unittest.TestCase):
+    def test_composite_graphic_crop_attaches_to_body_group(self):
+        class Page:
+            rect = type('Rect', (), {'width': 1000, 'height': 1500})()
+            def get_image_info(self):
+                return [{'bbox': [300, 180, 800, 550]}]
+
+        deck = block('deck', [line('Supporting line')], 'headline')
+        deck['box'] = [0.3, 0.18, 0.5, 0.19]
+        pictures = Store._wide_pictures(Page(), [deck])
+        self.assertEqual(pictures, [[0.3, 0.12, 0.8, 0.18]])
+        body = block('body', [line('Body text')])
+        body['box'] = [0.3, 0.2, 0.5, 0.3]
+        far = block('far', [line('Different headline')], 'headline')
+        far['box'] = [0.3, 0.5, 0.5, 0.52]
+        far_body = block('far-body', [line('First line'), line('Second line'), line('Third line')])
+        far_body['box'] = [0.3, 0.53, 0.5, 0.7]
+        result = Store._articles([deck, body, far, far_body], pictures)
+        self.assertEqual(result[0]['graphicBox'], pictures[0])
+        self.assertNotIn('graphicBox', result[1])
+
     def test_heading_inside_body_block_becomes_own_story(self):
         lines = [line('A tribute', 'GodawariHeading', 36),
                  line('to a writer', 'GodawariHeading', 36, y=20),

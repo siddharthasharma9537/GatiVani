@@ -213,7 +213,7 @@ class Store:
                                "needsLook": headline or differs or not has_ocr})
         self._mark_boxed(pg, blocks, W, H)
         label, section = self._page_label(edition, date, pno)
-        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg)),
+        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg, blocks)),
                 "label": label, "section": section}
 
     @staticmethod
@@ -259,7 +259,7 @@ class Store:
             b["boxed"] = any(r.x0 - 3 <= x0 and r.y0 - 3 <= y0 and x1 <= r.x1 + 3 and y1 <= r.y1 + 3 for r in rects)
 
     @staticmethod
-    def _wide_pictures(pg):
+    def _wide_pictures(pg, blocks=()):
         """Wide, short pictures on the page (fractions of the page): big display headlines are often printed as a picture, with
         no text in the PDF at all. Photos are mostly squarer, the masthead sits at the very top; both are left out."""
         W, H = pg.rect.width, pg.rect.height
@@ -269,6 +269,15 @@ class Store:
             w, h = x1 - x0, y1 - y0
             if h > 0 and w / h >= 2.5 and w >= 0.15 * W and h >= 0.015 * H and y0 > 0.08 * H:
                 out.append([x0 / W, y0 / H, x1 / W, y1 / H])
+            elif h > 0 and w >= 0.35 * W and 0.08 * H < y0 < 0.5 * H:
+                # A headline and photo can be one large image, with a text deck overlaid below the headline.
+                top, bottom = y0 / H, y1 / H
+                left, right = x0 / W, x1 / W
+                decks = [b["box"][1] for b in blocks if b["kind"] == "headline"
+                         and top + 0.015 <= b["box"][1] <= top + 0.4 * (bottom - top)
+                         and min(right, b["box"][2]) - max(left, b["box"][0]) >= 0.8 * (b["box"][2] - b["box"][0])]
+                if decks:
+                    out.append([left, top, right, min(decks)])
         return out
 
     @staticmethod
@@ -309,16 +318,27 @@ class Store:
             a["blockIds"].sort(key=lambda bid: order[bid])
             a.pop("_idx", None)
             a.pop("_hb", None)
+        picture_matches = [[] for _ in pictures]
         for a in arts:
             boxes = a.pop("_boxes")
             gx0, gy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
             gx1 = max(b[2] for b in boxes)
-            for p in pictures:
+            for i, p in enumerate(pictures):
                 gap = gy0 - p[3]
                 overlap = min(gx1, p[2]) - max(gx0, p[0])
                 if -0.04 <= gap <= 0.02 and overlap >= 0.5 * min(gx1 - gx0, p[2] - p[0]):
-                    a["graphicBox"] = p
-                    break
+                    picture_matches[i].append(a)
+        by_id = {b["id"]: b for b in blocks}
+        for p, matches in zip(pictures, picture_matches):
+            if matches:
+                # A deck can be split into several groups; attach its picture only to the group with body text.
+                nearby = [a for a in matches if any(by_id[i]["kind"] == "headline" and
+                          -0.04 <= by_id[i]["box"][1] - p[3] <= 0.04 for i in a["blockIds"])]
+                if nearby:
+                    matches = nearby
+                best = max(matches, key=lambda a: sum(len(by_id[i]["lines"]) for i in a["blockIds"]
+                                                       if by_id[i]["kind"] == "body"))
+                best["graphicBox"] = p
         return arts
 
     # ── The paper as news: stories grouped by Eenadu's own page labels (for the app's "Today's paper" screen) ──────────────────────
@@ -695,7 +715,7 @@ class Store:
                 # a headline that runs over several blocks comes out as several head-only groups: join them to the story that follows
                 prev = stories[-1] if stories else None
                 if prev and prev["page"] == pno and prev["words"] == 0 and prev["headline"] and not prev["graphic"] and (head or paras) \
-                        and not graphic and min(prev["box"][2], box[2]) > max(prev["box"][0], box[0]) \
+                        and min(prev["box"][2], box[2]) > max(prev["box"][0], box[0]) \
                         and not any(it["role"] in ("deck", "byline", "subhead", "marker", "caption") for it in prev["items"]):
                     story["headline"] = (prev["headline"] + " " + head).strip()
                     story["box"] = [min(prev["box"][0], box[0]), min(prev["box"][1], box[1]), max(prev["box"][2], box[2]),
@@ -744,13 +764,16 @@ class Store:
                 st = absorbed[st["id"]]
             text = " ".join(st["paras"])
             cands = [c for c in stories if c["page"] == n and c["isCont"] and not c["hidden"] and c is not st]
-            best, score = None, 0
+            best, score, runner_up = None, 0, 0
             head_words = vocab(st["headline"] + " " + text)
             for c in cands:
                 # the continuation repeats the story's headline words; its first paragraphs share words with the front part
                 sc = 3 * len(vocab(c["headline"]) & head_words) + len(vocab(" ".join(c["paras"][:4])) & vocab(text))
                 if sc > score:
+                    runner_up = score
                     best, score = c, sc
+                elif sc > runner_up:
+                    runner_up = sc
             if best is None or score < 3:
                 # no "(... తరువాయి)" block: a printed jump badge ("3లో") points at the full story, which repeats the headline
                 sv = vocab(st["headline"])
@@ -784,7 +807,8 @@ class Store:
             if jh:
                 jv = vocab(jh)
                 known = vocab(" ".join([st["headline"]] + [it["text"] for it in front]))
-                if jv and len(jv & known) / len(jv) >= 0.5:
+                if jv and (len(jv & known) / len(jv) >= 0.5 or
+                           (st["graphic"] and score >= 6 and score >= 2 * max(1, runner_up))):
                     if st["graphic"] and not st["headline_from"]:
                         # the story's own headline is a picture; the continuation carries it as text
                         st["kicker"] = st["headline"]
