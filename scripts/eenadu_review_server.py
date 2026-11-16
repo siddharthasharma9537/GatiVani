@@ -190,6 +190,18 @@ class Store:
                     "tfonts": sorted({f for f, _, _ in spans if self.fonts.table_for(f) is not None}),
                 })
             if lines:
+                # Some PDF blocks contain a display heading followed by the article body.
+                # Split only an unmistakable leading run of large, pure heading-font lines.
+                split = self._leading_headline_lines(lines)
+                if split:
+                    for suffix, part, kind in (("h", lines[:split], "headline"), ("b", lines[split:], "body")):
+                        coords = [l["bbox"] for l in part]
+                        box = [min(c[0] for c in coords) / W, min(c[1] for c in coords) / H,
+                               max(c[2] for c in coords) / W, max(c[3] for c in coords) / H]
+                        blocks.append({"id": "%d:%d%s" % (pno, bi, suffix), "box": box, "lines": part,
+                                       "kind": kind, "hasOcr": all(l["ocr"] is not None for l in part),
+                                       "needsLook": True})
+                    continue
                 # a headline block is one that is mostly headline-size lines; a body block with a heading inside keeps its text
                 headline = n_head >= 0.6 * len(lines)
                 has_ocr = all(l["ocr"] is not None for l in lines)
@@ -203,6 +215,17 @@ class Store:
         label, section = self._page_label(edition, date, pno)
         return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg)),
                 "label": label, "section": section}
+
+    @staticmethod
+    def _leading_headline_lines(lines):
+        split = 0
+        while split < len(lines):
+            line = lines[split]
+            if BODY_FONT in line["tfonts"] or line["size"] < 24 or not any(
+                    Store._is_headline(f, line["size"]) for f in line["tfonts"]):
+                break
+            split += 1
+        return split if 0 < split < len(lines) and len(lines) - split >= 3 else 0
 
     @staticmethod
     def _differs(a, b):
@@ -672,7 +695,8 @@ class Store:
                 # a headline that runs over several blocks comes out as several head-only groups: join them to the story that follows
                 prev = stories[-1] if stories else None
                 if prev and prev["page"] == pno and prev["words"] == 0 and prev["headline"] and not prev["graphic"] and (head or paras) \
-                        and not graphic and not any(it["role"] in ("deck", "byline", "subhead", "marker", "caption") for it in prev["items"]):
+                        and not graphic and min(prev["box"][2], box[2]) > max(prev["box"][0], box[0]) \
+                        and not any(it["role"] in ("deck", "byline", "subhead", "marker", "caption") for it in prev["items"]):
                     story["headline"] = (prev["headline"] + " " + head).strip()
                     story["box"] = [min(prev["box"][0], box[0]), min(prev["box"][1], box[1]), max(prev["box"][2], box[2]),
                                     max(prev["box"][3], box[3])]

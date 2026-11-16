@@ -26,6 +26,23 @@ def store(words=None, pairs=None):
 
 
 class ReadingTests(unittest.TestCase):
+    def test_heading_inside_body_block_becomes_own_story(self):
+        lines = [line('A tribute', 'GodawariHeading', 36),
+                 line('to a writer', 'GodawariHeading', 36, y=20),
+                 line('First body line', y=30), line('Second body line', y=40),
+                 line('Third body line', y=50)]
+        self.assertEqual(Store._leading_headline_lines(lines), 2)
+        self.assertEqual(Store._leading_headline_lines(lines[:2]), 0)
+        heading = block('left-h', lines[:2], 'headline')
+        heading['box'] = [0.02, 0.1, 0.27, 0.2]
+        body = block('left-b', lines[2:])
+        body['box'] = [0.02, 0.2, 0.27, 0.8]
+        teaser = block('right-h', [line('A separate teaser')], 'headline')
+        teaser['box'] = [0.84, 0.1, 0.98, 0.2]
+        groups = Store._articles([teaser, heading, body])
+        self.assertEqual(groups[0]['blockIds'], ['right-h'])
+        self.assertEqual(groups[1]['blockIds'], ['left-h', 'left-b'])
+
     def test_attested_join_keeps_outer_punctuation(self):
         s = store({'పుస్తకాలు': 1, 'పుస్త': 2})
         self.assertEqual(s._join_lines(["'పుస్త", "కాలు.'"]), "'పుస్తకాలు.'")
