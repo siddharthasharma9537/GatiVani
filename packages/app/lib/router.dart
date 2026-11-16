@@ -76,7 +76,7 @@ final GoRouter appRouter = GoRouter(
         StatefulShellBranch(routes: [
           GoRoute(
             path: '/paper',
-            builder: (_, __) => const PaperScreen(),
+            builder: (_, __) => kEenaduReview ? const PaperTodayScreen() : const PaperScreen(),
             routes: [
               // local-only "Today's paper" (Eenadu, owner's Mac); compiled in only with --dart-define=EENADU_REVIEW=true
               if (kEenaduReview) ...[

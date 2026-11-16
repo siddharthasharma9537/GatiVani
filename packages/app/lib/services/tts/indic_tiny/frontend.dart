@@ -21,7 +21,8 @@ class IndicTinyFrontend {
     lastDropped.clear();
     final known = config.symbolId;
     final b = StringBuffer();
-    for (final rune in _telugu.normalize(text).runes) {
+    // Ellipses within a phrase are a pause, not a second synthesis chunk (AI proposal).
+    for (final rune in _telugu.normalize(text.replaceAll(RegExp(r'\.{2,}|…+'), ',')).runes) {
       final ch = String.fromCharCode(rune);
       if (ch == ' ' || known.containsKey('c:$ch')) {
         b.write(ch);

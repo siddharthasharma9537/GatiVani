@@ -55,7 +55,8 @@ def lan_ip():
 
 
 class Store:
-    def __init__(self, drive, font_dir, glyph_dir, state_dir):
+    def __init__(self, drive, font_dir, glyph_dir, state_dir, cancel_event=None):
+        self.cancel_event = cancel_event
         self.drive, self.font_dir, self.state_dir = drive, font_dir, state_dir
         os.makedirs(os.path.join(state_dir, "images"), exist_ok=True)
         with open(os.path.join(font_dir, "table_v2.json"), encoding="utf-8") as f:
@@ -146,6 +147,8 @@ class Store:
         return {k[1]: v for k, v in self._ocr_cache[code].items() if k[0] == pno}
 
     def page(self, edition, date, pno):
+        if getattr(self, "cancel_event", None) is not None and self.cancel_event.is_set():
+            raise InterruptedError("Extraction cancelled")
         with self._lock:
             key = (edition, date, pno)
             if key not in self._page_cache:
@@ -187,6 +190,18 @@ class Store:
                     "tfonts": sorted({f for f, _, _ in spans if self.fonts.table_for(f) is not None}),
                 })
             if lines:
+                # Some PDF blocks contain a display heading followed by the article body.
+                # Split only an unmistakable leading run of large, pure heading-font lines.
+                split = self._leading_headline_lines(lines)
+                if split:
+                    for suffix, part, kind in (("h", lines[:split], "headline"), ("b", lines[split:], "body")):
+                        coords = [l["bbox"] for l in part]
+                        box = [min(c[0] for c in coords) / W, min(c[1] for c in coords) / H,
+                               max(c[2] for c in coords) / W, max(c[3] for c in coords) / H]
+                        blocks.append({"id": "%d:%d%s" % (pno, bi, suffix), "box": box, "lines": part,
+                                       "kind": kind, "hasOcr": all(l["ocr"] is not None for l in part),
+                                       "needsLook": True})
+                    continue
                 # a headline block is one that is mostly headline-size lines; a body block with a heading inside keeps its text
                 headline = n_head >= 0.6 * len(lines)
                 has_ocr = all(l["ocr"] is not None for l in lines)
@@ -198,8 +213,19 @@ class Store:
                                "needsLook": headline or differs or not has_ocr})
         self._mark_boxed(pg, blocks, W, H)
         label, section = self._page_label(edition, date, pno)
-        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg)),
+        return {"width": W, "height": H, "blocks": blocks, "articles": self._articles(blocks, self._wide_pictures(pg, blocks)),
                 "label": label, "section": section}
+
+    @staticmethod
+    def _leading_headline_lines(lines):
+        split = 0
+        while split < len(lines):
+            line = lines[split]
+            if BODY_FONT in line["tfonts"] or line["size"] < 24 or not any(
+                    Store._is_headline(f, line["size"]) for f in line["tfonts"]):
+                break
+            split += 1
+        return split if 0 < split < len(lines) and len(lines) - split >= 3 else 0
 
     @staticmethod
     def _differs(a, b):
@@ -233,7 +259,7 @@ class Store:
             b["boxed"] = any(r.x0 - 3 <= x0 and r.y0 - 3 <= y0 and x1 <= r.x1 + 3 and y1 <= r.y1 + 3 for r in rects)
 
     @staticmethod
-    def _wide_pictures(pg):
+    def _wide_pictures(pg, blocks=()):
         """Wide, short pictures on the page (fractions of the page): big display headlines are often printed as a picture, with
         no text in the PDF at all. Photos are mostly squarer, the masthead sits at the very top; both are left out."""
         W, H = pg.rect.width, pg.rect.height
@@ -243,6 +269,15 @@ class Store:
             w, h = x1 - x0, y1 - y0
             if h > 0 and w / h >= 2.5 and w >= 0.15 * W and h >= 0.015 * H and y0 > 0.08 * H:
                 out.append([x0 / W, y0 / H, x1 / W, y1 / H])
+            elif h > 0 and w >= 0.35 * W and 0.08 * H < y0 < 0.5 * H:
+                # A headline and photo can be one large image, with a text deck overlaid below the headline.
+                top, bottom = y0 / H, y1 / H
+                left, right = x0 / W, x1 / W
+                decks = [b["box"][1] for b in blocks if b["kind"] == "headline"
+                         and top + 0.015 <= b["box"][1] <= top + 0.4 * (bottom - top)
+                         and min(right, b["box"][2]) - max(left, b["box"][0]) >= 0.8 * (b["box"][2] - b["box"][0])]
+                if decks:
+                    out.append([left, top, right, min(decks)])
         return out
 
     @staticmethod
@@ -283,16 +318,27 @@ class Store:
             a["blockIds"].sort(key=lambda bid: order[bid])
             a.pop("_idx", None)
             a.pop("_hb", None)
+        picture_matches = [[] for _ in pictures]
         for a in arts:
             boxes = a.pop("_boxes")
             gx0, gy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
             gx1 = max(b[2] for b in boxes)
-            for p in pictures:
+            for i, p in enumerate(pictures):
                 gap = gy0 - p[3]
                 overlap = min(gx1, p[2]) - max(gx0, p[0])
                 if -0.04 <= gap <= 0.02 and overlap >= 0.5 * min(gx1 - gx0, p[2] - p[0]):
-                    a["graphicBox"] = p
-                    break
+                    picture_matches[i].append(a)
+        by_id = {b["id"]: b for b in blocks}
+        for p, matches in zip(pictures, picture_matches):
+            if matches:
+                # A deck can be split into several groups; attach its picture only to the group with body text.
+                nearby = [a for a in matches if any(by_id[i]["kind"] == "headline" and
+                          -0.04 <= by_id[i]["box"][1] - p[3] <= 0.04 for i in a["blockIds"])]
+                if nearby:
+                    matches = nearby
+                best = max(matches, key=lambda a: sum(len(by_id[i]["lines"]) for i in a["blockIds"]
+                                                       if by_id[i]["kind"] == "body"))
+                best["graphicBox"] = p
         return arts
 
     # ── The paper as news: stories grouped by Eenadu's own page labels (for the app's "Today's paper" screen) ──────────────────────
@@ -324,13 +370,12 @@ class Store:
         three editions: the corpus used to decide whether two pieces across a line break are one word."""
         if self._lex is None:
             words, pairs = collections.Counter(), collections.Counter()
-            for ed in [e["edition"] for e in self.editions()]:
-                date = [e["date"] for e in self.editions() if e["edition"] == ed][0]
+            for ed, date in sorted({(e["edition"], e["date"]) for e in self.editions()}):
                 doc = self.doc(ed, date)
                 for pno in range(1, len(doc) + 1):
                     for b in self.page(ed, date, pno)["blocks"]:
                         for l in b["lines"]:
-                            toks = l["converted"].split()
+                            toks = [self._word(t) for t in l["converted"].split()]
                             for i in range(1, len(toks) - 1):
                                 words[toks[i]] += 1
                                 if i + 1 < len(toks) - 1:
@@ -340,23 +385,29 @@ class Store:
 
     _TELWORD = re.compile("^[\u0c00-\u0c7f]+$")
 
+    @staticmethod
+    def _word(t):
+        return t.strip(".,;:!?()[]{}'\"\u2018\u2019\u201c\u201d\u2026\u2022-\u0964\u0965")
+
     def _join_lines(self, lines):
         """Join printed lines into running text. A space goes between lines, except where the line end cuts a word: the two
-        pieces are glued when the joined word is one the corpus already has (twice or more) and the pieces never stand as two
-        words inside a line. Joined-word cases that are not clear are logged."""
+        pieces are glued only when the joined word is attested and at least one piece is not independently attested.
+        Ambiguous boundaries are logged instead of guessing."""
         words, pairs = self._lexicon()
         out = lines[0].strip()
         for nxt in lines[1:]:
             nxt = nxt.strip()
             ta, tb = out.split(" ")[-1] if out else "", nxt.split(" ")[0] if nxt else ""
-            fj = words.get(ta + tb, 0) if (ta and tb and self._TELWORD.match(ta) and self._TELWORD.match(tb)) else 0
-            # the joined word is in the corpus twice or more; or once, when one of the pieces is not a word of its own
-            if fj >= 2 or (fj >= 1 and (words.get(ta, 0) < 2 or words.get(tb, 0) < 2)):
-                if pairs.get((ta, tb), 0) == 0:
+            # Keep punctuation in the output; only quotes on the outside of the boundary may be ignored.
+            a, b = ta.lstrip("'\"\u2018\u201c\u2022"), tb.rstrip(".,;:!?)]}'\"\u2019\u201d\u2026\u0964\u0965")
+            if a and b and self._TELWORD.fullmatch(a) and self._TELWORD.fullmatch(b):
+                fj, separate = words.get(a + b, 0), pairs.get((a, b), 0)
+                if fj and not separate and (not words.get(a, 0) or not words.get(b, 0)):
                     out += nxt
                     self.rejoin_log["joined"] += 1
                     continue
-                self.rejoin_log["unclear"].append((ta, tb, words.get(ta + tb, 0), pairs.get((ta, tb), 0)))
+                if fj or not words.get(a, 0) or not words.get(b, 0):
+                    self.rejoin_log["unclear"].append((a, b, fj, separate))
             out += " " + nxt
         return out
 
@@ -394,6 +445,9 @@ class Store:
         # when most of a story sits in a box the box is its background, not a sidebar
         sidebars_on = big_box_ok and boxed_words < 0.6 * all_words
         prevl = None
+        subhead_size = 0
+        subhead_count = 0
+        sidebar = False
         for b in blocks:
             if b["kind"] == "headline":
                 continue
@@ -424,7 +478,7 @@ class Store:
                     left_all = min(l["bbox"][0] for l in run)
                     first_indented = len(run) > 1 and run[0]["bbox"][0] - left_all > 3
                     for k, ps in enumerate(paras):
-                        role = "sidebar" if (sidebars_on and b.get("boxed")) else "body"
+                        role = "sidebar" if sidebar or (sidebars_on and b.get("boxed")) else "body"
                         text = self._join_lines([l["converted"] for l in ps])
                         if k == 0 and not first_indented and items and items[-1]["role"] == role and items[-1].get("_open"):
                             items[-1]["text"] = self._join_lines([items[-1]["text"], text])
@@ -468,6 +522,21 @@ class Store:
                     continue
                 if role == "headline":
                     role = "subhead"
+                # A smaller display heading after the main subheads introduces a side note.
+                # Keep its following columns together, but exclude them from narration.
+                if role == "body" and subhead_count >= 2 and l is b["lines"][-1] \
+                        and set(l["tfonts"]) <= self.DISPLAY_FONTS and 13.15 <= l["size"] < subhead_size - 0.6:
+                    flush()
+                    sidebar = True
+                    items.append({"role": "sidebar", "text": l["converted"].strip()})
+                    continue
+                if role == "subhead":
+                    if runrole != "subhead":
+                        subhead_count += 1
+                    if sidebar:
+                        flush()
+                    subhead_size = max(subhead_size, l["size"])
+                    sidebar = False
                 if role == "subhead" and (runrole == "deck" or (not run and items and items[-1]["role"] == "deck")) \
                         and prevl is not None and abs(prevl["size"] - l["size"]) < 0.6 and l["bbox"][1] - prevl["bbox"][3] < 8:
                     role = "deck"
@@ -505,7 +574,9 @@ class Store:
         merged = []
         for it in items:
             it.pop("_open", None)
-            if it["role"] == "deck" and not it["text"].lstrip().startswith("\u2022") and merged and merged[-1]["role"] == "deck":
+            if it["role"] == "sidebar" and merged and merged[-1]["role"] == "sidebar":
+                merged[-1]["text"] += "\n\n" + it["text"]
+            elif it["role"] == "deck" and not it["text"].lstrip().startswith("\u2022") and merged and merged[-1]["role"] == "deck":
                 merged[-1]["text"] = self._join_lines([merged[-1]["text"], it["text"]])          # a deck bullet that runs over two lines
             elif it["role"] == "caption":
                 starts_bullet = it["text"].lstrip().startswith("\u2022")
@@ -537,11 +608,17 @@ class Store:
         return out
 
     @staticmethod
+    def _clean_reading(t):
+        t = Store._POINTER.sub(" ", t)
+        t = re.sub(r"\([^()]*" + Store._CONT_HEAD + r"[^()]*\)", " ", t)
+        return re.sub(r"[ \t]{2,}", " ", t).strip()
+
+    @staticmethod
     def _narration(st):
         """What would be read aloud: the headline once, then the body paragraphs and subheadings in order. No page markers, captions,
         boxed notes, deck bullets, bylines or repeated headings."""
         def clean(t):
-            t = Store._POINTER.sub(" ", t)                       # "(మిగతా 2లో)" is a page pointer, not words to read
+            t = Store._clean_reading(t)
             t = re.sub(r"\s{2,}", " ", t).strip()
             # a paragraph that ends in a bare "3లో" (no full stop before it) ends in the printed jump badge
             return re.sub(r"(?<=[^\s.\u0964?!\u2026])\s+\d{1,2}\s*\u0c32\u0c4b$", "", t).strip()
@@ -618,7 +695,8 @@ class Store:
                 items = self._structure(blocks)
                 paras = [it["text"] for it in items if it["role"] in ("body", "subhead", "deck", "sidebar") and it["text"]]
                 words = sum(len(it["text"].split()) for it in items if it["role"] == "body")
-                head = a["headline"].strip()
+                head = re.sub(r"[\u2022\u25cf\u25aa\u25a0]+", " ", a["headline"])
+                head = re.sub(r"\s+", " ", head).strip()
                 tags = list(getattr(self, "_last_tags", []))
                 mt = self._TAG_END.search(head)
                 if self.opt_tags and mt and head[:mt.start()].strip():
@@ -637,7 +715,8 @@ class Store:
                 # a headline that runs over several blocks comes out as several head-only groups: join them to the story that follows
                 prev = stories[-1] if stories else None
                 if prev and prev["page"] == pno and prev["words"] == 0 and prev["headline"] and not prev["graphic"] and (head or paras) \
-                        and not graphic and not any(it["role"] in ("deck", "byline", "subhead", "marker", "caption") for it in prev["items"]):
+                        and min(prev["box"][2], box[2]) > max(prev["box"][0], box[0]) \
+                        and not any(it["role"] in ("deck", "byline", "subhead", "marker", "caption") for it in prev["items"]):
                     story["headline"] = (prev["headline"] + " " + head).strip()
                     story["box"] = [min(prev["box"][0], box[0]), min(prev["box"][1], box[1]), max(prev["box"][2], box[2]),
                                     max(prev["box"][3], box[3])]
@@ -685,13 +764,16 @@ class Store:
                 st = absorbed[st["id"]]
             text = " ".join(st["paras"])
             cands = [c for c in stories if c["page"] == n and c["isCont"] and not c["hidden"] and c is not st]
-            best, score = None, 0
+            best, score, runner_up = None, 0, 0
             head_words = vocab(st["headline"] + " " + text)
             for c in cands:
                 # the continuation repeats the story's headline words; its first paragraphs share words with the front part
                 sc = 3 * len(vocab(c["headline"]) & head_words) + len(vocab(" ".join(c["paras"][:4])) & vocab(text))
                 if sc > score:
+                    runner_up = score
                     best, score = c, sc
+                elif sc > runner_up:
+                    runner_up = sc
             if best is None or score < 3:
                 # no "(... తరువాయి)" block: a printed jump badge ("3లో") points at the full story, which repeats the headline
                 sv = vocab(st["headline"])
@@ -725,7 +807,8 @@ class Store:
             if jh:
                 jv = vocab(jh)
                 known = vocab(" ".join([st["headline"]] + [it["text"] for it in front]))
-                if jv and len(jv & known) / len(jv) >= 0.5:
+                if jv and (len(jv & known) / len(jv) >= 0.5 or
+                           (st["graphic"] and score >= 6 and score >= 2 * max(1, runner_up))):
                     if st["graphic"] and not st["headline_from"]:
                         # the story's own headline is a picture; the continuation carries it as text
                         st["kicker"] = st["headline"]
@@ -755,6 +838,17 @@ class Store:
         for st in stories:
             if all(c["linked"] for c in st["contTo"]):
                 st["items"] = [it for it in st["items"] if it["role"] != "marker"]
+            st["headline"] = self._clean_reading(st["headline"])
+            seen_heads = {st["headline"]}
+            clean_items = []
+            for it in st["items"]:
+                text = self._clean_reading(it["text"])
+                if not text or (it["role"] == "subhead" and text in seen_heads):
+                    continue
+                if it["role"] == "subhead":
+                    seen_heads.add(text)
+                clean_items.append(dict(it, text=text))
+            st["items"] = clean_items
             st["narration"] = self._narration(st)
         shown = [s for s in stories if not s["hidden"]]
         sections = []
@@ -808,6 +902,8 @@ class Store:
 
 
 def make_handler(store, key, web_dir):
+    from local_uploads import LocalUploads, MAX_UPLOAD_BYTES
+    uploads = LocalUploads(store)
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=web_dir, **kw)
@@ -843,23 +939,50 @@ def make_handler(store, key, web_dir):
             if not self._authed(q):
                 return self._json(401, {"error": "key required"})
             route = u.path[len("/review-api/"):]
+            if route == "upload-job" and method == "GET":
+                job = uploads.status(q.get("id", ""))
+                return self._json(200, job) if job else self._json(404, {"error": "No such local job"})
+            if route == "cancel-upload" and method == "POST":
+                origin = self.headers.get("Origin")
+                if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+                    return self._json(403, {"error": "same-origin request required"})
+                job = uploads.cancel(q.get("id", ""))
+                return self._json(200, job) if job else self._json(404, {"error": "No such local job"})
+            if route == "upload" and method == "POST":
+                origin = self.headers.get("Origin")
+                if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+                    return self._json(403, {"error": "same-origin upload required"})
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= MAX_UPLOAD_BYTES:
+                        return self._json(413, {"error": "Choose a PDF smaller than 100 MB."})
+                    filename = urllib.parse.unquote(self.headers.get("X-Filename", "paper.pdf"))
+                    job = uploads.start(self.rfile, size, filename)
+                    return self._json(202, job)
+                except (ValueError, RuntimeError) as e:
+                    return self._json(400, {"error": str(e)[:300]})
+            if method == "POST":
+                return self._json(405, {"error": "method not allowed"})
+            if method != "GET" and route != "results":
+                return self._json(405, {"error": "method not allowed"})
             ed, date = q.get("edition", ""), q.get("date", "")
+            active = uploads.store_for(ed, date) or store
             try:
                 pno = int(q.get("page", "0"))
             except ValueError:
                 return self._json(400, {"error": "bad page"})
             if route == "editions":
-                return self._json(200, store.editions())
-            if store._pdf_path(ed, date)[0] is None:
+                return self._json(200, uploads.editions() + store.editions())
+            if active._pdf_path(ed, date)[0] is None:
                 return self._json(404, {"error": "unknown edition"})
             if route == "page":
-                p = store.page(ed, date, pno)
+                p = active.page(ed, date, pno)
                 return self._json(200, p) if p else self._json(404, {"error": "no page"})
             if route == "image":
-                img = store.image(ed, date, pno)
+                img = active.image(ed, date, pno)
                 return self._send(200, img, "image/jpeg") if img else self._json(404, {"error": "no page"})
             if route == "paper":
-                pp = store.paper(ed, date)
+                pp = active.paper(ed, date)
                 if pp is None:
                     return self._json(404, {"error": "no such edition"})
                 return self._json(200, {"sections": [
@@ -869,21 +992,21 @@ def make_handler(store, key, web_dir):
                          "continued": bool(st["contTo"]), "unmatched": any(not c["linked"] for c in st["contTo"])}
                         for st in sec["stories"]]} for sec in pp["sections"]]})
             if route == "story":
-                pp = store.paper(ed, date)
+                pp = active.paper(ed, date)
                 st = (pp or {}).get("byId", {}).get(q.get("id", ""))
                 if st is None:
                     return self._json(404, {"error": "no such story"})
-                return self._json(200, st)
+                return self._json(200, dict(st, editionTitle=getattr(active, "display_title", ed)))
             if route == "crop":
                 try:
                     box = [float(v) for v in q.get("box", "").split(",")]
                     assert len(box) == 4
                 except (ValueError, AssertionError):
                     return self._json(400, {"error": "bad box"})
-                img = store.crop(ed, date, pno, box)
+                img = active.crop(ed, date, pno, box)
                 return self._send(200, img, "image/jpeg") if img else self._json(404, {"error": "no such crop"})
             if route == "results":
-                path = store.results_path(ed, date)
+                path = active.results_path(ed, date)
                 if method == "GET":
                     data = {}
                     if os.path.exists(path):
@@ -924,6 +1047,11 @@ def make_handler(store, key, web_dir):
         def do_PUT(self):
             if self.path.startswith("/review-api/"):
                 return self._handle_api("PUT")
+            return self._json(405, {"error": "method not allowed"})
+
+        def do_POST(self):
+            if self.path.startswith("/review-api/"):
+                return self._handle_api("POST")
             return self._json(405, {"error": "method not allowed"})
 
     return Handler

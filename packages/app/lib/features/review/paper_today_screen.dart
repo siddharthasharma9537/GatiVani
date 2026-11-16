@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -8,10 +10,10 @@ import 'review_screen.dart' show kEenaduReview;
 
 /// "Today's paper": Eenadu's e-paper as news inside the app, grouped by the paper's own page labels. Local only: it talks to
 /// scripts/eenadu_review_server.py on the same origin (the owner's Mac), is compiled in only with --dart-define=EENADU_REVIEW=true,
-/// and writes nothing anywhere. The story screen can read a story aloud with the on-device voice (services/tts; the text is synthesised
+/// and saves uploads only on that Mac. The story screen can read a story aloud with the on-device voice (services/tts; the text is synthesised
 /// on this device and goes nowhere; in the browser the device's own voice is not used).
 const String kPaperNotice =
-    'Machine-converted from the printed PDF, not proofread. Eenadu text: owner only, on this Mac.';
+    'Telugu reading: AI proposal, not proofread. Machine-converted from the printed PDF. Eenadu text: owner only, on this Mac.';
 
 Uri _api(String route, [Map<String, String> q = const {}]) =>
     Uri.base.replace(path: '/review-api/$route', queryParameters: q, fragment: '');
@@ -35,6 +37,80 @@ class _PaperTodayScreenState extends State<PaperTodayScreen> {
   String? _sel; // selected section name
   bool _loading = true;
   String? _error;
+  Map<String, dynamic>? _uploadJob;
+  Timer? _jobPoll;
+  bool _saving = false;
+  bool _polling = false;
+  int _paperRequest = 0;
+  bool get _busy => _saving || _uploadJob?['status'] == 'extracting';
+
+  @override
+  void dispose() {
+    _jobPoll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _upload() async {
+    final picked = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
+    if (!mounted || picked == null) return;
+    final file = picked.files.single;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty || bytes.length > 100 * 1024 * 1024) {
+      setState(() => _error = 'Choose a PDF smaller than 100 MB.');
+      return;
+    }
+    _paperRequest++;
+    setState(() { _saving = true; _uploadJob = null; _error = null; _loading = false; _sections = []; _sel = null; });
+    try {
+      final response = await http.post(_api('upload'),
+          headers: {'Content-Type': 'application/pdf', 'X-Filename': Uri.encodeComponent(file.name)}, body: bytes);
+      final data = json.decode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      if (response.statusCode != 202) throw data['error'] ?? 'Local upload failed (${response.statusCode})';
+      if (!mounted) return;
+      setState(() { _uploadJob = data; _saving = false; });
+      _jobPoll?.cancel();
+      _jobPoll = Timer.periodic(const Duration(seconds: 2), (_) => _pollUpload());
+      await _pollUpload();
+    } catch (e) {
+      if (mounted) setState(() { _saving = false; _error = '$e'; });
+    }
+  }
+
+  Future<void> _pollUpload() async {
+    if (_polling || _uploadJob == null) return;
+    _polling = true;
+    try {
+      final job = await _get(_api('upload-job', {'id': _uploadJob!['id'] as String})) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() => _uploadJob = job);
+      if (job['status'] != 'extracting') {
+        _jobPoll?.cancel();
+        if (job['status'] == 'ready') {
+          _editions = (await _get(_api('editions')) as List).cast<Map<String, dynamic>>();
+          if (!mounted) return;
+          await _pick(_editions.firstWhere((e) => e['edition'] == job['edition']));
+        } else if (job['status'] == 'failed') {
+          setState(() => _error = job['error'] as String? ?? 'Local extraction failed.');
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Local status unavailable: $e');
+    } finally {
+      _polling = false;
+    }
+  }
+
+  Future<void> _cancelUpload() async {
+    try {
+      final r = await http.post(_api('cancel-upload', {'id': _uploadJob!['id'] as String}));
+      if (r.statusCode != 200) throw 'Cancel failed (${r.statusCode})';
+      if (!mounted) return;
+      setState(() => _uploadJob = json.decode(r.body) as Map<String, dynamic>);
+      _jobPoll?.cancel();
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
 
   @override
   void initState() {
@@ -45,7 +121,10 @@ class _PaperTodayScreenState extends State<PaperTodayScreen> {
   Future<void> _init() async {
     try {
       _editions = (await _get(_api('editions')) as List).cast<Map<String, dynamic>>();
-      if (_editions.isEmpty) throw 'No editions found.';
+      if (_editions.isEmpty) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
       await _pick(_editions.first);
     } catch (e) {
       if (mounted) setState(() { _error = '$e'; _loading = false; });
@@ -53,13 +132,14 @@ class _PaperTodayScreenState extends State<PaperTodayScreen> {
   }
 
   Future<void> _pick(Map<String, dynamic> ed) async {
+    final request = ++_paperRequest;
     setState(() { _ed = ed; _loading = true; _error = null; });
     try {
       final d = await _get(_api('paper', {'edition': ed['edition'] as String, 'date': ed['date'] as String}));
       final secs = ((d as Map)['sections'] as List).cast<Map<String, dynamic>>();
-      if (mounted) setState(() { _sections = secs; _sel = secs.isEmpty ? null : secs.first['name'] as String; _loading = false; });
+      if (mounted && request == _paperRequest) setState(() { _sections = secs; _sel = secs.isEmpty ? null : secs.first['name'] as String; _loading = false; });
     } catch (e) {
-      if (mounted) setState(() { _error = '$e'; _loading = false; });
+      if (mounted && request == _paperRequest) setState(() { _error = '$e'; _loading = false; });
     }
   }
 
@@ -74,21 +154,48 @@ class _PaperTodayScreenState extends State<PaperTodayScreen> {
         backgroundColor: p.paper,
         foregroundColor: p.ink,
         toolbarHeight: 48,
-        title: Text(_ed == null ? "Today's paper" : "${_ed!['edition']} · ${_ed!['date']}", style: const TextStyle(fontSize: 15)),
+        title: Text(_ed == null ? 'Local paper' : "${_ed!['title'] ?? _ed!['edition']} · ${_ed!['date']}", style: const TextStyle(fontSize: 15)),
         actions: [
+          IconButton(tooltip: 'Upload PDF locally', onPressed: _busy ? null : _upload, icon: const Icon(Icons.upload_file)),
           if (_editions.length > 1)
             PopupMenuButton<Map<String, dynamic>>(
               tooltip: 'Edition',
               icon: const Icon(Icons.swap_horiz),
-              onSelected: _pick,
+              onSelected: (e) { if (!_busy) _pick(e); },
               itemBuilder: (_) => [
-                for (final e in _editions) PopupMenuItem(value: e, child: Text("${e['edition']} · ${e['date']}")),
+                for (final e in _editions) PopupMenuItem(value: e, child: Text("${e['title'] ?? e['edition']} · ${e['date']}")),
               ],
             ),
         ],
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _busy ? null : _upload,
+        icon: const Icon(Icons.upload_file),
+        label: const Text('Upload PDF locally'),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       body: SafeArea(
         child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Text('Extracted on this Mac. PDFs stay local; no sign-in or cloud processing.',
+                style: TextStyle(fontSize: 13, color: p.ink)),
+          ),
+          if (_saving || _uploadJob != null)
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_saving ? 'Saving PDF on this Mac…' : '${_uploadJob!['filename']} · ${_uploadJob!['stage']}',
+                    style: TextStyle(color: p.ink, fontWeight: FontWeight.w600)),
+                if (!_saving) Text('Pages ${_uploadJob!['donePages']}/${_uploadJob!['totalPages']} · ${_uploadJob!['articles']} articles',
+                    style: TextStyle(color: p.muted)),
+                if (_busy) ...[
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(value: _saving ? null : (_uploadJob!['donePages'] as int) / (_uploadJob!['totalPages'] as int)),
+                  if (!_saving) TextButton(onPressed: _cancelUpload, child: const Text('Cancel extraction')),
+                ],
+              ]),
+            ),
           Container(
             width: double.infinity,
             color: p.dark ? GatiDark.accentSoft : Gati.accentSoft,
@@ -131,6 +238,9 @@ class _PaperTodayScreenState extends State<PaperTodayScreen> {
         SizedBox(height: 12),
         Text('Reading the paper (first load takes a few seconds)…'),
       ]));
+    }
+    if (stories.isEmpty) {
+      return Center(child: Text('Upload an Eenadu PDF to extract articles on this Mac.', style: TextStyle(color: p.ink)));
     }
     return Center(
       child: ConstrainedBox(
@@ -200,13 +310,29 @@ class StoryScreen extends StatefulWidget {
 class _StoryScreenState extends State<StoryScreen> {
   Map<String, dynamic>? _s;
   String? _error;
+  int _request = 0;
 
   @override
   void initState() {
     super.initState();
+    _loadStory();
+  }
+
+  @override
+  void didUpdateWidget(covariant StoryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id != widget.id || oldWidget.edition != widget.edition || oldWidget.date != widget.date) {
+      _loadStory();
+    }
+  }
+
+  void _loadStory() {
+    final request = ++_request;
+    _s = null;
+    _error = null;
     _get(_api('story', {'edition': widget.edition, 'date': widget.date, 'id': widget.id}))
-        .then((d) => mounted ? setState(() => _s = d as Map<String, dynamic>) : null)
-        .catchError((e) { if (mounted) setState(() => _error = '$e'); });
+        .then((d) => mounted && request == _request ? setState(() => _s = d as Map<String, dynamic>) : null)
+        .catchError((e) { if (mounted && request == _request) setState(() => _error = '$e'); });
   }
 
   @override
@@ -219,7 +345,7 @@ class _StoryScreenState extends State<StoryScreen> {
         backgroundColor: p.paper,
         foregroundColor: p.ink,
         toolbarHeight: 48,
-        title: Text(s == null ? 'Story' : "${widget.edition} · page ${s['page']}", style: const TextStyle(fontSize: 15)),
+        title: Text(s == null ? 'Story' : "${s['editionTitle'] ?? widget.edition} · page ${s['page']}", style: const TextStyle(fontSize: 15)),
       ),
       bottomNavigationBar: s == null || ((s['narration'] as String?) ?? '').trim().isEmpty
           ? null

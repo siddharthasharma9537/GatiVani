@@ -112,18 +112,10 @@ cached there too. Nothing goes to Supabase or any other host.
 
 ## TTS direction
 
-Goal: a free app that narrates on the device. Phase 1 (checks) is done; nothing
-beyond it has started. Checked from the model cards and licence files:
-`sulabhkatiyar/indic-tiny-tts-telugu` has CC-BY-4.0 weights, MIT code, trained on
-AI4Bharat Rasa (CC-BY-4.0); three ONNX graphs of 91.0 MB in all (hashes verified),
-female and male voices at 24 kHz, no network at inference. A port needs its
-tokenizer, the Euler loop and the inverse STFT as well as the ONNX files.
-`facebook/mms-tts-tel` is CC-BY-NC (excluded); Piper's Telugu voices use espeak
-(GPL); IndicF5 and Indic Parler-TTS are too large. Recommendation: Indic Tiny
-TTS Telugu, with the device's own Telugu voice as the fallback. A sample from a
-page was prepared (`tts_samples` in the work folder) but has not been run.
-Untested: speed and memory on real phones, the web build (ONNX Runtime Web),
-Telugu number and name reading. Phases 2–5 have not started.
+Goal: a free app that narrates on the device. The Indic Tiny TTS port and browser
+playback are built on this branch; see the implementation and local verification
+below. Native background playback, phone performance, and native-reader approval
+remain open. Earlier phase-1 feasibility notes are superseded by that status.
 
 ## Status (2026-11-12)
 
@@ -214,3 +206,179 @@ set):
 - `deploy-functions.yml` — when `supabase/functions/**` or `supabase/config.toml`
   changes, deploys **every** edge function to the `sohum` project (not only the
   changed ones).
+
+## Listen review follow-up (2026-11-13, local only)
+
+Branch `codex/eenadu-listen-review` starts at `704e1a5` on `feat/eenadu-listen`,
+including the fresh-player-per-clip fix `7ea5c8e`. No merge, deploy or live database
+write. Tests contain synthetic material only; Telugu readings are AI proposals.
+
+- List and story use the same server headline. A reused story route now reloads
+  when its edition/date/id changes and ignores late responses for the old story.
+  Bullet glyphs are removed from headline text. The supplied Kamalam headline
+  and Hydra opening/continuation were already correct in the starting commit.
+- The lexicon now reads each available edition/date once and removes surrounding
+  punctuation for lookup. A line boundary joins only if its combined word is
+  attested, at least one piece is not independently attested, and the pair is not
+  attested. `Store.rejoin_log['unclear']` lists unresolved boundaries; no spelling
+  is invented. The local 12/13-Nov corpus supports the first reported word join;
+  the other two reported examples remain ambiguous/unattested and need review.
+- A smaller display heading at a block end after two main subheadings introduces
+  a separate side note. The Kamalam award note is one "Also on this page" item,
+  excluded from narration; its two main subheadings remain once each. This is a
+  typography heuristic, not semantic understanding; other layouts need review.
+- Inline page pointers are removed from display as well as narration. Repeated
+  identical subheadings are suppressed. Existing continuation matching remains
+  conservative; a failed match is shown as an English status note.
+- Ellipses stay inside one narration phrase and become a comma pause in the
+  synthesis frontend. Chunk limits still apply to long phrases. The printed
+  headline remains unchanged. No paid OCR/TTS service was called. Graphic
+  headlines retain their picture and "needs OCR" notice.
+- "Play all in this section" is deferred: queue ownership, cancellation and
+  navigation need more than a small button change.
+
+Measured on the owner's 12-Nov PDFs (before -> after):
+
+| Edition | Stories | Joined | Unmatched | Graphic headlines | Inline display pointers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Telangana | 229 -> 229 | 11 -> 11 | 4 -> 4 | 8 -> 8 | 0 -> 0 |
+| Andhra Pradesh | 256 -> 256 | 6 -> 6 | 3 -> 3 | 3 -> 3 | 6 -> 0 |
+| Greater Hyderabad | 252 -> 252 | 10 -> 10 | 5 -> 5 | 3 -> 3 | 0 -> 0 |
+
+All 12 unmatched jumps lack a detected continuation block on their target page
+and have no sufficiently strong headline fallback. Targets: Telangana 3/8/22/18;
+AP 18/10/12; Greater Hyderabad 3/11/12/25/18. These are extraction limits, not a
+claim that the PDF lacks the continuation. AP's picture-only front page still
+has no extracted story records. Across the 13 extracted front-page stories in
+each of Telangana and Greater Hyderabad, headline bullets fell 4 -> 0 and
+trailing jump tags stayed 0 -> 0. Four in each still have no extracted byline;
+that is a review flag, not proof of a missing opening. Hydra has its dateline,
+opening paragraph and linked page-3 body in both baseline and final output.
+
+Verification commands (from the checkout root):
+
+```bash
+~/eenadu-env/bin/python -m unittest discover -s scripts/tests -v
+(cd packages/app && flutter test)
+(cd packages/app && flutter build web --release --dart-define=EENADU_REVIEW=true)
+~/eenadu-env/bin/python scripts/eenadu_review_server.py --local-only --port 8097
+```
+
+Use the access link printed by the server; keep its key private. Port 8097 avoids
+interrupting the desk's server on 8096. The review build passed, with existing
+third-party Wasm dry-run warnings; this verifies JavaScript web output, not Wasm.
+
+### Native playback follow-up: notes only, not implemented or phone-tested
+
+Android: add `audio_service` in a future native change and let its audio handler
+own `SentenceReader` beyond the lifetime of the screen. Map play/pause/stop and
+sentence navigation to media controls; publish queue and playback state. Use
+`AudioServiceActivity` (or its base class for an existing custom activity),
+`AudioService` with `foregroundServiceType="mediaPlayback"`, and
+`MediaButtonReceiver`. Declare `WAKE_LOCK`, `FOREGROUND_SERVICE`, and
+`FOREGROUND_SERVICE_MEDIA_PLAYBACK`. Start from an explicit foreground play
+request; test paused-service restart on Android 12+. Follow the package's
+[Android setup](https://pub.dev/packages/audio_service#android-setup).
+
+The iOS Runner project/Info.plist/Podfile are absent here. In a clean native
+feature checkout, restore them or run `flutter create --platforms=ios .` and
+review the generated diff. Set the Runner minimum deployment to 16.0 in Xcode.
+For CocoaPods, edit `ios/Podfile`:
+
+```ruby
+platform :ios, '16.0'
+# Inside the existing Runner target, replace its use_frameworks! declaration:
+use_frameworks! :linkage => :static
+```
+
+Then run `(cd ios && pod install)` from `packages/app`, and open
+`ios/Runner.xcworkspace`. These settings match the installed
+[flutter_onnxruntime 1.9.0 instructions](https://pub.dev/packages/flutter_onnxruntime/versions/1.9.0).
+Add to Runner's Info.plist (or its existing array):
+
+```xml
+<key>UIBackgroundModes</key>
+<array><string>audio</string></array>
+```
+
+Configure a speech/playback audio session after audio plugins initialize. The
+[background-audio setup](https://pub.dev/packages/audio_service#ios-setup) does
+not grant indefinite background computation: keep synthesis ahead of the
+current clip; validate handoff between clips while locked. Route disposal
+currently stops the reader and must be changed with handler ownership.
+
+Current resource bounds, not measured device RAM: 220 UTF-16 units per narration
+segment, 250 characters per frontend chunk (numbers may expand), model-manifest
+token limit, two look-ahead sentences, serial synthesis, 24 MiB memory cache plus
+an 8 MiB secondary memory cache on web or 120 MiB disk cache on native. Shared
+models release after 90 seconds idle. These caps do not bound ONNX activations,
+PCM/WAV copies or base64 data URIs; there is no hard frame/audio-duration cap.
+Before shipping, measure peak RSS on low-memory phones, add a measured frame cap
+before allocating model tensors, and verify the cache and model release after
+stop. The earlier 100–200 MB estimate is not a measured ceiling.
+
+Real-phone checks still required: full story with screen locked and app
+backgrounded; notification/lock-screen controls; calls, headphone removal and
+Bluetooth changes; pause/resume during synthesis; rapid story/voice changes;
+long numbers and maximum chunks; 30-minute heat/battery/RAM; low storage, pack
+resume and corruption; process death and saved position; offline playback after
+pack installation. No native background feature is claimed working.
+
+Browser verification on this Mac: the list tile and story headline agree; the
+story retains its graphic and needs-OCR notice. Kamalam played 30/30 sentences
+at normal speed in about 4m28s; measured synthesis RTF was about 0.16–0.20.
+A second full pass logged 30 distinct data-URI fingerprints and 30 clip-ended
+events; the player reached 100% and "Listen again". The fingerprint probe was
+injected into the ignored local build only and is not part of the source/PR.
+This checks progression and distinct clips, not native-reader voice quality.
+
+The downloaded model's Python was not run. If the owner separately approves a
+reference rerun, from the checkout root, with networking disabled, run:
+
+```bash
+GV_REFERENCE_MODEL="$HOME/Workspace/sohum-veda-work/eenadu-glyph/tts_samples/model"
+GV_REFERENCE_PYTHON="$HOME/Workspace/sohum-veda-work/eenadu-glyph/tts_samples/venv/bin/python"
+"$GV_REFERENCE_PYTHON" -I scripts/tts_reference/ref_numbers.py /tmp/gativani-normalizer-reference.json "$GV_REFERENCE_MODEL"
+"$GV_REFERENCE_PYTHON" -I scripts/tts_reference/ref_durations.py /tmp/gativani-duration-reference.json "$GV_REFERENCE_MODEL"
+```
+
+These commands are instructions only; current checks use Dart tests and the
+browser's ONNX runtime, not execution of downloaded model Python.
+
+## Local PDF upload in the review build (2026-11-16)
+
+With `EENADU_REVIEW=true`, the Paper tab (`/paper`) opens the local reader,
+including **Upload PDF locally**. Normal builds retain their cloud Paper screen.
+The local button sends the PDF only to `/review-api/upload` on the same Mac
+server, without signing in, creating a Supabase job, or calling a paid service.
+
+The server saves uploads under `<state-dir>/uploads/<random-id>/`, outside the
+checkout when using the documented default `~/eenadu-review`. This chat's preview
+uses its separate local work folder for state. Each upload has an isolated
+converter store, page progress, a grouping stage, and a Cancel extraction button.
+Completed results are saved locally and reappear in the edition picker after a
+server restart. Interrupted jobs require another upload. Only one extraction
+runs at a time; cancellation is checked between page operations.
+
+Limits: PDF only, up to 100 MiB and 100 pages, without password protection.
+The current converter handles supported Eenadu legacy-font text layers. A
+scan/graphic-only PDF reports that local OCR is needed; no cloud OCR fallback is
+used. Graphic headlines in otherwise supported pages remain pictures with their
+needs-OCR notice. Text and article grouping are AI proposals requiring review.
+Page-label/continuation sidecars are reused only when an uploaded file's bytes
+match the original daily PDF in the local Drive folder.
+
+Local upload/status/cancel requests require the server's private session cookie;
+upload and cancellation reject a different browser origin. Keep the access link
+private and use `--local-only` for a Mac-only preview. Stopping extraction retains
+local source files/results; it is not a delete action.
+
+Tests: `~/eenadu-env/bin/python -m unittest discover -s scripts/tests -v` and
+`cd packages/app && flutter test`. The upload widget test checks that selecting a
+PDF, polling its status, and opening extracted articles use only the local API.
+
+Verified on 2026-11-16: the owner's 19-page Telangana PDF was selected through
+the browser's local upload button, all 19 pages completed, and 199 article
+candidates appeared. Opened an extracted story and confirmed the Listen controls
+are available. These counts are machine grouping results, not proofread article
+accuracy. Final checks: 88 Flutter tests, 14 Python tests, review web build.

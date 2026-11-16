@@ -1,6 +1,7 @@
 /// Splits a story's narration text (one continuous story, no page markers) into sentences to read one at a time.
 ///
-/// Boundaries: `।`, `॥`, `?`, `!`, `…`, and `.` followed by whitespace; a blank line or a line break always ends a sentence
+/// Boundaries: `।`, `॥`, `?`, `!`, and a single `.` followed by whitespace; ellipses are pauses within a phrase.
+/// A blank line or a line break always ends a sentence
 /// (headline, then body). A full stop is NOT a boundary after a known abbreviation (డా., రూ., శ్రీ., కి.మీ.) or a single capital
 /// letter (initials), and never inside a number or date ("3.5", "12.11.2026": no whitespace follows the dot). Fragments with
 /// no letter or digit are dropped; very short fragments are joined to the next sentence; sentences longer than [maxChars] are
@@ -45,6 +46,14 @@ class NarrationSegmenter {
     for (var i = 0; i < p.length; i++) {
       final ch = p[i];
       if (!'।॥?!….'.contains(ch)) continue;
+      // Newspaper headings use two or more dots (or …) inside one phrase.
+      // Skip the whole run so its final dot cannot become a sentence boundary.
+      if (ch == '…' || (ch == '.' && i + 1 < p.length && p[i + 1] == '.')) {
+        while (i + 1 < p.length && '.…'.contains(p[i + 1])) {
+          i++;
+        }
+        continue;
+      }
       // swallow a run of closing punctuation/quotes: "?!" or ".”"
       var end = i + 1;
       while (end < p.length && '।॥?!….”’")'.contains(p[end])) {
