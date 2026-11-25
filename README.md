@@ -555,7 +555,7 @@ The generator writes `~/Library/CloudStorage/GoogleDrive-.../My Drive/sohum-gati
 1. **One-time Cloudflare setup** (full steps and the exact `wrangler` commands: contract doc section 6): private bucket `gativani-paper-audio` with no public URL, a retention rule (days are your choice), an R2 API token limited to that bucket.
 2. **One-time database step** (you run it): apply `20261125000000_paper_story_audio.sql` after the text migration; make sure your auth user id is in `story_publishers`:
 ```bash
-supabase db push
+psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/migrations/20261125000000_paper_story_audio.sql
 ```
 ```sql
 insert into public.story_publishers (user_id) values ('<your-auth-user-id>') on conflict do nothing;
