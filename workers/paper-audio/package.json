@@ -1,0 +1,1 @@
+{ "name": "gativani-paper-audio", "private": true, "type": "module", "scripts": { "test": "node --test test/" } }

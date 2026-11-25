@@ -6,6 +6,7 @@ import '../../../l10n/strings.dart';
 import '../../../services/settings_provider.dart';
 import 'paper_models.dart';
 import 'paper_repository.dart';
+import '../audio/paper_audio_ui.dart';
 
 String paperLang(BuildContext context) =>
     context.watch<SettingsProvider>().lang;
@@ -215,6 +216,8 @@ class _TodayPaperScreenState extends State<TodayPaperScreen> {
                   child: Text('${tr(lang, 'paper_source')}, ${_day!.date}',
                       style: TextStyle(color: p.muted, fontSize: 12)),
                 ),
+              if (_day != null)
+                PaperAudioEntry(edition: _day!.edition, date: _day!.date),
               if (_loading) ...[
                 const LinearProgressIndicator(),
                 Padding(

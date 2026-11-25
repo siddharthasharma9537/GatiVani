@@ -536,3 +536,46 @@ git commit -m "Resolve analyzer diagnostics required by release verification" -m
 git add README.md STATUS.md
 git commit -m "Document offline verification and owner publishing steps" -m "Co-Authored-By: Codex <noreply@openai.com>"
 ```
+
+## Paper audio: the day's stories as prepared Telugu audio (2026-11-25, code only, owner-only)
+
+Branch `feat/paper-audio` (on top of a snapshot of `feat/todays-paper`). **Nothing here was applied, deployed or run against a live service.** Contract (proposed, PR open): sohum-contracts `docs/PAPER_AUDIO_SHAPE.md`, `schemas/paper_story_audio.schema.json`.
+
+What it adds:
+- `supabase/migrations/20261125000000_paper_story_audio.sql`: table `paper_story_audio` (one row per story: R2 object key and metadata, never audio or a URL). **Owner-only RLS**: read and write need membership in `story_publishers`; `anon` has no access.
+- `workers/paper-audio/`: Cloudflare Worker, the only way to play the files. Verifies the Supabase JWT against the project's JWKS (ES256/RS256), checks `OWNER_USER_IDS`, streams from the private R2 bucket with Range, `Cache-Control: private, no-store`, CORS for the app origin only. Read-only. `npm test` (9 tests, fake R2).
+- `scripts/publish_paper_audio.py`: importer. Uploads each `.m4a` to R2 through the S3 API (SigV4, standard library), upserts the rows, removes stale files and rows. `--dry-run` reads local files only. Idempotent (a file with the same sha256 is not re-uploaded). `--delete-day` deletes files first, then rows.
+- App: on the Today screen an entry card appears only when `PAPER_AUDIO_URL` is set at build time and the signed-in user can read audio rows. It opens the day's list in `rank` order and a story screen with play/pause, seek, speed (same chips as Listen), stop, previous/next story and automatic move to the next story. Native sends the bearer header; web fetches the file with the token and plays it from memory (an audio element cannot send headers).
+- Tests with fake clients: 18 Python importer tests (including the AWS-documented SigV4 example), 3 migration tests, 9 Worker tests, 15 Flutter tests. Telugu strings are AI proposals until a native reader approves them.
+
+### How to publish a day with audio (owner only; you run each command)
+
+The generator writes `~/Library/CloudStorage/GoogleDrive-.../My Drive/sohum-gativani/audio/<dd-mm-yyyy>/` (`manifest.json` plus one `.m4a` per story).
+
+1. **One-time Cloudflare setup** (full steps and the exact `wrangler` commands: contract doc section 6): private bucket `gativani-paper-audio` with no public URL, a retention rule (days are your choice), an R2 API token limited to that bucket.
+2. **One-time database step** (you run it): apply `20261125000000_paper_story_audio.sql` after the text migration; make sure your auth user id is in `story_publishers`:
+```bash
+supabase db push
+```
+```sql
+insert into public.story_publishers (user_id) values ('<your-auth-user-id>') on conflict do nothing;
+```
+3. **One-time Worker deploy** (after review):
+```bash
+cd workers/paper-audio && wrangler secret put OWNER_USER_IDS && wrangler deploy
+```
+4. **Build the app with the Worker address** (empty keeps the feature hidden):
+```bash
+flutter build web --dart-define=PAPER_AUDIO_URL=https://gativani-paper-audio.<your-subdomain>.workers.dev
+```
+5. **Publish a day** (set the secrets in your own shell only; never in a file or chat):
+```bash
+export R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=gativani-paper-audio
+export SUPABASE_URL=https://ziebgspujtdzkiwyybsa.supabase.co SUPABASE_PUBLISHABLE_KEY=... SUPABASE_ACCESS_TOKEN=...
+AUDIO="$HOME/Library/CloudStorage/GoogleDrive-pothulapatisiddhartha@gmail.com/My Drive/sohum-gativani/audio/25-11-2026"
+python3 scripts/publish_paper_audio.py --date 25-11-2026 --edition TELANGANA --audio-dir "$AUDIO" --dry-run
+python3 scripts/publish_paper_audio.py --date 25-11-2026 --edition TELANGANA --audio-dir "$AUDIO"
+```
+6. **Delete a day:** `python3 scripts/publish_paper_audio.py --date 25-11-2026 --edition TELANGANA --delete-day`
+
+Known limits and open decisions: the generator's story ids (`lead_dharala_kothalu`) are not the Store's ids (`p1-g0`), so audio is its own list, not attached to the text story screen until the owner chooses a join; the Worker verifies asymmetric JWTs only (if the `sohum` project signs with the legacy HS256 secret it answers 401 until that is changed or the Worker is extended); the entry needs a `paper_days` row only because it sits on the Today screen; web playback holds a whole file (about 2 MB) in memory; nothing was listened to on a device or in a browser.

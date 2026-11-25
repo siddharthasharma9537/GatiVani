@@ -25,6 +25,11 @@ class ApiConfig {
     defaultValue: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InppZWJnc3B1anRkemtpd3l5YnNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0ODE5NjMsImV4cCI6MjEwNjA1Nzk2M30.wEqY7dttS1hitsZCZSC0GXFyqeiFUb8jdVlYG-toRmU',
   );
 
+  /// Base URL of the paper-audio Worker (docs: scripts/publish_paper_audio.py, README). Empty = the
+  /// audio entry stays hidden. Example: --dart-define=PAPER_AUDIO_URL=https://gativani.sohum.cc
+  static const String paperAudioUrl =
+      String.fromEnvironment('PAPER_AUDIO_URL', defaultValue: '');
+
   static String get documentsProcessUrl => '$functionsUrl/documents-process';
   /// Deprecated: kept only so older builds keep working. New code starts an
   /// edition through [pipelineStartUrl].

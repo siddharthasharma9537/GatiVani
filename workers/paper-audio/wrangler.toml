@@ -1,0 +1,16 @@
+# Playback Worker for the private Paper audio. NOT deployed; the owner runs `wrangler deploy`
+# (see README "How to publish a day with audio"). No secrets here: OWNER_USER_IDS is set by the
+# owner at deploy time (wrangler.toml stays free of real ids), the bucket stays private.
+name = "gativani-paper-audio"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[[r2_buckets]]
+binding = "AUDIO"
+bucket_name = "gativani-paper-audio"
+
+[vars]
+SUPABASE_URL = "https://ziebgspujtdzkiwyybsa.supabase.co"
+ALLOWED_ORIGIN = "https://gativani.sohum.cc"
+# OWNER_USER_IDS: comma-separated auth user ids. Set with: wrangler secret put OWNER_USER_IDS

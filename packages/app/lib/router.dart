@@ -18,6 +18,7 @@ import 'features/shows/shows_screen.dart';
 import 'features/paper/paper_screen.dart';
 import 'features/paper/today/today_screen.dart';
 import 'features/paper/today/story_screen.dart';
+import 'features/paper/audio/paper_audio_ui.dart';
 import 'services/news_feed_service.dart';
 import 'features/player/player_screen.dart';
 import 'features/menu/menu_screen.dart';
@@ -85,6 +86,16 @@ final GoRouter appRouter = GoRouter(
                 edition: state.uri.queryParameters['edition'] ?? '',
                 date: state.uri.queryParameters['date'] ?? '',
                 id: state.uri.queryParameters['id'] ?? '',
+              )),
+              GoRoute(path: 'today/audio', builder: (_, state) => PaperAudioListScreen(
+                edition: state.uri.queryParameters['edition'] ?? '',
+                date: state.uri.queryParameters['date'] ?? '',
+              )),
+              GoRoute(path: 'today/audio/story', builder: (_, state) => PaperAudioStoryScreen(
+                edition: state.uri.queryParameters['edition'] ?? '',
+                date: state.uri.queryParameters['date'] ?? '',
+                id: state.uri.queryParameters['id'] ?? '',
+                autoplay: state.uri.queryParameters['autoplay'] == '1',
               )),
               // The local Store/PDF review remains available only in review builds.
               if (kEenaduReview) ...[
