@@ -285,7 +285,7 @@ class GVCategory {
     }
   }
 
-  static Color bg(String category) => color(category).withOpacity(0.12);
+  static Color bg(String category) => color(category).withValues(alpha: 0.12);
 
   static const List<String> all = [
     'International', 'National Politics', 'State Politics', 'Editorial',
@@ -327,7 +327,7 @@ class TierConfig {
       final m = mins % 60;
       return m == 0 ? '${h}h' : '${h}h ${m}m';
     }
-    return '${mins} min';
+    return '$mins min';
   }
 
   static bool isUnlimited(String tier) =>

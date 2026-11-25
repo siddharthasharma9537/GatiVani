@@ -19,7 +19,7 @@ class ArticlePlayer extends StatefulWidget {
   final VoidCallback onClose;
 
   const ArticlePlayer({
-    Key? key,
+    super.key,
     // Direct data constructor
     this.audioUrl,
     this.articleImageUrl,
@@ -35,8 +35,7 @@ class ArticlePlayer extends StatefulWidget {
               article != null ||
               articleId != null,
           'Must provide either direct audio/title, article object, or articleId',
-        ),
-        super(key: key);
+        );
 
   @override
   State<ArticlePlayer> createState() => _ArticlePlayerState();
@@ -98,16 +97,16 @@ class _ArticlePlayerState extends State<ArticlePlayer> {
 
   Future<void> _initAudioPlayer() async {
     if (_article?.audioUrl.isEmpty ?? true) {
-      print('[AudioPlayer] No audio URL available');
+      debugPrint('[AudioPlayer] No audio URL available');
       return;
     }
 
     try {
       final audioUrl = _article!.audioUrl;
-      print('[AudioPlayer] Initializing with URL: $audioUrl');
+      debugPrint('[AudioPlayer] Initializing with URL: $audioUrl');
 
       await _audioPlayer.setUrl(audioUrl);
-      print('[AudioPlayer] Audio URL set successfully');
+      debugPrint('[AudioPlayer] Audio URL set successfully');
 
       _audioPlayer.positionStream.listen((position) {
         if (mounted) {
@@ -118,7 +117,7 @@ class _ArticlePlayerState extends State<ArticlePlayer> {
       });
 
       _audioPlayer.playerStateStream.listen((state) {
-        print(
+        debugPrint(
           '[AudioPlayer] Player state changed: playing=${state.playing}, processingState=${state.processingState}',
         );
         if (mounted) {
@@ -129,7 +128,7 @@ class _ArticlePlayerState extends State<ArticlePlayer> {
       });
 
       _audioPlayer.durationStream.listen((duration) {
-        print('[AudioPlayer] Duration loaded: ${duration?.inSeconds}s');
+        debugPrint('[AudioPlayer] Duration loaded: ${duration?.inSeconds}s');
         if (mounted) {
           setState(() {
             _duration = duration ?? Duration.zero;
@@ -139,13 +138,13 @@ class _ArticlePlayerState extends State<ArticlePlayer> {
 
       // Auto-play audio
       Future.delayed(const Duration(milliseconds: 500), () {
-        print('[AudioPlayer] Auto-playing audio...');
+        debugPrint('[AudioPlayer] Auto-playing audio...');
         _audioPlayer.play().catchError((e) {
-          print('[AudioPlayer] Error auto-playing: $e');
+          debugPrint('[AudioPlayer] Error auto-playing: $e');
         });
       });
     } catch (e) {
-      print('[AudioPlayer] Error initializing: $e');
+      debugPrint('[AudioPlayer] Error initializing: $e');
     }
   }
 
@@ -157,7 +156,7 @@ class _ArticlePlayerState extends State<ArticlePlayer> {
         await _audioPlayer.play();
       }
     } catch (e) {
-      print('Error toggling play/pause: $e');
+      debugPrint('Error toggling play/pause: $e');
     }
   }
 

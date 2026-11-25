@@ -16,7 +16,6 @@ import '../../services/cricket_service.dart';
 import '../../services/news_feed_service.dart';
 import '../../services/playback_service.dart';
 import '../../services/settings_provider.dart';
-import '../../widgets/gati_shell.dart';
 import '../../widgets/news_ticker.dart';
 import '../../widgets/podcasts_grid.dart';
 
@@ -386,7 +385,6 @@ class _TakeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = GatiPalette.of(context);
     return Padding(
       padding: EdgeInsets.zero,
       child: GestureDetector(

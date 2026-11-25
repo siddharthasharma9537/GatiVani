@@ -154,7 +154,7 @@ class _PaperTodayScreenState extends State<PaperTodayScreen> {
       borderRadius: BorderRadius.circular(Gati.rCard),
       child: InkWell(
         borderRadius: BorderRadius.circular(Gati.rCard),
-        onTap: () => context.push(Uri(path: '/paper/today/story', queryParameters: {
+        onTap: () => context.push(Uri(path: '/paper/review-today/story', queryParameters: {
           'edition': _ed!['edition'] as String,
           'date': _ed!['date'] as String,
           'id': s['id'] as String,

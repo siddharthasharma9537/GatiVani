@@ -838,7 +838,7 @@ class PlaybackService extends ChangeNotifier {
   bool get sleepActive => _sleepTimer != null || _sleepAtTrackEnd;
   bool get sleepAtTrackEnd => _sleepAtTrackEnd;
   Duration? get sleepRemaining =>
-      _sleepAt == null ? null : _sleepAt!.difference(DateTime.now());
+      _sleepAt?.difference(DateTime.now());
 
   /// Pause after [d]. Pass null to cancel.
   void setSleepTimer(Duration? d) {
@@ -891,7 +891,7 @@ class PlaybackService extends ChangeNotifier {
   /// use the same public position/duration the seek bar does, so both need
   /// this to actually land at the right spot instead of erroring or
   /// silently clamping. Kept synchronous (fire-and-forget internally) since
-  /// callers (GatiSeekBar's ValueChanged<Duration>, the media-session
+  /// callers (GatiSeekBar's `ValueChanged<Duration>`, the media-session
   /// void-Function() closures) expect a plain void call.
   void seek(Duration d) {
     final l = _local;

@@ -9,7 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 ///   Synthesize→ POST /functions/v1/documents-synthesize (JSON)
 ///
 /// Override at build/run time with:
-///   flutter run --dart-define=SUPABASE_FUNCTIONS_URL=https://<ref>.supabase.co/functions/v1
+///   flutter run --dart-define=SUPABASE_FUNCTIONS_URL=https://PROJECT_REF.supabase.co/functions/v1
 class ApiConfig {
   ApiConfig._();
 
@@ -37,7 +37,7 @@ class ApiConfig {
   static String get pipelineStartUrl => '$functionsUrl/pipeline-start';
   static String get pipelineStatusUrl => '$functionsUrl/pipeline-status';
 
-  /// Supabase project origin, e.g. https://<ref>.supabase.co
+  /// Supabase project origin, e.g. https://PROJECT_REF.supabase.co
   static String get projectUrl =>
       functionsUrl.replaceFirst('/functions/v1', '');
 

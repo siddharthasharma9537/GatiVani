@@ -5,7 +5,6 @@ import '../design/components/gati_states.dart';
 import '../design/components/gati_tile.dart';
 import '../design/section_colors.dart';
 import '../design/tokens.dart';
-import '../l10n/strings.dart';
 import '../models/newspaper_article.dart';
 import '../services/news_feed_service.dart';
 import '../services/playback_service.dart';

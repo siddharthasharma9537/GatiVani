@@ -1,12 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../config/api_config.dart';
 import '../../config/districts.dart';
 import '../../l10n/strings.dart';
 import '../../models/newspaper_article.dart';
@@ -60,8 +57,6 @@ class _PaperScreenState extends State<PaperScreen> {
   bool _uploading = false;
   double _uploadProgress = 0;
 
-  bool _featuredLoaded = false;
-
   Offset _pressPos = Offset.zero; // last tap-down, anchors long-press menus
 
   @override
@@ -82,7 +77,6 @@ class _PaperScreenState extends State<PaperScreen> {
       _articles = ed.articles;
       _editionTitle = ed.title;
       _pubDate = ed.pubDate;
-      _featuredLoaded = true;
     });
   }
 
@@ -623,10 +617,18 @@ class _PaperScreenState extends State<PaperScreen> {
           GatiMasthead(lang: lang, actions: [
             // local review build only: Eenadu's paper as news (owner's Mac)
             if (kEenaduReview)
-              GatiHeaderButton(icon: Icons.newspaper, onTap: () => context.push('/paper/today')),
+              GatiHeaderButton(icon: Icons.newspaper, onTap: () => context.push('/paper/review-today')),
             GatiHeaderButton(
                 icon: Icons.search, onTap: () => context.push('/search')),
           ]),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => context.push('/paper/today'),
+              icon: const Icon(Icons.newspaper),
+              label: Text(tr(lang, 'today_paper')),
+            ),
+          ),
           const NewsTicker(),
           if (_error != null)
             Padding(

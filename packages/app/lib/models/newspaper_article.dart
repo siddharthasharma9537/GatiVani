@@ -83,7 +83,7 @@ class NewspaperArticle {
     final m = estimatedDurationSeconds ~/ 60;
     final s = estimatedDurationSeconds % 60;
     if (m == 0) return '${s}s';
-    if (s == 0) return '${m} min';
+    if (s == 0) return '$m min';
     return '${m}m ${s}s';
   }
 

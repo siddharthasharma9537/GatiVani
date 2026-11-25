@@ -149,7 +149,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               for (final sp in const [0.75, 1.0, 1.25, 1.5, 2.0])
                 Column(children: [
                   if (sp != 0.75) Divider(height: 1, color: p.line),
-                  _choiceRow(p, '${sp}×', s.playbackSpeed == sp,
+                  _choiceRow(p, '$sp×', s.playbackSpeed == sp,
                       () => s.setPlaybackSpeed(sp)),
                 ]),
             ])),

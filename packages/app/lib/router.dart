@@ -16,6 +16,8 @@ import 'features/paper/section_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/shows/shows_screen.dart';
 import 'features/paper/paper_screen.dart';
+import 'features/paper/today/today_screen.dart';
+import 'features/paper/today/story_screen.dart';
 import 'services/news_feed_service.dart';
 import 'features/player/player_screen.dart';
 import 'features/menu/menu_screen.dart';
@@ -78,11 +80,17 @@ final GoRouter appRouter = GoRouter(
             path: '/paper',
             builder: (_, __) => const PaperScreen(),
             routes: [
-              // local-only "Today's paper" (Eenadu, owner's Mac); compiled in only with --dart-define=EENADU_REVIEW=true
+              GoRoute(path: 'today', builder: (_, __) => const TodayPaperScreen()),
+              GoRoute(path: 'today/story', builder: (_, state) => PublishedStoryScreen(
+                edition: state.uri.queryParameters['edition'] ?? '',
+                date: state.uri.queryParameters['date'] ?? '',
+                id: state.uri.queryParameters['id'] ?? '',
+              )),
+              // The local Store/PDF review remains available only in review builds.
               if (kEenaduReview) ...[
-                GoRoute(path: 'today', builder: (_, __) => const PaperTodayScreen()),
+                GoRoute(path: 'review-today', builder: (_, __) => const PaperTodayScreen()),
                 GoRoute(
-                  path: 'today/story',
+                  path: 'review-today/story',
                   builder: (_, state) => StoryScreen(
                       edition: state.uri.queryParameters['edition'] ?? '',
                       date: state.uri.queryParameters['date'] ?? '',

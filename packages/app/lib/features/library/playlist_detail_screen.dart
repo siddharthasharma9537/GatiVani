@@ -168,9 +168,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                           padding: const EdgeInsets.fromLTRB(
                               Gati.s5, 0, Gati.s5, Gati.s6),
                           itemCount: pl.articles.length,
-                          onReorder: (oldIndex, newIndex) =>
+                          onReorderItem: (oldIndex, newIndex) =>
                               PlaylistsStore.i.reorder(
-                                  widget.playlistId, oldIndex, newIndex),
+                                  widget.playlistId, oldIndex, newIndex > oldIndex ? newIndex + 1 : newIndex),
                           itemBuilder: (_, i) =>
                               _row(p, lang, pl.articles[i], i, key: ValueKey(pl.articles[i].id)),
                         ),

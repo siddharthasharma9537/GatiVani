@@ -16,7 +16,7 @@ The app is four tabs:
   stories" narrated on tap. Original AI-generated commentary/explainers where
   the underlying source is facts-only (cricket scores, the day's top story) —
   never a reproduction of a publisher's actual sentences.
-- **Paper** — upload a newspaper edition (PDF or camera scan); it's OCR'd,
+- **Paper** — Today's paper (built on `feat/todays-paper`, not deployed), plus upload a newspaper edition (PDF or camera scan); it's OCR'd,
   structured into articles by section, and narrated end to end.
 - **Shows** — Telugu podcasts, Mann Ki Baat archive, All India Radio
   bulletins.
@@ -87,16 +87,16 @@ Not covered: the font `EenaduU` (advertisement text, one page of one edition);
 headlines printed as a picture have no text (they need OCR); words broken at
 line ends keep a gap; story grouping and joining continuations are a first cut.
 
-## Local review and "Today's paper" screens (not in normal or deployed builds)
+## Local review screens (review builds only)
 
-Two screens read the owner's PDFs and converter output on the Mac. They exist
+Two local screens read the owner's PDFs and converter output on the Mac. They exist
 only when the web app is built with `--dart-define=EENADU_REVIEW=true`; a normal
-or deployed build has neither route.
+or deployed build has neither local route. The separate published `/paper/today` route is part of normal builds on `feat/todays-paper`.
 
 - `/review`: the page, each text block with its picture, the converted text and
   the OCR reading, OK / Fix with a note, a filter ("only blocks that need a
   look"), "next unreviewed".
-- `/paper/today` (also a button on the Paper tab header): the paper as news,
+- `/paper/review-today` (newspaper icon on the Paper tab header in review builds): the paper as news,
   grouped by Eenadu's page labels, and a reading screen per story.
 
 ```bash
@@ -123,9 +123,10 @@ remain open. Earlier phase-1 feasibility notes are superseded by that status.
 | --- | --- |
 | Eenadu daily PDFs to Drive | built, runs on the owner's Mac |
 | Legacy-font converter | built, local only (outside this repo) |
-| Review and Today's paper screens | built, local only, behind `EENADU_REVIEW` |
+| Local PDF review screens | built, local only, behind `EENADU_REVIEW`; paper route now `/paper/review-today` |
+| Published Today's paper screen | built on `feat/todays-paper`, normal `/paper/today` route; not deployed |
 | Eenadu content in the live app | not done: nothing Eenadu-related is live or public |
-| Owner-only live load (schema, importer) | planned, not started |
+| Publisher schema and importer | built and tested offline; migration NOT applied, no day imported |
 | Upload fix (#25) on the live site | merged to `main`, not deployed: the live site rejected uploads when last checked (2026-11-07) until a web deploy |
 | On-device TTS | built on PR #28 (`feat/on-device-tts`), not merged; played from Today's paper in the local review build (`feat/eenadu-listen`) |
 
@@ -344,3 +345,194 @@ GV_REFERENCE_PYTHON="$HOME/Workspace/sohum-veda-work/eenadu-glyph/tts_samples/ve
 
 These commands are instructions only; current checks use Dart tests and the
 browser's ONNX runtime, not execution of downloaded model Python.
+
+## Published Today's paper (2026-11-13, code only)
+
+Built on `feat/todays-paper`: Paper → **Today's paper** → edition switcher,
+ordered section chips and stories → a reader with distinct headline, kicker,
+deck, byline, subheadings, paragraphs, captions and side items. Source/date and
+an **About this text** entry replace the local review notice; there is no warning
+banner. Telugu UI strings are marked AI proposals. Loading, empty, retry,
+pull-to-refresh, a persistent last view and large text are covered. The screen
+shows the **latest published date**, with its date visible, even when it is not
+today. Editions without a publication on that date are absent.
+
+The existing Listen panel is shared with local review: narration text passes
+unchanged to the on-device sentence reader, with pause/resume, speed and voice
+controls. Changing voice while paused retains the current sentence and speed.
+On web the voice pack is required; browser speech/cloud synthesis is not used
+by this panel. Voice-pack/runtime downloads still happen only through the
+existing user-initiated playback flow. Native background/phone verification and
+native-reader approval remain open as documented above.
+
+New tables `paper_editions`, `paper_sections`, `paper_days`, `paper_stories` and
+`story_publishers` keep curated daily text separate from user uploads, OCR jobs,
+article placements and server audio. `article_placements` has no definition in
+this checkout's migrations; no live schema was queried. Story identity is
+(edition, source date, local story ID). A security-invoker REST RPC serializes
+and atomically upserts/replaces **one edition/day**, including removal of stale
+stories. Multiple editions are separate transactions; retry all selected
+editions after a partial failure. Publisher membership comes only from the
+owner's SQL tooling; signed-in users cannot enroll themselves. Public SELECT,
+publisher-only mutations, JSON role checks and browse indexes are included.
+No audio, PDFs, page images, credentials or publisher fixtures are added.
+
+The importer reads `Store.paper()` directly using the owner's local converter
+and manifests, translating Store's `subhead`/`sidebar` roles and section names.
+It preserves Store narration (headline once, no continuation markers/captions/
+side items), retains continuation status separately, and rejects unavailable or
+empty publications before sending anything. Dry runs print only counts for all
+12 sections and do not instantiate HTTP or write files. They require the
+existing review state directory with `images/`. All credentials are read from
+environment variables at run time; errors omit bodies, headers and paths.
+
+A graphic headline uses a cropped picture **only** when the API already supplies
+an HTTPS `headline_image_url`. The importer leaves it null: it does not upload
+crops or expose `/review-api` URLs. Otherwise the app shows a neutral graphic
+label. Online deletion takes effect on the next refresh; previously saved
+copies can remain on offline devices until refreshed or local storage is cleared.
+
+**Verification:** 111 Flutter tests (24 new), 21 Python tests (13 new, including
+SQL/PLpgSQL parsing with pglast). Flutter analysis is clean; both normal and `EENADU_REVIEW=true` release
+web builds compile to JavaScript. Existing third-party `flutter_tts` Wasm
+dry-run findings and a missing optional Cupertino icon-font warning remain;
+these are not Wasm build or device-playback verification. PostgreSQL syntax was parsed
+only: migration application, real RLS/REST integration, publisher authentication,
+real-day import and production/browser/phone verification were not performed.
+Nothing is applied, deployed, live, pushed or merged by this work.
+
+### How to publish a day (owner only; none of these live commands were run)
+
+Use Bash. Start from this worktree; keep credentials out of shell history and
+files. `SUPABASE_ACCESS_TOKEN` below means the publisher's **Supabase Auth user
+session access JWT**, not a CLI personal access token or service-role key. Use
+the same project origin/public key as the app. Obtain/refresh that session using
+your existing sign-in tooling. Public hosting still requires the owner's
+publisher permission described above.
+
+1. Apply the new migration once with your database-owner tooling, then enroll
+   the publisher's existing Auth user UUID. Here is the psql path:
+
+```bash
+cd ~/Workspace/gativani-todays-paper
+read -r -s -p 'Owner database connection URL: ' GV_DATABASE_URL; printf '\n'
+read -r -p 'Publisher Auth user UUID: ' GV_PUBLISHER_ID
+psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/migrations/20261113000000_todays_paper.sql
+psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -v publisher_user_id="$GV_PUBLISHER_ID" <<'SQL'
+insert into public.story_publishers(user_id)
+values (:'publisher_user_id'::uuid) on conflict (user_id) do nothing;
+SQL
+```
+
+2. Set run-time values without echoing credentials. Point the four local paths
+   at the same directories you already use for the review server. No content is
+   copied into the checkout.
+
+```bash
+read -r -p 'Supabase HTTPS project origin: ' SUPABASE_URL
+read -r -s -p 'Supabase public/publishable API key: ' SUPABASE_PUBLISHABLE_KEY; printf '\n'
+read -r -s -p 'Publisher user session access JWT: ' SUPABASE_ACCESS_TOKEN; printf '\n'
+export SUPABASE_URL SUPABASE_PUBLISHABLE_KEY SUPABASE_ACCESS_TOKEN
+read -r -p 'Local Drive paper directory: ' GV_PAPER_DRIVE
+read -r -p 'Local eenadu-font directory: ' GV_PAPER_FONTS
+read -r -p 'Local eenadu-glyph directory: ' GV_PAPER_GLYPHS
+read -r -p 'Existing local review state directory: ' GV_PAPER_STATE
+GV_PAPER_DATE=2026-11-13
+~/eenadu-env/bin/python scripts/publish_todays_paper.py --date "$GV_PAPER_DATE" --editions TELANGANA ANDHRA-PRADESH GREATER-HYDERABAD --drive "$GV_PAPER_DRIVE" --font-dir "$GV_PAPER_FONTS" --glyph-dir "$GV_PAPER_GLYPHS" --state-dir "$GV_PAPER_STATE" --dry-run
+```
+
+3. Review those counts and your local converted stories, then publish and verify
+   counts/metadata (verification prints no story text):
+
+```bash
+~/eenadu-env/bin/python scripts/publish_todays_paper.py --date "$GV_PAPER_DATE" --editions TELANGANA ANDHRA-PRADESH GREATER-HYDERABAD --drive "$GV_PAPER_DRIVE" --font-dir "$GV_PAPER_FONTS" --glyph-dir "$GV_PAPER_GLYPHS" --state-dir "$GV_PAPER_STATE"
+psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -v paper_date="$GV_PAPER_DATE" -f scripts/verify_todays_paper.sql
+```
+
+4. Build and inspect the **normal** app before deployment. Open Paper → Today's
+   paper; compare source date, editions, section counts and stories; test Listen
+   with an installed voice pack, refresh, offline/restart and large text. The
+   existing test server is a local static server; use its printed localhost URL.
+
+```bash
+(cd packages/app && flutter pub get && flutter test && flutter analyze && flutter build web --release)
+python3 scripts/serve_web_nocache.py 8082
+```
+
+Stop that server with Ctrl-C when finished. Deployable assets are exactly
+`packages/app/build/web/` from the **normal** build. The review build belongs only
+on the owner's Mac. Do not deploy `EENADU_REVIEW=true`.
+
+The current public host is the Cloudflare Worker `gativani`. Its Wrangler
+configuration/deployment source is **absent from this checkout**. Use the owner's
+existing Worker deployment project to publish the normal assets, preserving its
+routes and headers. An exact command for that external project cannot be
+verified or supplied from this repo. Do not treat the legacy Vercel workflow as
+an update to `gativani.sohum.cc`. If deploying this repo's configured **Vercel**
+project intentionally, its existing CLI path is:
+
+```bash
+vercel deploy --prod
+```
+
+That command updates Vercel, not the current Cloudflare live site. No deployment
+command above was executed. Reopen the deployed `/paper/today` and a story deep
+link as a signed-out reader; verify source date, counts, text and Listen before
+calling the feature live.
+
+To delete the selected date (optionally reduce the edition list), then verify:
+
+```bash
+~/eenadu-env/bin/python scripts/publish_todays_paper.py --date "$GV_PAPER_DATE" --editions TELANGANA ANDHRA-PRADESH GREATER-HYDERABAD --delete-day --dry-run
+~/eenadu-env/bin/python scripts/publish_todays_paper.py --date "$GV_PAPER_DATE" --editions TELANGANA ANDHRA-PRADESH GREATER-HYDERABAD --delete-day
+psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -v paper_date="$GV_PAPER_DATE" -f scripts/verify_todays_paper.sql
+unset SUPABASE_URL SUPABASE_PUBLISHABLE_KEY SUPABASE_ACCESS_TOKEN GV_DATABASE_URL GV_PUBLISHER_ID
+```
+
+No Store paths/dependencies are needed for deletion. Its edition/date filter
+removes `paper_days` and cascades to that day's stories, leaving other days alone.
+The migration also documents a single-edition SQL deletion. Deleting the newest
+day makes the app's next refresh show the next latest published day, if any.
+
+### Local verification and commits
+
+Checks were run with Flutter 3.44.0 / Dart 3.12.0 copied into the ignored
+worktree cache because the installed SDK attempted to write outside this
+worktree. The copied/installed font-subsetting tool stalled; fresh official
+Flutter engine build-tool packages were downloaded into the worktree cache.
+No SDK security setting or build-check bypass flag was used. Package downloads
+were the only external network activity. No Supabase CLI/MCP or live API was
+used. The Python environment contains PyMuPDF and pglast; tests use synthetic
+fixtures only. Reproduce the checks with your normal installed tools:
+
+```bash
+~/eenadu-env/bin/python -m unittest discover -s scripts/tests -v
+(cd packages/app && flutter test && flutter analyze)
+(cd packages/app && flutter build web --release --dart-define=EENADU_REVIEW=true)
+(cd packages/app && flutter build web --release)
+```
+
+For offline SQL syntax checking, install `pglast` in your test environment; its
+parser test explicitly skips when unavailable. No SQL is executed by that test.
+
+The session's sandbox rejects `git add` because linked-worktree Git metadata
+lives outside this writable worktree. **No commits were created.** After reviewing
+the diff, the owner can create the intended four local commits below. These
+commands do not push, merge or deploy:
+
+```bash
+cd ~/Workspace/gativani-todays-paper
+test "$(git branch --show-current)" = feat/todays-paper
+
+git add supabase/migrations/20261113000000_todays_paper.sql scripts/publish_todays_paper.py scripts/verify_todays_paper.sql scripts/tests/test_publish_todays_paper.py scripts/tests/test_paper_migration.py
+git commit -m "Add publisher-only daily paper schema and atomic REST importer" -m "Co-Authored-By: Codex <noreply@openai.com>"
+
+git add packages/app/lib/features/paper packages/app/lib/features/review/listen_panel.dart packages/app/lib/features/review/paper_today_screen.dart packages/app/lib/l10n/strings.dart packages/app/lib/router.dart packages/app/test/features/paper
+git commit -m "Add published Today's paper reader with cached views and shared Listen" -m "Co-Authored-By: Codex <noreply@openai.com>"
+
+git add packages/app/lib/config/api_config.dart packages/app/lib/design/app_theme.dart packages/app/lib/design/components/article_player.dart packages/app/lib/design/components/transcript_player.dart packages/app/lib/features/library/playlist_detail_screen.dart packages/app/lib/features/live/live_feed_screen.dart packages/app/lib/features/settings/settings_screen.dart packages/app/lib/main.dart packages/app/lib/models/newspaper_article.dart packages/app/lib/services/playback_service.dart packages/app/lib/widgets/gati_puck.dart packages/app/lib/widgets/gati_shell.dart packages/app/lib/widgets/news_ticker.dart packages/app/lib/widgets/podcasts_grid.dart packages/app/pubspec.yaml
+git commit -m "Resolve analyzer diagnostics required by release verification" -m "Co-Authored-By: Codex <noreply@openai.com>"
+
+git add README.md STATUS.md
+git commit -m "Document offline verification and owner publishing steps" -m "Co-Authored-By: Codex <noreply@openai.com>"
+```

@@ -215,7 +215,7 @@ class _GatiShellState extends State<GatiShell> with TickerProviderStateMixin {
                   child: SizeTransition(
                     sizeFactor:
                         CurvedAnimation(parent: _bar, curve: Curves.easeOut),
-                    axisAlignment: -1,
+                    alignment: Alignment.topCenter,
                     // Rebuild on alert updates so For You's unread dot is live.
                     child: ListenableBuilder(
                       listenable: AlertsService.i,

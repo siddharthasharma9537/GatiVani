@@ -21,8 +21,6 @@ class SectionScreen extends StatelessWidget {
   final String section;
   final List<NewspaperArticle> articles;
 
-  void _openPlayer(BuildContext context) => context.push('/player');
-
   // Tap opens the article TEXT (same reader as everywhere); ▶ plays in the
   // mini-player.
   void _openArticle(BuildContext context, NewspaperArticle a) {
@@ -37,11 +35,6 @@ class SectionScreen extends StatelessWidget {
       body: a.content,
     );
     context.push('/reader');
-  }
-
-  void _play(BuildContext context, NewspaperArticle a) {
-    _openPlayer(context);
-    PlaybackService.i.playOne(a);
   }
 
   void _playAll() {

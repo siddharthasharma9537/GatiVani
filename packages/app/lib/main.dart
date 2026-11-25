@@ -23,7 +23,7 @@ void main() async {
   // round-trip is deterministic.
   await Supabase.initialize(
     url: ApiConfig.projectUrl,
-    anonKey: ApiConfig.anonKey,
+    publishableKey: ApiConfig.anonKey,
     authOptions: const FlutterAuthClientOptions(detectSessionInUri: false),
   );
   // Complete an OAuth redirect: if the launch URL carries an auth code (or an

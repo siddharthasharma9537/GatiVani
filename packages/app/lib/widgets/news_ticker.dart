@@ -76,7 +76,7 @@ class _NewsTickerState extends State<NewsTicker> {
 }
 
 class BreakingMarquee extends StatefulWidget {
-  const BreakingMarquee({required this.items});
+  const BreakingMarquee({super.key, required this.items});
   final List<String> items;
 
   @override
@@ -128,8 +128,8 @@ class BreakingMarqueeState extends State<BreakingMarquee>
   }
 
   @override
-  void didUpdateWidget(BreakingMarquee old) {
-    super.didUpdateWidget(old);
+  void didUpdateWidget(BreakingMarquee oldWidget) {
+    super.didUpdateWidget(oldWidget);
     final next = _composeLine(widget.items);
     if (next != _line) {
       setState(() => _line = next);

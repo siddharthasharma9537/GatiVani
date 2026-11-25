@@ -33,7 +33,6 @@ class _GatiPuckState extends State<GatiPuck> {
   Offset? _pos;
   bool _dragging = false;
   bool _overStop = false;
-  String? _lastError;
 
   // Anchors captured on pointer-down, so drag position is computed as an
   // absolute offset from the pointer's total movement rather than summed
@@ -80,10 +79,8 @@ class _GatiPuckState extends State<GatiPuck> {
             final ps = PlaybackService.i;
             final a = ps.current;
             if (a == null) {
-              _lastError = null;
               return const SizedBox.shrink();
             }
-            _lastError = ps.error;
             final pos = _clamp(
                 _pos ?? _saved ?? Offset(12, area.height - _size - 90), area);
             _pos = pos;

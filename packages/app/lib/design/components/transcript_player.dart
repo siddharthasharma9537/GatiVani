@@ -12,11 +12,11 @@ class TranscriptPlayer extends StatefulWidget {
   final VoidCallback onClose;
 
   const TranscriptPlayer({
-    Key? key,
+    super.key,
     required this.audioUrl,
     required this.articleText,
     required this.onClose,
-  }) : super(key: key);
+  });
 
   @override
   State<TranscriptPlayer> createState() => _TranscriptPlayerState();
@@ -26,7 +26,6 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
   late AudioPlayer _audioPlayer;
   late ScrollController _scrollController;
   late List<String> _sentences;
-  late List<String> _words;
   late List<SentenceTiming> _sentenceTimings;
   late List<SentenceTiming> _wordTimings;
   int _currentSentenceIndex = 0;
@@ -46,7 +45,6 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
     _audioPlayer = AudioPlayer();
     _scrollController = ScrollController();
     _sentences = TranscriptSyncService.sentencesFromText(widget.articleText);
-    _words = SentenceTimingService.wordsFromText(widget.articleText);
 
     // Create a key for each sentence for Scrollable.ensureVisible()
     _sentenceKeys = List.generate(_sentences.length, (_) => GlobalKey());
@@ -65,11 +63,11 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
 
   Future<void> _initAudioPlayer() async {
     try {
-      print('[AudioPlayer] Initializing with URL: ${widget.audioUrl}');
+      debugPrint('[AudioPlayer] Initializing with URL: ${widget.audioUrl}');
 
       // Load the audio URL
       await _audioPlayer.setUrl(widget.audioUrl);
-      print('[AudioPlayer] Audio URL set successfully');
+      debugPrint('[AudioPlayer] Audio URL set successfully');
 
       // Listen to position updates with responsive tracking
       _audioPlayer.positionStream.listen((position) {
@@ -112,7 +110,7 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
                   );
           }
 
-          print('[Audio] Position: ${position.inSeconds}s, WordIndex: $newWordIndex, SentenceIndex: $newSentenceIndex');
+          debugPrint('[Audio] Position: ${position.inSeconds}s, WordIndex: $newWordIndex, SentenceIndex: $newSentenceIndex');
 
           // Update state and scroll
           setState(() {
@@ -129,7 +127,7 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
       });
 
       _audioPlayer.playerStateStream.listen((state) {
-        print('[AudioPlayer] Player state changed: playing=${state.playing}, processingState=${state.processingState}');
+        debugPrint('[AudioPlayer] Player state changed: playing=${state.playing}, processingState=${state.processingState}');
         if (mounted) {
           setState(() {
             _isPlaying = state.playing;
@@ -138,7 +136,7 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
       });
 
       _audioPlayer.durationStream.listen((duration) {
-        print('[AudioPlayer] Duration loaded: ${duration?.inSeconds}s');
+        debugPrint('[AudioPlayer] Duration loaded: ${duration?.inSeconds}s');
         if (mounted) {
           setState(() {
             _duration = duration ?? Duration.zero;
@@ -157,14 +155,14 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
 
       // Auto-play audio after a short delay
       Future.delayed(const Duration(milliseconds: 500), () {
-        print('[AudioPlayer] Auto-playing audio...');
+        debugPrint('[AudioPlayer] Auto-playing audio...');
         _audioPlayer.play().catchError((e) {
-          print('[AudioPlayer] Error auto-playing: $e');
+          debugPrint('[AudioPlayer] Error auto-playing: $e');
         });
       });
 
     } catch (e) {
-      print('[AudioPlayer] Error initializing: $e');
+      debugPrint('[AudioPlayer] Error initializing: $e');
     }
   }
 
@@ -194,23 +192,6 @@ class _TranscriptPlayerState extends State<TranscriptPlayer> {
       } else {
         await _audioPlayer.play();
       }
-    } catch (e) {
-      // Silently fail
-    }
-  }
-
-  void _jumpToSentence(int sentenceIndex) async {
-    if (_sentences.isEmpty || _duration.inMilliseconds == 0) return;
-
-    final position = _useExactTiming
-        ? _sentenceTimings[sentenceIndex].startTime
-        : Duration(
-            milliseconds:
-                (_duration.inMilliseconds * sentenceIndex / _sentences.length)
-                    .toInt(),
-          );
-    try {
-      await _audioPlayer.seek(position);
     } catch (e) {
       // Silently fail
     }

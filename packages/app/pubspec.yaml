@@ -30,7 +30,7 @@ dependencies:
   dio: ^5.3.1
 
   # Auth (Supabase GoTrue — OAuth + session persistence)
-  supabase_flutter: ^2.8.0
+  supabase_flutter: ^2.18.3
   # Deep-link handling for the native OAuth callback (gativani://login-callback)
   app_links: ^7.2.0
 
@@ -60,6 +60,9 @@ dependencies:
   web: ^1.0.0
   disk_space_plus: ^0.2.6
 
+  flutter_web_plugins:
+    sdk: flutter
+  http_parser: ^4.1.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
