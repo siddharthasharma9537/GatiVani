@@ -26,6 +26,14 @@ class AudioMigrationTests(unittest.TestCase):
         self.assertIn('using (', text)
         self.assertIn('with check (', text)
 
+    def test_text_tables_lose_public_read(self):
+        text = SQL.read_text()
+        self.assertIn("array['paper_days','paper_stories']", text)
+        self.assertIn('drop policy if exists paper_read on public.%I', text)
+        self.assertIn('revoke select on public.%I from anon', text)
+        # Edition and section labels contain no Eenadu text and stay public.
+        self.assertNotIn("'paper_editions'", text.split('paper_days')[1])
+
     def test_stores_keys_not_urls_and_matches_contract_columns(self):
         text = SQL.read_text()
         for column in ('story_id', 'edition', 'source_date', 'rank', 'page', 'headline', 'object_key',

@@ -62,8 +62,9 @@ class JustAudioPaperPlayer extends PaperAudioPlayer {
   }
 
   void _onState(PlayerState s) {
-    if (_state == PaperAudioState.error || _state == PaperAudioState.loading)
+    if (_state == PaperAudioState.error || _state == PaperAudioState.loading) {
       return;
+    }
     if (s.processingState == ProcessingState.completed) {
       _set(PaperAudioState.ended);
     } else if (s.processingState == ProcessingState.ready) {

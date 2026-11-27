@@ -37,4 +37,15 @@ create policy paper_audio_owner on public.paper_story_audio for all to authentic
   using (exists (select 1 from public.story_publishers where user_id = (select auth.uid())))
   with check (exists (select 1 from public.story_publishers where user_id = (select auth.uid())));
 
+-- Eenadu text is copyrighted: remove the PUBLIC read that 20261113000000 gave paper_days and
+-- paper_stories. After this, only story_publishers members (the owner) can read them; the
+-- paper_publish policy ("for all") already covers owner reads. paper_editions and paper_sections
+-- (edition and section labels, no Eenadu text) stay readable so the edition picker still renders.
+do $$ declare tbl text; begin
+  foreach tbl in array array['paper_days','paper_stories'] loop
+    execute format('drop policy if exists paper_read on public.%I', tbl);
+    execute format('revoke select on public.%I from anon', tbl);
+  end loop;
+end $$;
+
 commit;

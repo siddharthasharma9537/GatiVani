@@ -275,6 +275,7 @@ const Map<String, Map<String, String>> _kStrings = {
     'paper_speed': 'వేగం',
     'paper_female': 'స్త్రీ స్వరం',
     'paper_male': 'పురుష స్వరం',
+    // AI-proposed Telugu (paper_audio_*): not reviewed by a native reader; do not treat as final.
     'paper_audio_entry': 'నేటి పేపర్ వినండి (ఆడియో)',
     'paper_audio_count': '{n} వార్తలు · సుమారు {min} నిమిషాలు',
     'paper_audio_position': 'వార్త {current} / {total}',

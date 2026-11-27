@@ -542,40 +542,101 @@ git commit -m "Document offline verification and owner publishing steps" -m "Co-
 Branch `feat/paper-audio` (on top of a snapshot of `feat/todays-paper`). **Nothing here was applied, deployed or run against a live service.** Contract (proposed, PR open): sohum-contracts `docs/PAPER_AUDIO_SHAPE.md`, `schemas/paper_story_audio.schema.json`.
 
 What it adds:
-- `supabase/migrations/20261125000000_paper_story_audio.sql`: table `paper_story_audio` (one row per story: R2 object key and metadata, never audio or a URL). **Owner-only RLS**: read and write need membership in `story_publishers`; `anon` has no access.
+- `supabase/migrations/20261125000000_paper_story_audio.sql`: table `paper_story_audio` (one row per story: R2 object key and metadata, never audio or a URL). **Owner-only RLS**: read and write need membership in `story_publishers`; `anon` has no access. The same migration also **removes the public read** from `paper_days` and `paper_stories` (Eenadu text), so signed-out visitors and non-owners see no paper text.
 - `workers/paper-audio/`: Cloudflare Worker, the only way to play the files. Verifies the Supabase JWT against the project's JWKS (ES256/RS256), checks `OWNER_USER_IDS`, streams from the private R2 bucket with Range, `Cache-Control: private, no-store`, CORS for the app origin only. Read-only. `npm test` (9 tests, fake R2).
 - `scripts/publish_paper_audio.py`: importer. Uploads each `.m4a` to R2 through the S3 API (SigV4, standard library), upserts the rows, removes stale files and rows. `--dry-run` reads local files only. Idempotent (a file with the same sha256 is not re-uploaded). `--delete-day` deletes files first, then rows.
 - App: on the Today screen an entry card appears only when `PAPER_AUDIO_URL` is set at build time and the signed-in user can read audio rows. It opens the day's list in `rank` order and a story screen with play/pause, seek, speed (same chips as Listen), stop, previous/next story and automatic move to the next story. Native sends the bearer header; web fetches the file with the token and plays it from memory (an audio element cannot send headers).
 - Tests with fake clients: 18 Python importer tests (including the AWS-documented SigV4 example), 3 migration tests, 9 Worker tests, 15 Flutter tests. Telugu strings are AI proposals until a native reader approves them.
 
-### How to publish a day with audio (owner only; you run each command)
+## Land it
 
-The generator writes `~/Library/CloudStorage/GoogleDrive-.../My Drive/sohum-gativani/audio/<dd-mm-yyyy>/` (`manifest.json` plus one `.m4a` per story).
+One ordered runbook. **You** run every step; nothing here was run by the build session. Steps marked **LIVE** change a real service (Cloudflare, Supabase) and are not undone by a git revert; the others are local. Never paste a key, token or connection URL into a file, a chat or a commit: use the shell prompts shown.
 
-1. **One-time Cloudflare setup** (full steps and the exact `wrangler` commands: contract doc section 6): private bucket `gativani-paper-audio` with no public URL, a retention rule (days are your choice), an R2 API token limited to that bucket.
-2. **One-time database step** (you run it): apply `20261125000000_paper_story_audio.sql` after the text migration; make sure your auth user id is in `story_publishers`:
+Needs from you, in short: a Cloudflare login (`wrangler login`), an R2 API token for one bucket, your Supabase **database connection URL** and your Supabase **user access token** (the JWT of your signed-in app session), your auth user id, and the folder the generator wrote.
+
+Decisions already taken (2026-11-27, owner): audio kept 14 days; the Worker streams (no presigned URLs); the Worker stays on a `workers.dev` address for the trial; audio is its own list, not joined to the text stories yet; Eenadu text is owner-only too.
+
+**0. Check the tests (local, safe)**
 ```bash
+cd ~/Workspace/gativani-todays-paper
+(cd packages/app && flutter test && flutter analyze)
+(cd workers/paper-audio && npm test)
+python3 -m unittest discover -s scripts/tests -p "test_*.py"
+```
+(`test_eenadu_review_server` needs `pymupdf`; the others do not.)
+
+**1. Log in to Cloudflare (local)** , needs your Cloudflare account.
+```bash
+wrangler login
+wrangler whoami
+```
+
+**2. LIVE: create the private bucket and the 14-day rule** , needs Cloudflare. Check each flag with `--help` first (they were written from documentation, not run).
+```bash
+wrangler r2 bucket create gativani-paper-audio --location apac
+wrangler r2 bucket dev-url get gativani-paper-audio     # must say disabled; if enabled: wrangler r2 bucket dev-url disable gativani-paper-audio
+wrangler r2 bucket domain list gativani-paper-audio     # must list none
+wrangler r2 bucket lifecycle add gativani-paper-audio expire-paper-audio paper/ --expire-days 14
+wrangler r2 bucket lifecycle list gativani-paper-audio
+```
+
+**3. LIVE: create the upload token (dashboard)** , Cloudflare dashboard → R2 → Manage API tokens → Create: permission *Object Read & Write*, bucket `gativani-paper-audio` only. Keep the Access Key ID and Secret for step 8; do not save them in a file.
+
+**4. LIVE: apply both migrations and enrol yourself** , needs your Supabase database connection URL (kept at the prompt) and your auth user id (Supabase dashboard → Authentication → Users). The text migration may already be applied; `if not exists` makes re-running safe. The second one **removes public read of the Eenadu text tables**.
+```bash
+read -r -s -p 'Owner database connection URL: ' GV_DATABASE_URL; printf '\n'
+read -r -p 'Your Auth user UUID: ' GV_OWNER_ID
+psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/migrations/20261113000000_todays_paper.sql
 psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/migrations/20261125000000_paper_story_audio.sql
+psql "$GV_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "insert into public.story_publishers (user_id) values ('$GV_OWNER_ID') on conflict do nothing"
+psql "$GV_DATABASE_URL" -X -f scripts/verify_todays_paper.sql      # last query must read false, false, false
 ```
-```sql
-insert into public.story_publishers (user_id) values ('<your-auth-user-id>') on conflict do nothing;
-```
-3. **One-time Worker deploy** (after review):
+
+**5. LIVE: deploy the playback Worker** , needs Cloudflare (step 1) and the bucket (step 2). The `sohum` project signs users in with ES256 keys (its public key list was read on 2026-11-27), which the Worker verifies; a token issued before the project switched to ES256 would be refused until it expires.
 ```bash
-cd workers/paper-audio && wrangler secret put OWNER_USER_IDS && wrangler deploy
+cd workers/paper-audio
+printf '%s' "$GV_OWNER_ID" | wrangler secret put OWNER_USER_IDS
+wrangler deploy        # prints https://gativani-paper-audio.<your-subdomain>.workers.dev
+cd ../..
 ```
-4. **Build the app with the Worker address** (empty keeps the feature hidden):
+Add the app's real origin to `ALLOWED_ORIGIN` in `workers/paper-audio/wrangler.toml` if you test from somewhere other than `https://gativani.sohum.cc`, then deploy again.
+
+**6. Build the app that shows the audio (local; deploying the web build is a separate LIVE step you decide)** , use the Worker address printed in step 5.
 ```bash
+cd packages/app
 flutter build web --dart-define=PAPER_AUDIO_URL=https://gativani-paper-audio.<your-subdomain>.workers.dev
+cd ../..
 ```
-5. **Publish a day** (set the secrets in your own shell only; never in a file or chat):
+
+**7. Dry-run the day (local, safe, no network)** , needs the generator folder.
 ```bash
-export R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=gativani-paper-audio
-export SUPABASE_URL=https://ziebgspujtdzkiwyybsa.supabase.co SUPABASE_PUBLISHABLE_KEY=... SUPABASE_ACCESS_TOKEN=...
 AUDIO="$HOME/Library/CloudStorage/GoogleDrive-pothulapatisiddhartha@gmail.com/My Drive/sohum-gativani/audio/25-11-2026"
 python3 scripts/publish_paper_audio.py --date 25-11-2026 --edition TELANGANA --audio-dir "$AUDIO" --dry-run
+```
+
+**8. LIVE: publish the day** , needs the R2 token from step 3 and your Supabase user access token (the session JWT; not a service key).
+```bash
+read -r -p 'R2 account id: ' R2_ACCOUNT_ID; read -r -s -p 'R2 access key id: ' R2_ACCESS_KEY_ID; printf '\n'
+read -r -s -p 'R2 secret: ' R2_SECRET_ACCESS_KEY; printf '\n'
+read -r -s -p 'Supabase user access token: ' SUPABASE_ACCESS_TOKEN; printf '\n'
+export R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SUPABASE_ACCESS_TOKEN R2_BUCKET=gativani-paper-audio
+export SUPABASE_URL=https://ziebgspujtdzkiwyybsa.supabase.co
+export SUPABASE_PUBLISHABLE_KEY="<the project's publishable (anon) key>"
 python3 scripts/publish_paper_audio.py --date 25-11-2026 --edition TELANGANA --audio-dir "$AUDIO"
 ```
-6. **Delete a day:** `python3 scripts/publish_paper_audio.py --date 25-11-2026 --edition TELANGANA --delete-day`
+Re-running is safe (a file with the same checksum is skipped).
 
-Known limits and open decisions: the generator's story ids (`lead_dharala_kothalu`) are not the Store's ids (`p1-g0`), so audio is its own list, not attached to the text story screen until the owner chooses a join; the Worker verifies asymmetric JWTs only (if the `sohum` project signs with the legacy HS256 secret it answers 401 until that is changed or the Worker is extended); the entry needs a `paper_days` row only because it sits on the Today screen; web playback holds a whole file (about 2 MB) in memory; nothing was listened to on a device or in a browser.
+**9. Listen** , open the app signed in as yourself: Paper → Today → "Listen to today's paper (audio)". A signed-out visitor or another account sees nothing.
+
+**10. LIVE: delete a day** (also what the 14-day rule does automatically):
+```bash
+python3 scripts/publish_paper_audio.py --date 25-11-2026 --edition TELANGANA --delete-day
+```
+
+**Roll back everything (LIVE):** `wrangler delete` (Worker), empty then `wrangler r2 bucket delete gativani-paper-audio`, revoke the R2 token in the dashboard. To restore public text reads you would have to re-add the `paper_read` policy yourself; that is deliberately not scripted.
+
+### Joining the audio to the text stories later
+The generator's story ids (for example `lead_dharala_kothalu`) are its own; the text stories use the Store's ids (for example `p1-g0`). They are only the same story by headline and page. To show the audio on the text story screen, either (a) have the generator write the Store's `source_id` into `manifest.json` and add it to the contract as an optional `source_id` field (additive), or (b) add a small mapping table `paper_story_audio_map(edition, source_date, source_id, story_id)` written by the importer. Then `PublishedStoryScreen` looks the story up by `source_id` and shows `PaperAudioPanel` beside the on-device Listen. Neither is built.
+
+### Limits
+Web playback holds a whole file (about 2 MB) in memory; nothing was heard on a device or in a browser; new Telugu strings (`paper_audio_*`) are AI proposals until a native reader approves them; the Today-screen entry needs the text day to exist; with public read removed, the text screens show nothing to signed-out visitors.

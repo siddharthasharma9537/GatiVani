@@ -25,3 +25,10 @@ select has_table_privilege('anon', 'public.paper_stories', 'SELECT') as public_r
        has_table_privilege('authenticated', 'public.story_publishers', 'INSERT') as self_enrollment,
        has_table_privilege('authenticated', 'public.paper_stories', 'TRUNCATE') as publisher_truncate;
 -- Expected: true, false, false, false; every relrowsecurity above must be true.
+
+-- After 20261125000000_paper_story_audio.sql the text and audio tables are owner-only:
+select has_table_privilege('anon', 'public.paper_stories', 'SELECT') as anon_reads_text,
+       has_table_privilege('anon', 'public.paper_days', 'SELECT') as anon_reads_days,
+       has_table_privilege('anon', 'public.paper_story_audio', 'SELECT') as anon_reads_audio;
+-- Expected: false, false, false. And: select policyname from pg_policies where tablename in
+-- ('paper_days','paper_stories') must not list paper_read.
